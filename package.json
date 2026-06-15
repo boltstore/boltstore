@@ -1,0 +1,23 @@
+{
+  "name": "boltstore",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Boltstore server \u2014 lightweight backend with realtime sync",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "boltstore": "./dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "bun run dist/index.js",
+    "test": "bun test",
+    "prepublish": "bun run build"
+  },
+  "dependencies": {
+    "@boltstore/utils": "^1.0.0"
+  },
+  "license": "MIT"
+}
