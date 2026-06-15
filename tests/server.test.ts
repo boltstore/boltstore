@@ -6,17 +6,37 @@
 
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { createServer } from "../src/server";
+import { DatabaseManager } from "../src/db/manager";
 import pkg from "../package.json";
 
-const TEST_PORT = 9876;
+const TEST_PORT = 9877;
+const TEST_DATA_DIR = "/tmp/boltstore_test_server";
 let server: ReturnType<typeof Bun.serve>;
+let manager: DatabaseManager;
+
+function cleanup() {
+  try {
+    if (manager) manager.close();
+  } catch {
+    // ignore
+  }
+  try {
+    Bun.spawnSync(["rm", "-rf", TEST_DATA_DIR]);
+  } catch {
+    // ignore
+  }
+}
 
 beforeAll(() => {
-  server = createServer({ port: TEST_PORT });
+  cleanup();
+  Bun.spawnSync(["mkdir", "-p", TEST_DATA_DIR]);
+  manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
+  server = createServer({ port: TEST_PORT, manager });
 });
 
 afterAll(() => {
   server.stop();
+  cleanup();
 });
 
 describe("Server startup", () => {
@@ -38,12 +58,97 @@ describe("GET /api/health", () => {
     expect(body.data.version).toBe(pkg.version);
     expect(body.data.uptime).toBeGreaterThanOrEqual(0);
     expect(body.data.timestamp).toBeDefined();
+    expect(body.data.databases).toBeDefined();
+    expect(typeof body.data.databases).toBe("number");
   });
 
   test("health check does not include error field", async () => {
     const response = await fetch(`http://localhost:${TEST_PORT}/api/health`);
     const body = await response.json();
     expect(body.error).toBeUndefined();
+  });
+});
+
+describe("GET /api/databases", () => {
+  test("returns empty list initially", async () => {
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/databases`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data).toEqual([]);
+  });
+
+  test("returns created databases", async () => {
+    manager.createDatabase("servertest");
+
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/databases`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.length).toBe(1);
+    expect(body.data[0].name).toBe("servertest");
+
+    manager.deleteDatabase("servertest");
+  });
+});
+
+describe("POST /api/admin/databases", () => {
+  test("creates a new database", async () => {
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "integration_test" }),
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.data.name).toBe("integration_test");
+    expect(body.data.createdAt).toBeTruthy();
+
+    manager.deleteDatabase("integration_test");
+  });
+
+  test("rejects duplicate with 409", async () => {
+    manager.createDatabase("dupe_test");
+
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "dupe_test" }),
+    });
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.error.code).toBe("CREATE_DATABASE_ERROR");
+
+    manager.deleteDatabase("dupe_test");
+  });
+
+  test("rejects missing name with 400", async () => {
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(400);
+  });
+});
+
+describe("DELETE /api/admin/databases/:database", () => {
+  test("deletes an existing database", async () => {
+    manager.createDatabase("delete_me");
+
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases/delete_me`, {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.deleted).toBe(true);
+
+    expect(manager.exists("delete_me")).toBe(false);
+  });
+
+  test("returns 404 for non-existent database", async () => {
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases/ghost`, {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(404);
   });
 });
 

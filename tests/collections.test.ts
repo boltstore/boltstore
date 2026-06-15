@@ -1,11 +1,14 @@
 /**
  * Tests for the collections (tables) management module.
  *
+ * Uses DatabaseManager to simulate multi-database support — each test
+ * creates an app database, then exercises collection CRUD against it.
+ *
  * @module tests/collections
  */
 
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from "bun:test";
-import { DatabasePool } from "../src/db/pool";
+import { DatabaseManager } from "../src/db/manager";
 import {
   createCollection,
   listCollections,
@@ -14,18 +17,20 @@ import {
   deleteCollection,
 } from "../src/collections";
 
-const TEST_DB_PATH = "/tmp/boltstore_test_collections.db";
+const TEST_DATA_DIR = "/tmp/boltstore_test_data";
+const TEST_APP = "testapp";
 
-let pool: DatabasePool;
+let manager: DatabaseManager;
+let pool: ReturnType<typeof manager.get>;
 
 function cleanup() {
   try {
-    if (pool) pool.close();
+    if (manager) manager.close();
   } catch {
     // ignore
   }
   try {
-    Bun.spawnSync(["rm", "-f", TEST_DB_PATH]);
+    Bun.spawnSync(["rm", "-rf", TEST_DATA_DIR]);
   } catch {
     // ignore
   }
@@ -33,7 +38,11 @@ function cleanup() {
 
 beforeAll(() => {
   cleanup();
-  pool = new DatabasePool({ path: TEST_DB_PATH, readConnections: 2 });
+  Bun.spawnSync(["mkdir", "-p", TEST_DATA_DIR]);
+  manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
+  // Create a test application database
+  manager.createDatabase(TEST_APP);
+  pool = manager.get(TEST_APP);
 });
 
 afterAll(() => {
@@ -43,7 +52,6 @@ afterAll(() => {
 // Reset state before each test by dropping all user collections
 beforeEach(() => {
   const db = pool.write();
-  // Drop all non-system tables (including _collections to fully reset)
   const rows = db
     .query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
     .all() as { name: string }[];
@@ -77,7 +85,6 @@ describe("createCollection", () => {
     createCollection(pool, "posts", [{ name: "title", type: "TEXT" }]);
 
     const info = getCollection(pool, "posts");
-    // Schema should only include user columns (system columns are excluded)
     expect(info.schema).toHaveLength(1);
     expect(info.schema[0].name).toBe("title");
   });
@@ -183,8 +190,6 @@ describe("createCollection", () => {
     expect(types).toContain("INTEGER");
     expect(types).toContain("REAL");
     expect(types).toContain("BLOB");
-    // BOOLEAN → INTEGER and DATETIME → TEXT in SQLite PRAGMA
-    // These round-trip as their underlying SQL affinities
     expect(types.length).toBe(6);
   });
 
@@ -197,7 +202,6 @@ describe("createCollection", () => {
       { name: "tag", type: "TEXT", default: "draft" },
     ]);
 
-    // Verify with PRAGMA
     const db = pool.read();
     const rows = db.query('PRAGMA table_info("constrained")').all() as Record<string, unknown>[];
 
@@ -214,7 +218,6 @@ describe("createCollection", () => {
 
     const bioCol = rows.find((r) => r.name === "bio");
     expect(bioCol).toBeDefined();
-    // PRAGMA returns DEFAULT NULL as the string "NULL", not JS null
     expect(bioCol!.dflt_value).toBe("NULL");
 
     const tagCol = rows.find((r) => r.name === "tag");
@@ -335,7 +338,7 @@ describe("updateCollection", () => {
     ]);
 
     expect(result.name).toBe("inventory");
-    expect(result.schema).toHaveLength(3); // 1 original + 2 new
+    expect(result.schema).toHaveLength(3);
     expect(result.schema[1].name).toBe("quantity");
     expect(result.schema[2].name).toBe("price");
   });
@@ -421,12 +424,10 @@ describe("deleteCollection", () => {
   test("deletes an existing collection", () => {
     createCollection(pool, "temp", [{ name: "x", type: "TEXT" }]);
 
-    // Verify it exists
     expect(listCollections(pool).length).toBe(1);
 
     deleteCollection(pool, "temp");
 
-    // Verify it's gone
     expect(listCollections(pool).length).toBe(0);
   });
 
@@ -506,7 +507,6 @@ describe("deleteCollection", () => {
 
 describe("Collection lifecycle", () => {
   test("create → read → update → delete", () => {
-    // Create
     const created = createCollection(pool, "lifecycle", [
       { name: "title", type: "TEXT" },
       { name: "views", type: "INTEGER", default: 0 },
@@ -514,28 +514,22 @@ describe("Collection lifecycle", () => {
     expect(created.name).toBe("lifecycle");
     expect(created.recordCount).toBe(0);
 
-    // Read (list)
     const list = listCollections(pool);
     expect(list.find((c) => c.name === "lifecycle")).toBeDefined();
 
-    // Read (get)
     const info = getCollection(pool, "lifecycle");
     expect(info.schema).toHaveLength(2);
 
-    // Update
     const updated = updateCollection(pool, "lifecycle", [
       { name: "description", type: "TEXT" },
     ]);
     expect(updated.schema).toHaveLength(3);
 
-    // Verify update persisted
     const info2 = getCollection(pool, "lifecycle");
     expect(info2.schema).toHaveLength(3);
 
-    // Delete
     deleteCollection(pool, "lifecycle");
 
-    // Verify deletion
     expect(listCollections(pool).find((c) => c.name === "lifecycle")).toBeUndefined();
     try {
       getCollection(pool, "lifecycle");
@@ -544,5 +538,38 @@ describe("Collection lifecycle", () => {
       const e = err as { status?: number };
       expect(e.status).toBe(404);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-database isolation: different apps have separate collections
+// ---------------------------------------------------------------------------
+
+describe("Multi-database isolation", () => {
+  test("collections in one database do not appear in another", () => {
+    // Create a second application
+    manager.createDatabase("secondapp");
+    const pool2 = manager.get("secondapp");
+
+    // Create collection in first app
+    createCollection(pool, "only_in_testapp", [{ name: "x", type: "TEXT" }]);
+
+    // Verify it's visible in testapp
+    expect(listCollections(pool).length).toBeGreaterThanOrEqual(1);
+
+    // Verify it's NOT visible in secondapp
+    expect(listCollections(pool2)).toEqual([]);
+
+    // Verify getCollection fails with 404 in secondapp
+    try {
+      getCollection(pool2, "only_in_testapp");
+      expect.unreachable("Should have thrown");
+    } catch (err: unknown) {
+      const e = err as { status?: number };
+      expect(e.status).toBe(404);
+    }
+
+    // Cleanup
+    manager.deleteDatabase("secondapp");
   });
 });

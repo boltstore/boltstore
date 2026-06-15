@@ -7,7 +7,7 @@
 import { Router, type RouteHandler } from "./router";
 import { logger, generateRequestId, type LogEntry } from "./logger";
 import { applyCors, handlePreflight, type CorsConfig, defaultConfig as defaultCorsConfig } from "./middleware/cors";
-import { DatabasePool } from "./db/pool";
+import { DatabaseManager } from "./db/manager";
 import {
   createCollection,
   listCollections,
@@ -21,8 +21,7 @@ import pkg from "../package.json";
 export interface ServerConfig {
   port: number;
   cors?: CorsConfig;
-  dbPath?: string;
-  pool?: DatabasePool;
+  manager?: DatabaseManager;
 }
 
 export interface ApiResponse {
@@ -63,37 +62,81 @@ export function errorResponse(code: string, message: string, status = 400, detai
 export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve> {
   const router = new Router();
   const corsConfig = config.cors || defaultCorsConfig;
-  const pool = config.pool;
+  const manager = config.manager;
 
   // --- Routes ---
 
   // Health check
   router.get("/api/health", () => {
-    const dbStats = pool ? pool.stats() : null;
+    const databases = manager ? manager.listDatabases() : [];
     const body: ApiResponse = {
       data: {
         status: "ok",
         version: pkg.version,
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
-        database: dbStats
-          ? {
-              path: dbStats.path,
-              read_connections: dbStats.readConnections,
-              write_connection: dbStats.writeConnection,
-            }
-          : null,
+        databases: databases.length,
+        database_list: databases.map((d) => ({ name: d.name, createdAt: d.createdAt })),
       },
     };
     return jsonResponse(body);
   });
 
-  // --- Collection routes ---
+  // --- Database management routes ---
 
-  if (pool) {
-    // GET /api/collections — list all collections
-    router.get("/api/collections", () => {
+  if (manager) {
+    // GET /api/databases — list all databases
+    router.get("/api/databases", () => {
       try {
+        const databases = manager.listDatabases();
+        const body: ApiResponse = { data: databases };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to list databases";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("DATABASES_ERROR", message, status);
+      }
+    });
+
+    // POST /api/admin/databases — create database (admin)
+    router.post("/api/admin/databases", async (req) => {
+      try {
+        const body = await req.json();
+        const { name } = body;
+
+        if (!name || typeof name !== "string") {
+          return errorResponse("VALIDATION", "Field 'name' is required and must be a string.", 400);
+        }
+
+        const result = manager.createDatabase(name);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp, 201);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create database";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("CREATE_DATABASE_ERROR", message, status);
+      }
+    });
+
+    // DELETE /api/admin/databases/:database — delete database (admin)
+    router.delete("/api/admin/databases/:database", (_req, params) => {
+      try {
+        manager!.deleteDatabase(params.database);
+        const body: ApiResponse = { data: { deleted: true } };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to delete database";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("DELETE_DATABASE_ERROR", message, status);
+      }
+    });
+
+    // --- Collection routes (with :database prefix) ---
+
+    // GET /api/:database/collections — list all collections
+    router.get("/api/:database/collections", (_req, params) => {
+      try {
+        const pool = manager!.get(params.database);
         const collections = listCollections(pool);
         const body: ApiResponse = { data: collections };
         return jsonResponse(body);
@@ -104,9 +147,10 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
       }
     });
 
-    // GET /api/collections/:collection — get collection details
-    router.get("/api/collections/:collection", (_req, params) => {
+    // GET /api/:database/collections/:collection — get collection details
+    router.get("/api/:database/collections/:collection", (_req, params) => {
       try {
+        const pool = manager!.get(params.database);
         const info = getCollection(pool, params.collection);
         const body: ApiResponse = { data: info };
         return jsonResponse(body);
@@ -117,8 +161,8 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
       }
     });
 
-    // POST /api/admin/collections — create collection (admin)
-    router.post("/api/admin/collections", async (req) => {
+    // POST /api/admin/:database/collections — create collection (admin)
+    router.post("/api/admin/:database/collections", async (req, params) => {
       try {
         const body = await req.json();
         const { name, columns } = body;
@@ -130,7 +174,8 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           return errorResponse("VALIDATION", "Field 'columns' is required and must be an array.", 400);
         }
 
-        const result = createCollection(pool!, name, columns as ColumnDefinition[]);
+        const pool = manager!.get(params.database);
+        const result = createCollection(pool, name, columns as ColumnDefinition[]);
         const resp: ApiResponse = { data: result };
         return jsonResponse(resp, 201);
       } catch (err) {
@@ -140,8 +185,8 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
       }
     });
 
-    // PATCH /api/admin/collections/:collection — update collection schema (admin)
-    router.patch("/api/admin/collections/:collection", async (req, params) => {
+    // PATCH /api/admin/:database/collections/:collection — update collection schema (admin)
+    router.patch("/api/admin/:database/collections/:collection", async (req, params) => {
       try {
         const body = await req.json();
         const { columns } = body;
@@ -150,7 +195,8 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           return errorResponse("VALIDATION", "Field 'columns' is required and must be an array.", 400);
         }
 
-        const result = updateCollection(pool!, params.collection, columns as ColumnDefinition[]);
+        const pool = manager!.get(params.database);
+        const result = updateCollection(pool, params.collection, columns as ColumnDefinition[]);
         const resp: ApiResponse = { data: result };
         return jsonResponse(resp);
       } catch (err) {
@@ -160,10 +206,11 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
       }
     });
 
-    // DELETE /api/admin/collections/:collection — delete collection (admin)
-    router.delete("/api/admin/collections/:collection", (_req, params) => {
+    // DELETE /api/admin/:database/collections/:collection — delete collection (admin)
+    router.delete("/api/admin/:database/collections/:collection", (_req, params) => {
       try {
-        deleteCollection(pool!, params.collection);
+        const pool = manager!.get(params.database);
+        deleteCollection(pool, params.collection);
         const body: ApiResponse = { data: { deleted: true } };
         return jsonResponse(body);
       } catch (err) {
