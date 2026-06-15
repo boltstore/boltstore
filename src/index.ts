@@ -6,20 +6,34 @@
 
 import { createServer } from "./server";
 import { DatabaseManager } from "./db/manager";
+import { loadConfig } from "./config";
 
-const port = parseInt(Bun.env.PORT || "8080", 10);
+const config = await loadConfig();
 
 // Initialize the database manager (manages multiple application databases)
-const dataDir = Bun.env.DATABASE_PATH
-  ? Bun.env.DATABASE_PATH.substring(0, Bun.env.DATABASE_PATH.lastIndexOf("/")) || "./data"
-  : "./data";
+const dataDir = config.databasePath;
 const manager = new DatabaseManager({ dataDir });
 
-const server = createServer({ port, manager });
+const server = createServer({
+  port: config.port,
+  manager,
+  cors: {
+    origins: config.corsOrigins,
+    methods: config.corsMethods,
+    headers: config.corsHeaders,
+  },
+});
 
-console.log(`[boltstore] Server running on http://localhost:${port}`);
-console.log(`[boltstore] Health check: http://localhost:${port}/api/health`);
+console.log(`[boltstore] Server running on http://localhost:${config.port}`);
+console.log(`[boltstore] Health check: http://localhost:${config.port}/api/health`);
 console.log(`[boltstore] Data directory: ${dataDir}`);
+console.log(`[boltstore] Log level: ${config.logLevel}`);
+console.log(`[boltstore] Timezone: ${config.serverTimezone}`);
+
+// Set server timezone
+if (config.serverTimezone && config.serverTimezone !== "UTC") {
+  process.env.TZ = config.serverTimezone;
+}
 
 // Graceful shutdown
 process.on("SIGINT", () => {
