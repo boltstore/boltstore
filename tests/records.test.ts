@@ -143,7 +143,9 @@ describe("listRecords", () => {
 
   test("lists all records with default sorting by created_at DESC", () => {
     createRecord(pool, "todos", { title: "A" });
+    Bun.sleepSync(2); // ensure distinct created_at timestamps
     createRecord(pool, "todos", { title: "B" });
+    Bun.sleepSync(2);
     createRecord(pool, "todos", { title: "C" });
 
     const result = listRecords(pool, "todos");
