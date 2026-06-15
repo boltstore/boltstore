@@ -8,6 +8,14 @@ import { Router, type RouteHandler } from "./router";
 import { logger, generateRequestId, type LogEntry } from "./logger";
 import { applyCors, handlePreflight, type CorsConfig, defaultConfig as defaultCorsConfig } from "./middleware/cors";
 import { DatabasePool } from "./db/pool";
+import {
+  createCollection,
+  listCollections,
+  getCollection,
+  updateCollection,
+  deleteCollection,
+} from "./collections";
+import { type ColumnDefinition } from "@boltstore/utils";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -79,6 +87,92 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
     };
     return jsonResponse(body);
   });
+
+  // --- Collection routes ---
+
+  if (pool) {
+    // GET /api/collections — list all collections
+    router.get("/api/collections", () => {
+      try {
+        const collections = listCollections(pool);
+        const body: ApiResponse = { data: collections };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to list collections";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("COLLECTIONS_ERROR", message, status);
+      }
+    });
+
+    // GET /api/collections/:collection — get collection details
+    router.get("/api/collections/:collection", (_req, params) => {
+      try {
+        const info = getCollection(pool, params.collection);
+        const body: ApiResponse = { data: info };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to get collection";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("COLLECTION_ERROR", message, status);
+      }
+    });
+
+    // POST /api/admin/collections — create collection (admin)
+    router.post("/api/admin/collections", async (req) => {
+      try {
+        const body = await req.json();
+        const { name, columns } = body;
+
+        if (!name || typeof name !== "string") {
+          return errorResponse("VALIDATION", "Field 'name' is required and must be a string.", 400);
+        }
+        if (!Array.isArray(columns)) {
+          return errorResponse("VALIDATION", "Field 'columns' is required and must be an array.", 400);
+        }
+
+        const result = createCollection(pool!, name, columns as ColumnDefinition[]);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp, 201);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create collection";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("CREATE_COLLECTION_ERROR", message, status);
+      }
+    });
+
+    // PATCH /api/admin/collections/:collection — update collection schema (admin)
+    router.patch("/api/admin/collections/:collection", async (req, params) => {
+      try {
+        const body = await req.json();
+        const { columns } = body;
+
+        if (!Array.isArray(columns)) {
+          return errorResponse("VALIDATION", "Field 'columns' is required and must be an array.", 400);
+        }
+
+        const result = updateCollection(pool!, params.collection, columns as ColumnDefinition[]);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to update collection";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("UPDATE_COLLECTION_ERROR", message, status);
+      }
+    });
+
+    // DELETE /api/admin/collections/:collection — delete collection (admin)
+    router.delete("/api/admin/collections/:collection", (_req, params) => {
+      try {
+        deleteCollection(pool!, params.collection);
+        const body: ApiResponse = { data: { deleted: true } };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to delete collection";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("DELETE_COLLECTION_ERROR", message, status);
+      }
+    });
+  }
 
   // --- Server creation ---
 
