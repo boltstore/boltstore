@@ -1,0 +1,189 @@
+/**
+ * CLI entry point for Boltstore.
+ *
+ * Provides commands for starting the server, managing the database,
+ * and performing administrative tasks.
+ *
+ * Usage: boltstore <command> [options]
+ *
+ * @module boltstore/cli
+ */
+
+import { DatabaseManager } from "./db/manager";
+import { createServer } from "./server";
+import { loadConfig } from "./config";
+import { listMigrations, applyMigrations, rollbackLastMigration } from "./migrations";
+
+const HELP = `
+Boltstore — Lightweight backend-as-a-service
+
+Usage: boltstore <command> [options]
+
+Commands:
+  serve                 Start the HTTP server
+  init                  Generate a config file (boltstore.json)
+  migrate [--db <path>] [--dir <path>]  Run pending migrations
+  migrate:rollback [--db <path>]        Rollback last migration
+  migrations [--db <path>]              List migration status
+  status                Display server health and stats
+
+Options:
+  --port <number>       HTTP server port (default: 8080)
+  --db <path>           Database path or data directory
+  --config <path>       Path to config file
+  --log-level <level>   Log level: debug, info, warn, error
+  --timezone <tz>       Server timezone
+  --help                Show this help
+`;
+
+export async function runCli(args: string[]): Promise<void> {
+  const command = args[0];
+
+  switch (command) {
+    case "serve": {
+      const config = await loadConfig();
+      const manager = new DatabaseManager({ dataDir: config.databasePath });
+
+      const server = createServer({
+        port: config.port,
+        manager,
+        cors: {
+          origins: config.corsOrigins,
+          methods: config.corsMethods,
+          headers: config.corsHeaders,
+        },
+      });
+
+      console.log(`[boltstore] Server running on http://localhost:${config.port}`);
+      console.log(`[boltstore] Data directory: ${config.databasePath}`);
+
+      process.on("SIGINT", () => { console.log("\n[boltstore] Shutting down..."); manager.close(); server.stop(); process.exit(0); });
+      process.on("SIGTERM", () => { console.log("[boltstore] Shutting down..."); manager.close(); server.stop(); process.exit(0); });
+      break;
+    }
+
+    case "init": {
+      const config = {
+        port: 8080,
+        databasePath: "./data",
+        rateLimitPublic: 100,
+        rateLimitAuth: 1000,
+        serverTimezone: "UTC",
+        corsOrigins: ["*"],
+        corsMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        corsHeaders: ["Content-Type", "Authorization"],
+        logLevel: "info",
+      };
+
+      await Bun.write("boltstore.json", JSON.stringify(config, null, 2));
+      console.log("[boltstore] Created boltstore.json");
+      break;
+    }
+
+    case "migrate": {
+      const config = await loadConfig();
+      const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+      const migrationDir = args.includes("--dir") ? args[args.indexOf("--dir") + 1] : "./migrations";
+
+      const manager = new DatabaseManager({ dataDir: config.databasePath });
+
+      try {
+        // Create the database if it doesn't exist
+        if (!manager.exists(dbName)) {
+          manager.createDatabase(dbName);
+        }
+
+        const pool = manager.get(dbName);
+        const result = await applyMigrations(pool, migrationDir);
+
+        if (result.applied.length === 0) {
+          console.log("[boltstore] No pending migrations.");
+        } else {
+          console.log(`[boltstore] Applied ${result.applied.length} migration(s):`);
+          for (const name of result.applied) {
+            console.log(`  ✓ ${name}`);
+          }
+        }
+      } finally {
+        manager.close();
+      }
+      break;
+    }
+
+    case "migrate:rollback": {
+      const config = await loadConfig();
+      const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+
+      const manager = new DatabaseManager({ dataDir: config.databasePath });
+
+      try {
+        if (!manager.exists(dbName)) {
+          console.log(`[boltstore] Database "${dbName}" not found.`);
+          break;
+        }
+
+        const pool = manager.get(dbName);
+        const result = rollbackLastMigration(pool);
+
+        if (result.rolledBack) {
+          console.log(`[boltstore] Rolled back: ${result.rolledBack}`);
+        } else {
+          console.log("[boltstore] No migrations to roll back.");
+        }
+      } finally {
+        manager.close();
+      }
+      break;
+    }
+
+    case "migrations": {
+      const config = await loadConfig();
+      const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+
+      const manager = new DatabaseManager({ dataDir: config.databasePath });
+
+      try {
+        if (!manager.exists(dbName)) {
+          console.log(`[boltstore] Database "${dbName}" not found.`);
+          break;
+        }
+
+        const pool = manager.get(dbName);
+        const migrations = listMigrations(pool);
+
+        if (migrations.length === 0) {
+          console.log("[boltstore] No migrations applied.");
+        } else {
+          console.log(`[boltstore] Applied migrations (${migrations.length}):`);
+          for (const m of migrations) {
+            console.log(`  ${m.name} — ${m.appliedAt}`);
+          }
+        }
+      } finally {
+        manager.close();
+      }
+      break;
+    }
+
+    case "status": {
+      const config = await loadConfig();
+      const healthUrl = `http://localhost:${config.port}/api/health`;
+
+      try {
+        const response = await fetch(healthUrl);
+        const body = await response.json();
+        console.log(JSON.stringify(body.data, null, 2));
+      } catch {
+        console.log('[boltstore] Server is not running.');
+      }
+      break;
+    }
+
+    case "--help":
+    case "-h":
+    case "help":
+    default:
+      console.log(HELP);
+      break;
+  }
+}

@@ -31,6 +31,7 @@ import { executeReadQuery, executeWriteQuery, explainQuery } from "./admin/query
 import { createIndex, listIndexes, dropIndex, type IndexDefinition } from "./indexes";
 import { executeTransaction, type TransactionOperation } from "./admin/transaction";
 import { expandRecords, cascadeDelete } from "./relations";
+import { listMigrations, getPendingMigrations, applyMigrations, rollbackLastMigration } from "./migrations";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -574,6 +575,57 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         const message = err instanceof Error ? err.message : "Transaction failed";
         const status = (err as { status?: number }).status || 500;
         return errorResponse("TRANSACTION_ERROR", message, status);
+      }
+    });
+
+    // --- Migration routes ---
+
+    // GET /api/admin/:database/migrations — list migrations (admin)
+    router.get("/api/admin/:database/migrations", (_req, params) => {
+      try {
+        const pool = manager!.get(params.database);
+        const migrations = listMigrations(pool);
+        const body: ApiResponse = { data: migrations };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to list migrations";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("MIGRATIONS_ERROR", message, status);
+      }
+    });
+
+    // POST /api/admin/:database/migrations/up — apply pending migrations (admin)
+    router.post("/api/admin/:database/migrations/up", async (req, params) => {
+      try {
+        const body = await req.json();
+        const { migrationDir } = body;
+
+        if (!migrationDir || typeof migrationDir !== "string") {
+          return errorResponse("VALIDATION", "Field 'migrationDir' is required.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const result = await applyMigrations(pool, migrationDir);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to apply migrations";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("APPLY_MIGRATIONS_ERROR", message, status);
+      }
+    });
+
+    // POST /api/admin/:database/migrations/down — rollback last migration (admin)
+    router.post("/api/admin/:database/migrations/down", (_req, params) => {
+      try {
+        const pool = manager!.get(params.database);
+        const result = rollbackLastMigration(pool);
+        const body: ApiResponse = { data: result };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to rollback migration";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("ROLLBACK_MIGRATION_ERROR", message, status);
       }
     });
 
