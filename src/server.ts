@@ -16,6 +16,16 @@ import {
   deleteCollection,
 } from "./collections";
 import { type ColumnDefinition } from "@boltstore/utils";
+import {
+  createRecord,
+  listRecords,
+  getRecord,
+  updateRecord,
+  deleteRecord,
+  countRecords,
+  distinctValues,
+  batchRecords,
+} from "./records";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -217,6 +227,173 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         const message = err instanceof Error ? err.message : "Failed to delete collection";
         const status = (err as { status?: number }).status || 500;
         return errorResponse("DELETE_COLLECTION_ERROR", message, status);
+      }
+    });
+
+    // --- Record routes (with :database prefix) ---
+
+    // POST /api/:database/collections/:collection/records — create record
+    router.post("/api/:database/collections/:collection/records", async (req, params) => {
+      try {
+        const body = await req.json();
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return errorResponse("VALIDATION", "Request body must be a JSON object.", 400);
+        }
+        const pool = manager!.get(params.database);
+        const result = createRecord(pool, params.collection, body as Record<string, unknown>);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp, 201);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create record";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("CREATE_RECORD_ERROR", message, status);
+      }
+    });
+
+    // GET /api/:database/collections/:collection/records — list records
+    router.get("/api/:database/collections/:collection/records", (req, params) => {
+      try {
+        const url = new URL(req.url);
+        const pool = manager!.get(params.database);
+
+        const options: {
+          filter?: Record<string, unknown>;
+          sort?: string;
+          direction?: "asc" | "desc";
+          limit?: number;
+          offset?: number;
+        } = {};
+
+        // Parse query string filters
+        for (const [key, value] of url.searchParams.entries()) {
+          if (key === "sort") {
+            options.sort = value;
+          } else if (key === "direction") {
+            options.direction = value as "asc" | "desc";
+          } else if (key === "limit") {
+            options.limit = parseInt(value, 10);
+          } else if (key === "offset") {
+            options.offset = parseInt(value, 10);
+          } else {
+            // Treat as filter
+            if (!options.filter) options.filter = {};
+            options.filter[key] = value;
+          }
+        }
+
+        const results = listRecords(pool, params.collection, options);
+        const body: ApiResponse = { data: results };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to list records";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("LIST_RECORDS_ERROR", message, status);
+      }
+    });
+
+    // GET /api/:database/collections/:collection/records/count — count records
+    router.get("/api/:database/collections/:collection/records/count", (req, params) => {
+      try {
+        const url = new URL(req.url);
+        const pool = manager!.get(params.database);
+
+        const filter: Record<string, unknown> = {};
+        for (const [key, value] of url.searchParams.entries()) {
+          filter[key] = value;
+        }
+
+        const count = countRecords(pool, params.collection, Object.keys(filter).length > 0 ? filter : undefined);
+        const body: ApiResponse = { data: { count } };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to count records";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("COUNT_RECORDS_ERROR", message, status);
+      }
+    });
+
+    // GET /api/:database/collections/:collection/records/distinct — distinct values
+    router.get("/api/:database/collections/:collection/records/distinct", (req, params) => {
+      try {
+        const url = new URL(req.url);
+        const field = url.searchParams.get("field");
+        if (!field) {
+          return errorResponse("VALIDATION", "Query parameter 'field' is required.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const values = distinctValues(pool, params.collection, field);
+        const body: ApiResponse = { data: { field, values } };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to get distinct values";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("DISTINCT_ERROR", message, status);
+      }
+    });
+
+    // GET /api/:database/collections/:collection/records/:id — get single record
+    router.get("/api/:database/collections/:collection/records/:id", (_req, params) => {
+      try {
+        const pool = manager!.get(params.database);
+        const result = getRecord(pool, params.collection, params.id);
+        const body: ApiResponse = { data: result };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to get record";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("GET_RECORD_ERROR", message, status);
+      }
+    });
+
+    // PATCH /api/:database/collections/:collection/records/:id — update record
+    router.patch("/api/:database/collections/:collection/records/:id", async (req, params) => {
+      try {
+        const body = await req.json();
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return errorResponse("VALIDATION", "Request body must be a JSON object.", 400);
+        }
+        const pool = manager!.get(params.database);
+        const result = updateRecord(pool, params.collection, params.id, body as Record<string, unknown>);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to update record";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("UPDATE_RECORD_ERROR", message, status);
+      }
+    });
+
+    // DELETE /api/:database/collections/:collection/records/:id — delete record
+    router.delete("/api/:database/collections/:collection/records/:id", (_req, params) => {
+      try {
+        const pool = manager!.get(params.database);
+        deleteRecord(pool, params.collection, params.id);
+        const body: ApiResponse = { data: { deleted: true } };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to delete record";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("DELETE_RECORD_ERROR", message, status);
+      }
+    });
+
+    // POST /api/:database/collections/:collection/records/batch — batch operations
+    router.post("/api/:database/collections/:collection/records/batch", async (req, params) => {
+      try {
+        const body = await req.json();
+        if (!Array.isArray(body)) {
+          return errorResponse("VALIDATION", "Request body must be an array of operations.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const result = batchRecords(pool, params.collection, body);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to process batch operations";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("BATCH_RECORDS_ERROR", message, status);
       }
     });
   }
