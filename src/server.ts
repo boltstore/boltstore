@@ -27,6 +27,7 @@ import {
   batchRecords,
 } from "./records";
 import { executeQuery, type QueryParams } from "./query";
+import { executeReadQuery, executeWriteQuery, explainQuery } from "./admin/query";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -429,6 +430,71 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         const message = err instanceof Error ? err.message : "Failed to execute query";
         const status = (err as { status?: number }).status || 500;
         return errorResponse("QUERY_ERROR", message, status);
+      }
+    });
+
+    // --- Admin raw SQL endpoints ---
+
+    // POST /api/admin/:database/query — execute read-only raw SQL (admin)
+    router.post("/api/admin/:database/query", async (req, params) => {
+      try {
+        const body = await req.json();
+        const { sql, params: queryParams } = body;
+
+        if (!sql || typeof sql !== "string") {
+          return errorResponse("VALIDATION", "Field 'sql' is required and must be a string.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const result = executeReadQuery(pool, sql, Array.isArray(queryParams) ? queryParams : []);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to execute query";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("RAW_QUERY_ERROR", message, status);
+      }
+    });
+
+    // POST /api/admin/:database/query/write — execute write SQL (admin)
+    router.post("/api/admin/:database/query/write", async (req, params) => {
+      try {
+        const body = await req.json();
+        const { sql, params: queryParams } = body;
+
+        if (!sql || typeof sql !== "string") {
+          return errorResponse("VALIDATION", "Field 'sql' is required and must be a string.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const result = executeWriteQuery(pool, sql, Array.isArray(queryParams) ? queryParams : []);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to execute write query";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("RAW_WRITE_ERROR", message, status);
+      }
+    });
+
+    // POST /api/admin/:database/query/explain — explain query plan (admin)
+    router.post("/api/admin/:database/query/explain", async (req, params) => {
+      try {
+        const body = await req.json();
+        const { sql, params: queryParams } = body;
+
+        if (!sql || typeof sql !== "string") {
+          return errorResponse("VALIDATION", "Field 'sql' is required and must be a string.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const result = explainQuery(pool, sql, Array.isArray(queryParams) ? queryParams : []);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to explain query";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("EXPLAIN_ERROR", message, status);
       }
     });
   }
