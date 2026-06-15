@@ -28,6 +28,7 @@ import {
 } from "./records";
 import { executeQuery, type QueryParams } from "./query";
 import { executeReadQuery, executeWriteQuery, explainQuery } from "./admin/query";
+import { createIndex, listIndexes, dropIndex, type IndexDefinition } from "./indexes";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -474,6 +475,60 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         const message = err instanceof Error ? err.message : "Failed to execute write query";
         const status = (err as { status?: number }).status || 500;
         return errorResponse("RAW_WRITE_ERROR", message, status);
+      }
+    });
+
+    // --- Index management routes ---
+
+    // POST /api/admin/:database/collections/:collection/indexes — create index (admin)
+    router.post("/api/admin/:database/collections/:collection/indexes", async (req, params) => {
+      try {
+        const body = await req.json();
+        const { name, columns, unique } = body;
+
+        if (!name || typeof name !== "string") {
+          return errorResponse("VALIDATION", "Field 'name' is required and must be a string.", 400);
+        }
+        if (!Array.isArray(columns)) {
+          return errorResponse("VALIDATION", "Field 'columns' is required and must be an array.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const result = createIndex(pool, params.collection, name, { columns, unique } as IndexDefinition);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp, 201);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create index";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("CREATE_INDEX_ERROR", message, status);
+      }
+    });
+
+    // GET /api/admin/:database/collections/:collection/indexes — list indexes (admin)
+    router.get("/api/admin/:database/collections/:collection/indexes", (_req, params) => {
+      try {
+        const pool = manager!.get(params.database);
+        const indexes = listIndexes(pool, params.collection);
+        const body: ApiResponse = { data: indexes };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to list indexes";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("LIST_INDEXES_ERROR", message, status);
+      }
+    });
+
+    // DELETE /api/admin/:database/collections/:collection/indexes/:name — drop index (admin)
+    router.delete("/api/admin/:database/collections/:collection/indexes/:name", (_req, params) => {
+      try {
+        const pool = manager!.get(params.database);
+        dropIndex(pool, params.collection, params.name);
+        const body: ApiResponse = { data: { deleted: true } };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to drop index";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("DROP_INDEX_ERROR", message, status);
       }
     });
 
