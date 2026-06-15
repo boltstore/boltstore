@@ -26,6 +26,7 @@ import {
   distinctValues,
   batchRecords,
 } from "./records";
+import { executeQuery, type QueryParams } from "./query";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -394,6 +395,40 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         const message = err instanceof Error ? err.message : "Failed to process batch operations";
         const status = (err as { status?: number }).status || 500;
         return errorResponse("BATCH_RECORDS_ERROR", message, status);
+      }
+    });
+
+    // --- Query endpoint ---
+
+    // POST /api/:database/query — execute a JSON query DSL against a collection
+    router.post("/api/:database/query", async (req, params) => {
+      try {
+        const body = await req.json();
+        const { collection, filter, sort, fields, limit, offset, search, aggregate, groupBy, having } = body;
+
+        if (!collection || typeof collection !== "string") {
+          return errorResponse("VALIDATION", "Field 'collection' is required.", 400);
+        }
+
+        const queryParams: QueryParams = {};
+        if (filter) queryParams.filter = filter;
+        if (sort) queryParams.sort = Array.isArray(sort) ? sort : [sort];
+        if (fields) queryParams.fields = fields;
+        if (limit !== undefined) queryParams.limit = limit;
+        if (offset !== undefined) queryParams.offset = offset;
+        if (search) queryParams.search = search;
+        if (aggregate) queryParams.aggregate = aggregate;
+        if (groupBy) queryParams.groupBy = groupBy;
+        if (having) queryParams.having = having;
+
+        const pool = manager!.get(params.database);
+        const result = executeQuery(pool.read(), collection, queryParams);
+        const resp: ApiResponse = { data: result.data, meta: result.meta };
+        return jsonResponse(resp);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to execute query";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("QUERY_ERROR", message, status);
       }
     });
   }
