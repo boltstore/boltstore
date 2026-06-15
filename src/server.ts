@@ -29,6 +29,7 @@ import {
 import { executeQuery, type QueryParams } from "./query";
 import { executeReadQuery, executeWriteQuery, explainQuery } from "./admin/query";
 import { createIndex, listIndexes, dropIndex, type IndexDefinition } from "./indexes";
+import { executeTransaction, type TransactionOperation } from "./admin/transaction";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -529,6 +530,29 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         const message = err instanceof Error ? err.message : "Failed to drop index";
         const status = (err as { status?: number }).status || 500;
         return errorResponse("DROP_INDEX_ERROR", message, status);
+      }
+    });
+
+    // --- Transaction endpoint ---
+
+    // POST /api/admin/:database/transactions — execute batched operations atomically (admin)
+    router.post("/api/admin/:database/transactions", async (req, params) => {
+      try {
+        const body = await req.json();
+        const { operations } = body;
+
+        if (!Array.isArray(operations)) {
+          return errorResponse("VALIDATION", "Field 'operations' is required and must be an array.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const result = executeTransaction(pool, operations as TransactionOperation[]);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Transaction failed";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("TRANSACTION_ERROR", message, status);
       }
     });
 
