@@ -30,6 +30,7 @@ import { executeQuery, type QueryParams } from "./query";
 import { executeReadQuery, executeWriteQuery, explainQuery } from "./admin/query";
 import { createIndex, listIndexes, dropIndex, type IndexDefinition } from "./indexes";
 import { executeTransaction, type TransactionOperation } from "./admin/transaction";
+import { expandRecords, cascadeDelete } from "./relations";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -285,7 +286,16 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           }
         }
 
-        const results = listRecords(pool, params.collection, options);
+        const expand = url.searchParams.get("expand");
+        const expandFields = expand ? expand.split(",").map((s) => s.trim()) : [];
+
+        let results = listRecords(pool, params.collection, options);
+
+        // Expand related records if requested
+        if (expandFields.length > 0) {
+          results = expandRecords(pool, params.collection, results, expandFields);
+        }
+
         const body: ApiResponse = { data: results };
         return jsonResponse(body);
       } catch (err) {
@@ -369,12 +379,23 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
     });
 
     // DELETE /api/:database/collections/:collection/records/:id — delete record
-    router.delete("/api/:database/collections/:collection/records/:id", (_req, params) => {
+    router.delete("/api/:database/collections/:collection/records/:id", (req, params) => {
       try {
+        const url = new URL(req.url);
+        const shouldCascade = url.searchParams.get("cascade") === "true";
         const pool = manager!.get(params.database);
-        deleteRecord(pool, params.collection, params.id);
-        const body: ApiResponse = { data: { deleted: true } };
-        return jsonResponse(body);
+
+        if (shouldCascade) {
+          const cascadeResult = cascadeDelete(pool, params.collection, params.id);
+          // Also delete the parent record itself
+          deleteRecord(pool, params.collection, params.id);
+          const body: ApiResponse = { data: { deleted: true, cascade: cascadeResult.deleted, cascaded: true } };
+          return jsonResponse(body);
+        } else {
+          deleteRecord(pool, params.collection, params.id);
+          const body: ApiResponse = { data: { deleted: true } };
+          return jsonResponse(body);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to delete record";
         const status = (err as { status?: number }).status || 500;
