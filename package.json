@@ -2,7 +2,7 @@
   "name": "boltstore",
   "version": "1.0.0",
   "private": false,
-  "description": "Boltstore server \u2014 lightweight backend with realtime sync",
+  "description": "Boltstore server — lightweight backend with realtime sync",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -19,5 +19,9 @@
   "dependencies": {
     "@boltstore/utils": "^1.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^6.0.3"
+  }
 }
