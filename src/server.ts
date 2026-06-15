@@ -8,6 +8,7 @@ import { Router, type RouteHandler } from "./router";
 import { logger, generateRequestId, type LogEntry } from "./logger";
 import { applyCors, handlePreflight, type CorsConfig, defaultConfig as defaultCorsConfig } from "./middleware/cors";
 import { DatabasePool } from "./db/pool";
+import pkg from "../package.json";
 
 export interface ServerConfig {
   port: number;
@@ -64,7 +65,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
     const body: ApiResponse = {
       data: {
         status: "ok",
-        version: "1.0.0",
+        version: pkg.version,
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
         database: dbStats

@@ -6,6 +6,7 @@
 
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { createServer } from "../src/server";
+import pkg from "../package.json";
 
 const TEST_PORT = 9876;
 let server: ReturnType<typeof Bun.serve>;
@@ -34,7 +35,7 @@ describe("GET /api/health", () => {
     const body = await response.json();
     expect(body.data).toBeDefined();
     expect(body.data.status).toBe("ok");
-    expect(body.data.version).toBe("1.0.0");
+    expect(body.data.version).toBe(pkg.version);
     expect(body.data.uptime).toBeGreaterThanOrEqual(0);
     expect(body.data.timestamp).toBeDefined();
   });
