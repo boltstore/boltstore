@@ -7,10 +7,13 @@
 import { Router, type RouteHandler } from "./router";
 import { logger, generateRequestId, type LogEntry } from "./logger";
 import { applyCors, handlePreflight, type CorsConfig, defaultConfig as defaultCorsConfig } from "./middleware/cors";
+import { DatabasePool } from "./db/pool";
 
 export interface ServerConfig {
   port: number;
   cors?: CorsConfig;
+  dbPath?: string;
+  pool?: DatabasePool;
 }
 
 export interface ApiResponse {
@@ -51,17 +54,26 @@ export function errorResponse(code: string, message: string, status = 400, detai
 export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve> {
   const router = new Router();
   const corsConfig = config.cors || defaultCorsConfig;
+  const pool = config.pool;
 
   // --- Routes ---
 
   // Health check
   router.get("/api/health", () => {
+    const dbStats = pool ? pool.stats() : null;
     const body: ApiResponse = {
       data: {
         status: "ok",
         version: "1.0.0",
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
+        database: dbStats
+          ? {
+              path: dbStats.path,
+              read_connections: dbStats.readConnections,
+              write_connection: dbStats.writeConnection,
+            }
+          : null,
       },
     };
     return jsonResponse(body);
@@ -78,7 +90,6 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
       const method = request.method;
       const pathname = url.pathname;
 
-      // Build base log entry
       const logMeta: Partial<LogEntry> = {
         request_id: requestId,
         method,
@@ -86,21 +97,14 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
       };
 
       try {
-        // Handle CORS preflight
         if (method === "OPTIONS") {
           const origin = request.headers.get("Origin");
           logger.debug("CORS preflight", logMeta);
           return handlePreflight(origin, corsConfig);
         }
 
-        // Route matching
         let response: Response;
-
-        // Check for admin routes first (always under /api/admin/)
-        const adminMatch = router.match(method, pathname);
-        const publicMatch = router.match(method, pathname);
-
-        const match = adminMatch || publicMatch;
+        const match = router.match(method, pathname);
 
         if (!match) {
           response = errorResponse("NOT_FOUND", `Route not found: ${method} ${pathname}`, 404);
@@ -114,13 +118,11 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           }
         }
 
-        // Apply CORS headers
         const origin = request.headers.get("Origin");
         if (origin) {
           response = applyCors(response, origin, corsConfig);
         }
 
-        // Log the request
         const durationMs = Math.round(performance.now() - startTime);
         logger.info(`${method} ${pathname} ${response.status}`, {
           ...logMeta,
