@@ -13,8 +13,14 @@ export interface BoltstoreConfig {
   port: number;
   databasePath: string;
   jwtSecret?: string;
+  /** Requests per minute for public endpoints. Default: 100. */
   rateLimitPublic: number;
+  /** Requests per minute for authenticated endpoints. Default: 1000. */
   rateLimitAuth: number;
+  /** Requests per minute for admin endpoints. Default: 500. */
+  rateLimitAdmin: number;
+  /** Rate limit window in seconds. Default: 60. */
+  rateLimitWindowSeconds: number;
   serverTimezone: string;
   corsOrigins: string[];
   corsMethods: string[];
@@ -27,6 +33,8 @@ const DEFAULT_CONFIG: BoltstoreConfig = {
   databasePath: "./data",
   rateLimitPublic: 100,
   rateLimitAuth: 1000,
+  rateLimitAdmin: 500,
+  rateLimitWindowSeconds: 60,
   serverTimezone: "UTC",
   corsOrigins: ["*"],
   corsMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
@@ -36,7 +44,7 @@ const DEFAULT_CONFIG: BoltstoreConfig = {
 
 /**
  * Parse CLI flags from process.argv.
- * Supports: --port, --db, --config, --jwt-secret, --rate-limit-public, --rate-limit-auth, --timezone, --log-level
+ * Supports: --port, --db, --config, --jwt-secret, --rate-limit-public, --rate-limit-auth, --rate-limit-admin, --rate-limit-window, --timezone, --log-level
  */
 function parseCliArgs(): Partial<BoltstoreConfig> {
   const config: Partial<BoltstoreConfig> = {};
@@ -65,6 +73,12 @@ function parseCliArgs(): Partial<BoltstoreConfig> {
       case "--rate-limit-auth":
         if (next) { config.rateLimitAuth = parseInt(next, 10); i++; }
         break;
+      case "--rate-limit-admin":
+        if (next) { config.rateLimitAdmin = parseInt(next, 10); i++; }
+        break;
+      case "--rate-limit-window":
+        if (next) { config.rateLimitWindowSeconds = parseInt(next, 10); i++; }
+        break;
       case "--timezone":
         if (next) { config.serverTimezone = next; i++; }
         break;
@@ -88,6 +102,8 @@ function parseEnvVars(): Partial<BoltstoreConfig> {
   if (Bun.env.JWT_SECRET) config.jwtSecret = Bun.env.JWT_SECRET;
   if (Bun.env.RATE_LIMIT_PUBLIC) config.rateLimitPublic = parseInt(Bun.env.RATE_LIMIT_PUBLIC, 10);
   if (Bun.env.RATE_LIMIT_AUTH) config.rateLimitAuth = parseInt(Bun.env.RATE_LIMIT_AUTH, 10);
+  if (Bun.env.RATE_LIMIT_ADMIN) config.rateLimitAdmin = parseInt(Bun.env.RATE_LIMIT_ADMIN, 10);
+  if (Bun.env.RATE_LIMIT_WINDOW_SECONDS) config.rateLimitWindowSeconds = parseInt(Bun.env.RATE_LIMIT_WINDOW_SECONDS, 10);
   if (Bun.env.SERVER_TIMEZONE) config.serverTimezone = Bun.env.SERVER_TIMEZONE;
   if (Bun.env.CORS_ORIGINS) config.corsOrigins = Bun.env.CORS_ORIGINS.split(",").map((s) => s.trim());
   if (Bun.env.CORS_METHODS) config.corsMethods = Bun.env.CORS_METHODS.split(",").map((s) => s.trim());
@@ -115,6 +131,8 @@ async function parseConfigFile(filePath: string): Promise<Partial<BoltstoreConfi
     if (typeof parsed.jwtSecret === "string") config.jwtSecret = parsed.jwtSecret;
     if (typeof parsed.rateLimitPublic === "number") config.rateLimitPublic = parsed.rateLimitPublic;
     if (typeof parsed.rateLimitAuth === "number") config.rateLimitAuth = parsed.rateLimitAuth;
+    if (typeof parsed.rateLimitAdmin === "number") config.rateLimitAdmin = parsed.rateLimitAdmin;
+    if (typeof parsed.rateLimitWindowSeconds === "number") config.rateLimitWindowSeconds = parsed.rateLimitWindowSeconds;
     if (typeof parsed.serverTimezone === "string") config.serverTimezone = parsed.serverTimezone;
     if (Array.isArray(parsed.corsOrigins)) config.corsOrigins = parsed.corsOrigins;
     if (Array.isArray(parsed.corsMethods)) config.corsMethods = parsed.corsMethods;

@@ -40,10 +40,17 @@ if (isCliCommand) {
   const server = createServer({
     port: config.port,
     manager,
+    auth: { secret: config.jwtSecret },
     cors: {
       origins: config.corsOrigins,
       methods: config.corsMethods,
       headers: config.corsHeaders,
+    },
+    rateLimit: {
+      public: config.rateLimitPublic,
+      auth: config.rateLimitAuth,
+      admin: config.rateLimitAdmin,
+      windowSeconds: config.rateLimitWindowSeconds,
     },
   });
 
@@ -52,6 +59,7 @@ if (isCliCommand) {
   console.log(`[boltstore] Data directory: ${config.databasePath}`);
   console.log(`[boltstore] Log level: ${config.logLevel}`);
   console.log(`[boltstore] Timezone: ${config.serverTimezone}`);
+  console.log(`[boltstore] Rate limits: public=${config.rateLimitPublic}/min, auth=${config.rateLimitAuth}/min, admin=${config.rateLimitAdmin}/min`);
 
   if (config.serverTimezone && config.serverTimezone !== "UTC") {
     process.env.TZ = config.serverTimezone;

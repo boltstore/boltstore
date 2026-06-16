@@ -1,5 +1,5 @@
 /**
- * HTTP server for Boltstore — built on Bun.serve with routing, CORS, and logging.
+ * HTTP server for Boltstore — built on Bun.serve with routing, CORS, rate limiting, and logging.
  *
  * Route handlers are organized in `src/routes/` for maintainability.
  *
@@ -9,6 +9,7 @@
 import { Router, type RouteHandler } from "./router";
 import { logger, generateRequestId, type LogEntry } from "./logger";
 import { applyCors, handlePreflight, type CorsConfig, defaultConfig as defaultCorsConfig } from "./middleware/cors";
+import { checkRateLimit, type RateLimitConfig } from "./middleware/rate-limit";
 import { DatabaseManager } from "./db/manager";
 import { registerHealthRoutes } from "./routes/health";
 import { registerDatabaseRoutes } from "./routes/databases";
@@ -24,6 +25,7 @@ import { registerBackupRoutes } from "./routes/backup";
 import { registerImportExportRoutes } from "./routes/import-export";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerOAuthRoutes } from "./routes/oauth";
+import { registerApiKeyRoutes } from "./routes/api-keys";
 import { type AuthConfig } from "./auth";
 
 export interface ServerConfig {
@@ -31,6 +33,8 @@ export interface ServerConfig {
   cors?: CorsConfig;
   manager?: DatabaseManager;
   auth?: AuthConfig;
+  /** Rate limit configuration. If set, rate limiting is enforced on all routes. */
+  rateLimit?: RateLimitConfig;
 }
 
 export interface ApiResponse {
@@ -66,12 +70,23 @@ export function errorResponse(code: string, message: string, status = 400, detai
 }
 
 /**
+ * Determine the rate limit tier for a request based on its path.
+ * Returns "admin" | "auth" | "public".
+ */
+function getRateLimitTier(pathname: string): "admin" | "auth" | "public" {
+  if (pathname.startsWith("/api/admin/")) return "admin";
+  if (pathname.startsWith("/api/")) return "auth";
+  return "public";
+}
+
+/**
  * Create and start the Boltstore HTTP server.
  */
 export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve> {
   const router = new Router();
   const corsConfig = config.cors || defaultCorsConfig;
   const manager = config.manager;
+  const rateLimit = config.rateLimit;
 
   // Register all route groups
   registerHealthRoutes(router, manager);
@@ -89,6 +104,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
     registerImportExportRoutes(router, manager);
     registerAuthRoutes(router, manager, config.auth || {});
     registerOAuthRoutes(router, manager, config.auth || {});
+    registerApiKeyRoutes(router, manager);
   }
 
   // --- Server creation ---
@@ -109,12 +125,42 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
       };
 
       try {
+        // --- Rate limiting ---
+        if (rateLimit) {
+          const tier = getRateLimitTier(pathname);
+          const clientIp = request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim()
+            || request.headers.get("X-Real-IP")
+            || "127.0.0.1";
+
+          const limitResult = checkRateLimit(clientIp, pathname, tier, rateLimit);
+          if (!limitResult.allowed) {
+            logger.warn("Rate limit exceeded", {
+              ...logMeta,
+              client_ip: clientIp,
+              tier,
+              retry_after: limitResult.retryAfter,
+            });
+            const response = errorResponse(
+              "RATE_LIMITED",
+              `Too many requests. Try again in ${Math.ceil(limitResult.retryAfter)} seconds.`,
+              429
+            );
+            response.headers.set("Retry-After", String(Math.ceil(limitResult.retryAfter)));
+            response.headers.set("X-RateLimit-Limit", String(limitResult.limit));
+            response.headers.set("X-RateLimit-Remaining", String(limitResult.remaining));
+            response.headers.set("X-RateLimit-Reset", String(limitResult.reset));
+            return response;
+          }
+        }
+
+        // --- CORS preflight ---
         if (method === "OPTIONS") {
           const origin = request.headers.get("Origin");
           logger.debug("CORS preflight", logMeta);
           return handlePreflight(origin, corsConfig);
         }
 
+        // --- Route matching ---
         let response: Response;
         const match = router.match(method, pathname);
 
@@ -130,11 +176,13 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           }
         }
 
+        // --- CORS headers ---
         const origin = request.headers.get("Origin");
         if (origin) {
           response = applyCors(response, origin, corsConfig);
         }
 
+        // --- Logging ---
         const durationMs = Math.round(performance.now() - startTime);
         logger.info(`${method} ${pathname} ${response.status}`, {
           ...logMeta,

@@ -54,10 +54,17 @@ export async function runCli(args: string[]): Promise<void> {
       const server = createServer({
         port: config.port,
         manager,
+        auth: { secret: config.jwtSecret },
         cors: {
           origins: config.corsOrigins,
           methods: config.corsMethods,
           headers: config.corsHeaders,
+        },
+        rateLimit: {
+          public: config.rateLimitPublic,
+          auth: config.rateLimitAuth,
+          admin: config.rateLimitAdmin,
+          windowSeconds: config.rateLimitWindowSeconds,
         },
       });
 
@@ -75,6 +82,8 @@ export async function runCli(args: string[]): Promise<void> {
         databasePath: "./data",
         rateLimitPublic: 100,
         rateLimitAuth: 1000,
+        rateLimitAdmin: 500,
+        rateLimitWindowSeconds: 60,
         serverTimezone: "UTC",
         corsOrigins: ["*"],
         corsMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
