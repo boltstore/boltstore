@@ -22,11 +22,14 @@ import { registerMigrationRoutes } from "./routes/migrations";
 import { registerViewRoutes } from "./routes/views";
 import { registerBackupRoutes } from "./routes/backup";
 import { registerImportExportRoutes } from "./routes/import-export";
+import { registerAuthRoutes } from "./routes/auth";
+import { type AuthConfig } from "./auth";
 
 export interface ServerConfig {
   port: number;
   cors?: CorsConfig;
   manager?: DatabaseManager;
+  auth?: AuthConfig;
 }
 
 export interface ApiResponse {
@@ -83,6 +86,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
     registerViewRoutes(router, manager);
     registerBackupRoutes(router, manager);
     registerImportExportRoutes(router, manager);
+    registerAuthRoutes(router, manager, config.auth || {});
   }
 
   // --- Server creation ---

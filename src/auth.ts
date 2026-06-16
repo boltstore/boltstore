@@ -517,6 +517,76 @@ export function getUserById(
 }
 
 /**
+ * Update a user's profile (email and/or password).
+ *
+ * `PATCH /api/:database/auth/me`
+ */
+export async function updateProfile(
+  pool: DatabasePool,
+  userId: string,
+  data: { email?: string; password?: string }
+): Promise<User> {
+  if (!data.email && !data.password) {
+    throw Object.assign(
+      new Error("At least one of 'email' or 'password' must be provided."),
+      { status: 400 }
+    );
+  }
+
+  bootstrapAuthTables(pool);
+
+  // Verify user exists
+  const db = pool.read();
+  const existing = db
+    .query("SELECT id, email, role, created_at, updated_at FROM _users WHERE id=?")
+    .get(userId) as User | null;
+
+  if (!existing) {
+    throw Object.assign(
+      new Error(`User "${userId}" not found.`),
+      { status: 404 }
+    );
+  }
+
+  return pool.writeTransaction(async () => {
+    const writeDb = pool.write();
+    const ts = now();
+
+    if (data.email) {
+      validateEmail(data.email);
+
+      // Check for duplicate email
+      const dup = writeDb
+        .query("SELECT 1 FROM _users WHERE email=? AND id!=?")
+        .get(data.email, userId);
+      if (dup) {
+        throw Object.assign(
+          new Error("A user with this email already exists."),
+          { status: 409 }
+        );
+      }
+
+      writeDb.run("UPDATE _users SET email=?, updated_at=? WHERE id=?", [data.email, ts, userId]);
+    }
+
+    if (data.password) {
+      validatePassword(data.password);
+      const passwordHash = await hashPassword(data.password);
+      writeDb.run("UPDATE _users SET password_hash=?, updated_at=? WHERE id=?", [passwordHash, ts, userId]);
+    } else if (data.email) {
+      writeDb.run("UPDATE _users SET updated_at=? WHERE id=?", [ts, userId]);
+    }
+
+    // Return updated user
+    const updated = writeDb
+      .query("SELECT id, email, role, created_at, updated_at FROM _users WHERE id=?")
+      .get(userId) as User;
+
+    return updated;
+  });
+}
+
+/**
  * Verify an access token and return the user context.
  * Checks JWT signature, expiry, and token revocation status.
  */
