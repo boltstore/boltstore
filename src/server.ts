@@ -23,6 +23,7 @@ import { registerViewRoutes } from "./routes/views";
 import { registerBackupRoutes } from "./routes/backup";
 import { registerImportExportRoutes } from "./routes/import-export";
 import { registerAuthRoutes } from "./routes/auth";
+import { registerOAuthRoutes } from "./routes/oauth";
 import { type AuthConfig } from "./auth";
 
 export interface ServerConfig {
@@ -87,6 +88,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
     registerBackupRoutes(router, manager);
     registerImportExportRoutes(router, manager);
     registerAuthRoutes(router, manager, config.auth || {});
+    registerOAuthRoutes(router, manager, config.auth || {});
   }
 
   // --- Server creation ---
