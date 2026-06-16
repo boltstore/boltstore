@@ -11,6 +11,7 @@
  */
 
 import { DatabasePool } from "../db/pool";
+import { toBindings } from "../db/cast";
 import { validateIdentifier } from "@boltstore/utils";
 
 /** System tables that must not be dropped or altered via raw SQL. */
@@ -67,7 +68,7 @@ export function executeReadQuery(
   }
 
   const db = pool.read();
-  const rows = db.query(sql).all(...params) as Record<string, unknown>[];
+  const rows = db.query(sql).all(...toBindings(params)) as Record<string, unknown>[];
 
   const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
 
@@ -107,7 +108,7 @@ export function executeWriteQuery(
 
   return pool.writeTransaction(() => {
     const db = pool.write();
-    db.run(sql, params);
+    db.run(sql, toBindings(params));
 
     // Use db.query() for SELECT-based introspection (run() doesn't support .values())
     const changesQuery = db.query("SELECT changes() as cnt").get() as { cnt: number } | null;
@@ -143,6 +144,6 @@ export function explainQuery(
   }
 
   const db = pool.read();
-  const rows = db.query(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Record<string, unknown>[];
+  const rows = db.query(`EXPLAIN QUERY PLAN ${sql}`).all(...toBindings(params)) as Record<string, unknown>[];
   return { rows };
 }

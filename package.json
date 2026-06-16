@@ -14,6 +14,9 @@
     "dev": "tsc --watch",
     "start": "bun run dist/index.js",
     "test": "bun test",
+    "compile": "bun build --compile --target=bun-linux-x64 --outfile=dist/boltstore ./src/entry.ts",
+    "compile:macos": "bun build --compile --target=bun-darwin-arm64 --outfile=dist/boltstore ./src/entry.ts",
+    "compile:windows": "bun build --compile --target=bun-windows-x64 --outfile=dist/boltstore.exe ./src/entry.ts",
     "prepublish": "bun run build"
   },
   "dependencies": {

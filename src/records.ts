@@ -12,6 +12,7 @@
  */
 
 import { DatabasePool } from "./db/pool";
+import { toBindings } from "./db/cast";
 import { validateIdentifier } from "@boltstore/utils";
 
 // ---------------------------------------------------------------------------
@@ -101,7 +102,7 @@ export function createRecord(
     // Use INSERT OR REPLACE to support upsert
     db.run(
       `INSERT OR REPLACE INTO "${collection}" (${quotedKeys}) VALUES (${placeholders})`,
-      values
+      toBindings(values)
     );
 
     // Fetch and return the inserted record
@@ -164,7 +165,7 @@ export function listRecords(
     params.push(options.offset);
   }
 
-  return db.query(sql).all(...params) as Record<string, unknown>[];
+  return db.query(sql).all(...toBindings(params)) as Record<string, unknown>[];
 }
 
 /**
@@ -248,7 +249,7 @@ export function updateRecord(
     const setClauses = updates.map(([k]) => `"${k}" = ?`).join(", ");
     const values = [...updates.map(([, v]) => v), id];
 
-    db.run(`UPDATE "${collection}" SET ${setClauses} WHERE id=?`, values);
+    db.run(`UPDATE "${collection}" SET ${setClauses} WHERE id=?`, toBindings(values));
 
     // Return updated record
     const row = db.query(`SELECT * FROM "${collection}" WHERE id=?`).get(id);
@@ -310,7 +311,7 @@ export function countRecords(
     sql += " WHERE " + conditions.join(" AND ");
   }
 
-  const row = db.query(sql).all(...params) as { cnt?: number }[];
+  const row = db.query(sql).all(...toBindings(params)) as { cnt?: number }[];
   return row[0]?.cnt ?? 0;
 }
 
@@ -384,7 +385,7 @@ export function batchRecords(
           const values = keys.map((k) => record[k]);
           db.run(
             `INSERT OR REPLACE INTO "${collection}" (${quotedKeys}) VALUES (${placeholders})`,
-            values
+            toBindings(values)
           );
           result.created++;
           break;
@@ -416,7 +417,7 @@ export function batchRecords(
           const updates: [string, unknown][] = [...userUpdates, ["updated_at", timestamp]];
           const setClauses = updates.map(([k]) => `"${k}" = ?`).join(", ");
           const vals = [...updates.map(([, v]) => v), op.id];
-          db.run(`UPDATE "${collection}" SET ${setClauses} WHERE id=?`, vals);
+          db.run(`UPDATE "${collection}" SET ${setClauses} WHERE id=?`, toBindings(vals));
           result.updated++;
           break;
         }

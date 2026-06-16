@@ -206,7 +206,7 @@ export function listCollections(pool: DatabasePool): CollectionInfo[] {
 
   const rows = db.query("SELECT name, schema_json, created_at, updated_at FROM _collections ORDER BY name").all();
 
-  return rows.map((row: Record<string, unknown>) => {
+  return (rows as Record<string, unknown>[]).map((row: Record<string, unknown>) => {
     const name = String(row.name || "");
     let schema: ColumnDefinition[] = [];
     try {

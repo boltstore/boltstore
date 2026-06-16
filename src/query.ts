@@ -11,6 +11,7 @@
  * @module boltstore/query
  */
 
+import { toBindings } from "./db/cast";
 import { validateIdentifier } from "@boltstore/utils";
 
 // ---------------------------------------------------------------------------
@@ -406,7 +407,7 @@ export function executeQuery(
   const { sql, bindings } = buildQuery(collection, params);
 
   // Execute query
-  const data = db.query(sql).all(...bindings) as Record<string, unknown>[];
+  const data = db.query(sql).all(...toBindings(bindings)) as Record<string, unknown>[];
 
   // For aggregates, return just the result
   if (isAggregate) {
@@ -456,6 +457,6 @@ function countTotal(
     countBindings.push(params.search);
   }
 
-  const row = db.query(countSql).get(...countBindings) as { cnt?: number } | null;
+  const row = db.query(countSql).get(...toBindings(countBindings)) as { cnt?: number } | null;
   return row?.cnt ?? 0;
 }

@@ -8,6 +8,7 @@
  */
 
 import { DatabasePool } from "../db/pool";
+import { toBindings } from "../db/cast";
 
 /** A single operation within a transaction. */
 export interface TransactionOperation {
@@ -74,11 +75,11 @@ export function executeTransaction(
         trimmed.startsWith("WITH");
 
       if (isSelect) {
-        const rows = db.query(op.sql).all(...params) as Record<string, unknown>[];
+        const rows = db.query(op.sql).all(...toBindings(params)) as Record<string, unknown>[];
         const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
         results.push({ index: i, rows, columns });
       } else {
-        db.run(op.sql, params);
+        db.run(op.sql, toBindings(params));
         const changesQuery = db.query("SELECT changes() as cnt").get() as { cnt: number } | null;
         const rowIdQuery = db.query("SELECT last_insert_rowid() as id").get() as { id: number } | null;
         results.push({
