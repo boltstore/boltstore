@@ -32,6 +32,7 @@ import { createIndex, listIndexes, dropIndex, type IndexDefinition } from "./ind
 import { executeTransaction, type TransactionOperation } from "./admin/transaction";
 import { expandRecords, cascadeDelete } from "./relations";
 import { listMigrations, getPendingMigrations, applyMigrations, rollbackLastMigration } from "./migrations";
+import { importData, exportData } from "./admin/import-export";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -647,6 +648,86 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         const message = err instanceof Error ? err.message : "Failed to explain query";
         const status = (err as { status?: number }).status || 500;
         return errorResponse("EXPLAIN_ERROR", message, status);
+      }
+    });
+
+    // --- Import/Export routes ---
+
+    // POST /api/admin/:database/collections/:collection/import — import CSV or JSON (admin)
+    router.post("/api/admin/:database/collections/:collection/import", async (req, params) => {
+      try {
+        const body = await req.json();
+        const { data, format, autoCreate, dryRun, hasHeader } = body;
+
+        if (!data || typeof data !== "string") {
+          return errorResponse("VALIDATION", "Field 'data' is required and must be a string.", 400);
+        }
+        if (format !== undefined && format !== "csv" && format !== "json") {
+          return errorResponse("VALIDATION", "Field 'format' must be 'csv' or 'json'.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const result = importData(pool, params.collection, data, {
+          format,
+          autoCreate,
+          dryRun,
+          hasHeader,
+        });
+
+        const status = dryRun ? 200 : (result.imported > 0 || result.collection ? 201 : 200);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp, status);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to import data";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("IMPORT_ERROR", message, status);
+      }
+    });
+
+    // GET /api/admin/:database/collections/:collection/export — export to CSV or JSON (admin)
+    router.get("/api/admin/:database/collections/:collection/export", (req, params) => {
+      try {
+        const url = new URL(req.url);
+        const format = (url.searchParams.get("format") || "json") as "csv" | "json";
+        const sort = url.searchParams.get("sort") || undefined;
+        const direction = (url.searchParams.get("direction") || undefined) as "asc" | "desc" | undefined;
+        const limit = url.searchParams.get("limit");
+        const offset = url.searchParams.get("offset");
+        const fieldsParam = url.searchParams.get("fields");
+        const fields = fieldsParam ? fieldsParam.split(",").map((s) => s.trim()) : undefined;
+
+        if (format !== "csv" && format !== "json") {
+          return errorResponse("VALIDATION", "Query parameter 'format' must be 'csv' or 'json'.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const result = exportData(pool, params.collection, {
+          format,
+          sort,
+          direction,
+          limit: limit ? parseInt(limit, 10) : undefined,
+          offset: offset ? parseInt(offset, 10) : undefined,
+          fields,
+        });
+
+        // For CSV export, return as text/csv
+        if (format === "csv") {
+          return new Response(result.data, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/csv; charset=utf-8",
+              "Content-Disposition": `attachment; filename="${params.collection}.csv"`,
+            },
+          });
+        }
+
+        // For JSON export, use the standard envelope
+        const resp: ApiResponse = { data: JSON.parse(result.data) };
+        return jsonResponse(resp);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to export data";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("EXPORT_ERROR", message, status);
       }
     });
   }

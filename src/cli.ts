@@ -13,6 +13,7 @@ import { DatabaseManager } from "./db/manager";
 import { createServer } from "./server";
 import { loadConfig } from "./config";
 import { listMigrations, applyMigrations, rollbackLastMigration } from "./migrations";
+import { importData, exportData } from "./admin/import-export";
 
 const HELP = `
 Boltstore — Lightweight backend-as-a-service
@@ -25,6 +26,8 @@ Commands:
   migrate [--db <path>] [--dir <path>]  Run pending migrations
   migrate:rollback [--db <path>]        Rollback last migration
   migrations [--db <path>]              List migration status
+  import <collection> <file> [--db <path>] [--format csv|json]  Import data
+  export <collection> [--db <path>] [--format csv|json]         Export data (stdout)
   status                Display server health and stats
 
 Options:
@@ -33,6 +36,7 @@ Options:
   --config <path>       Path to config file
   --log-level <level>   Log level: debug, info, warn, error
   --timezone <tz>       Server timezone
+  --format <fmt>        Format for import/export: csv or json
   --help                Show this help
 `;
 
@@ -158,6 +162,92 @@ export async function runCli(args: string[]): Promise<void> {
           for (const m of migrations) {
             console.log(`  ${m.name} — ${m.appliedAt}`);
           }
+        }
+      } finally {
+        manager.close();
+      }
+      break;
+    }
+
+    case "import": {
+      const collection = args[1];
+      const filePath = args[2];
+
+      if (!collection || !filePath) {
+        console.log("Usage: boltstore import <collection> <file> [--db <path>] [--format csv|json]");
+        break;
+      }
+
+      const config = await loadConfig();
+      const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+      const formatArg = args.includes("--format") ? args[args.indexOf("--format") + 1] : undefined;
+
+      let format: "csv" | "json" | undefined;
+      if (formatArg === "csv") format = "csv";
+      else if (formatArg === "json") format = "json";
+      else {
+        // Auto-detect from file extension
+        if (filePath.endsWith(".csv")) format = "csv";
+        else format = "json";
+      }
+
+      const manager = new DatabaseManager({ dataDir: config.databasePath });
+
+      try {
+        if (!manager.exists(dbName)) {
+          manager.createDatabase(dbName);
+        }
+
+        const input = await Bun.file(filePath).text();
+        const pool = manager.get(dbName);
+        const result = importData(pool, collection, input, { format, autoCreate: true });
+
+        if (result.collection) {
+          console.log(`[boltstore] Created collection "${collection}" with auto-detected schema.`);
+        }
+        console.log(`[boltstore] Imported ${result.imported} record(s).`);
+        if (result.failed > 0) {
+          console.log(`[boltstore] ${result.failed} row(s) failed validation.`);
+          if (result.errors) {
+            for (const err of result.errors) {
+              console.log(`  Row ${err.row + 1}: ${err.message}`);
+            }
+          }
+        }
+      } finally {
+        manager.close();
+      }
+      break;
+    }
+
+    case "export": {
+      const collection = args[1];
+
+      if (!collection) {
+        console.log("Usage: boltstore export <collection> [--db <path>] [--format csv|json]");
+        break;
+      }
+
+      const config = await loadConfig();
+      const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+      const formatArg = args.includes("--format") ? args[args.indexOf("--format") + 1] : "json";
+      const format: "csv" | "json" = (formatArg === "csv" ? "csv" : "json");
+
+      const manager = new DatabaseManager({ dataDir: config.databasePath });
+
+      try {
+        if (!manager.exists(dbName)) {
+          console.log(`[boltstore] Database "${dbName}" not found.`);
+          break;
+        }
+
+        const pool = manager.get(dbName);
+        const result = exportData(pool, collection, { format });
+
+        if (format === "csv") {
+          process.stdout.write(result.data);
+        } else {
+          console.log(result.data);
         }
       } finally {
         manager.close();
