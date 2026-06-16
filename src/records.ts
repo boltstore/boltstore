@@ -141,6 +141,7 @@ export function listRecords(
   // Build WHERE clause from filter
   if (options?.filter) {
     for (const [key, value] of Object.entries(options.filter)) {
+      validateIdentifier(key, "filter field");
       conditions.push(`"${key}" = ?`);
       params.push(value);
     }
@@ -150,8 +151,9 @@ export function listRecords(
     sql += " WHERE " + conditions.join(" AND ");
   }
 
-  // Sorting
+  // Sorting — validate sort field to prevent SQL injection
   const sortField = options?.sort || "created_at";
+  validateIdentifier(sortField, "sort field");
   const direction = options?.direction === "asc" ? "ASC" : "DESC";
   sql += ` ORDER BY "${sortField}" ${direction}`;
 
