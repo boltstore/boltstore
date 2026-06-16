@@ -3,7 +3,7 @@ import { DatabaseManager } from "../db/manager";
 import { ApiResponse, jsonResponse, errorResponse } from "../server";
 
 export function registerDatabaseRoutes(router: Router, manager: DatabaseManager): void {
-  router.get("/api/databases", () => {
+  router.get("/api/admin/databases", () => {
     try {
       const databases = manager.listDatabases();
       return jsonResponse({ data: databases });

@@ -69,9 +69,9 @@ describe("GET /api/health", () => {
   });
 });
 
-describe("GET /api/databases", () => {
+describe("GET /api/admin/databases", () => {
   test("returns empty list initially", async () => {
-    const response = await fetch(`http://localhost:${TEST_PORT}/api/databases`);
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`);
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.data).toEqual([]);
@@ -80,7 +80,7 @@ describe("GET /api/databases", () => {
   test("returns created databases", async () => {
     manager.createDatabase("servertest");
 
-    const response = await fetch(`http://localhost:${TEST_PORT}/api/databases`);
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`);
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.data.length).toBe(1);
