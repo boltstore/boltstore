@@ -17,6 +17,7 @@ import {
   isReservedTable,
   type ColumnType,
 } from "@boltstore/utils";
+import { setRLS, type RLSConfig } from "./rls";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -97,11 +98,14 @@ function tableExists(pool: DatabasePool, name: string): boolean {
  * This is an **admin-only** operation (`POST /api/admin/collections`).
  * The table is created with system columns `id`, `created_at`, and `updated_at`
  * plus the user-specified columns.
+ *
+ * @param options.rls - Optional Row-Level Security rules for the collection.
  */
 export function createCollection(
   pool: DatabasePool,
   name: string,
-  columns: ColumnDefinition[]
+  columns: ColumnDefinition[],
+  options?: { rls?: RLSConfig }
 ): CollectionInfo {
   // Validate collection name
   validateIdentifier(name, "collection name");
@@ -161,10 +165,15 @@ export function createCollection(
       CREATE TABLE IF NOT EXISTS _collections (
         name TEXT PRIMARY KEY,
         schema_json TEXT NOT NULL,
+        read_rule TEXT,
+        write_rule TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
+    // Migrate existing _collections that lack RLS columns
+    try { db.run("ALTER TABLE _collections ADD COLUMN read_rule TEXT"); } catch {}
+    try { db.run("ALTER TABLE _collections ADD COLUMN write_rule TEXT"); } catch {}
 
     // Create the actual table
     const sql = buildCreateTableSQL(name, columns);
@@ -177,6 +186,11 @@ export function createCollection(
       "INSERT INTO _collections (name, schema_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
       [name, schemaJson, now, now]
     );
+
+    // Apply RLS if provided
+    if (options?.rls) {
+      setRLS(pool, name, options.rls);
+    }
 
     return {
       name,
@@ -287,7 +301,8 @@ export function getCollection(pool: DatabasePool, name: string): CollectionInfo 
 export function updateCollection(
   pool: DatabasePool,
   name: string,
-  newColumns: ColumnDefinition[]
+  newColumns: ColumnDefinition[],
+  options?: { rls?: RLSConfig }
 ): CollectionInfo {
   validateIdentifier(name, "collection name");
 
@@ -374,6 +389,11 @@ export function updateCollection(
     const schemaJson = JSON.stringify(mergedSchema);
 
     db.run("UPDATE _collections SET schema_json=?, updated_at=? WHERE name=?", [schemaJson, now, name]);
+
+    // Apply RLS if provided
+    if (options?.rls) {
+      setRLS(pool, name, options.rls);
+    }
 
     // Return info
     const countRow = db.query(`SELECT COUNT(*) as cnt FROM "${name}"`).get() as { cnt?: number } | null;
