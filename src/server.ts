@@ -33,6 +33,7 @@ import { executeTransaction, type TransactionOperation } from "./admin/transacti
 import { expandRecords, cascadeDelete } from "./relations";
 import { listMigrations, getPendingMigrations, applyMigrations, rollbackLastMigration } from "./migrations";
 import { importData, exportData } from "./admin/import-export";
+import { createBackup, listBackups, restoreBackup } from "./admin/backup";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -648,6 +649,56 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         const message = err instanceof Error ? err.message : "Failed to explain query";
         const status = (err as { status?: number }).status || 500;
         return errorResponse("EXPLAIN_ERROR", message, status);
+      }
+    });
+
+    // --- Backup/Restore routes ---
+
+    // POST /api/admin/:database/backup — create a backup snapshot (admin)
+    router.post("/api/admin/:database/backup", async (req, params) => {
+      try {
+        const body = await req.json().catch(() => ({}));
+        const { label } = body;
+
+        const pool = manager!.get(params.database);
+        const dataDir = manager!.getDataDir();
+        const result = createBackup(pool, params.database, dataDir, { label });
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp, 201);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create backup";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("BACKUP_ERROR", message, status);
+      }
+    });
+
+    // GET /api/admin/:database/backups — list all backups (admin)
+    router.get("/api/admin/:database/backups", (_req, params) => {
+      try {
+        const pool = manager!.get(params.database);
+        const backups = listBackups(pool);
+        const body: ApiResponse = { data: backups };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to list backups";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("LIST_BACKUPS_ERROR", message, status);
+      }
+    });
+
+    // POST /api/admin/:database/restore/:backupId — restore from backup (admin)
+    router.post("/api/admin/:database/restore/:backupId", (_req, params) => {
+      try {
+        const result = restoreBackup(manager!, params.database, params.backupId);
+        const body: ApiResponse = {
+          data: result,
+          meta: { warning: "All active connections to this database have been dropped." },
+        };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to restore backup";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("RESTORE_ERROR", message, status);
       }
     });
 

@@ -247,6 +247,27 @@ export class DatabaseManager {
   }
 
   /**
+   * Get the data directory path.
+   */
+  getDataDir(): string {
+    return this.config.dataDir!;
+  }
+
+  /**
+   * Close a specific database pool and remove it from the cache.
+   * Used by backup/restore to swap database files.
+   *
+   * If the pool is not loaded, this is a no-op.
+   */
+  closePool(name: string): void {
+    const cached = this.appPools.get(name);
+    if (cached) {
+      cached.close();
+      this.appPools.delete(name);
+    }
+  }
+
+  /**
    * Close all application database pools and the meta database.
    */
   close(): void {

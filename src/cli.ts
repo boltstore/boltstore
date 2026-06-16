@@ -14,6 +14,7 @@ import { createServer } from "./server";
 import { loadConfig } from "./config";
 import { listMigrations, applyMigrations, rollbackLastMigration } from "./migrations";
 import { importData, exportData } from "./admin/import-export";
+import { createBackup, listBackups, restoreFromFile } from "./admin/backup";
 
 const HELP = `
 Boltstore — Lightweight backend-as-a-service
@@ -28,7 +29,9 @@ Commands:
   migrations [--db <path>]              List migration status
   import <collection> <file> [--db <path>] [--format csv|json]  Import data
   export <collection> [--db <path>] [--format csv|json]         Export data (stdout)
-  status                Display server health and stats
+  backup [--db <path>] [--label <text>]   Create a backup snapshot
+  restore <file> [--db <path>]            Restore from a backup file
+  status                                  Display server health and stats
 
 Options:
   --port <number>       HTTP server port (default: 8080)
@@ -249,6 +252,61 @@ export async function runCli(args: string[]): Promise<void> {
         } else {
           console.log(result.data);
         }
+      } finally {
+        manager.close();
+      }
+      break;
+    }
+
+    case "backup": {
+      const config = await loadConfig();
+      const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+      const label = args.includes("--label") ? args[args.indexOf("--label") + 1] : undefined;
+
+      const manager = new DatabaseManager({ dataDir: config.databasePath });
+
+      try {
+        if (!manager.exists(dbName)) {
+          console.log(`[boltstore] Database "${dbName}" not found.`);
+          break;
+        }
+
+        const pool = manager.get(dbName);
+        const result = createBackup(pool, dbName, manager.getDataDir(), { label });
+
+        console.log(`[boltstore] Backup created: ${result.id}`);
+        console.log(`  Path: ${result.path}`);
+        console.log(`  Size: ${result.sizeBytes} bytes`);
+        if (result.label) console.log(`  Label: ${result.label}`);
+      } finally {
+        manager.close();
+      }
+      break;
+    }
+
+    case "restore": {
+      const filePath = args[1];
+
+      if (!filePath) {
+        console.log("Usage: boltstore restore <file> [--db <path>]");
+        break;
+      }
+
+      const config = await loadConfig();
+      const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+
+      const manager = new DatabaseManager({ dataDir: config.databasePath });
+
+      try {
+        if (!manager.exists(dbName)) {
+          console.log(`[boltstore] Database "${dbName}" not found.`);
+          break;
+        }
+
+        const result = restoreFromFile(manager, dbName, filePath);
+
+        console.log(`[boltstore] Restored database "${result.database}" from ${result.backupPath}`);
+        console.log(`  Restored at: ${result.restoredAt}`);
       } finally {
         manager.close();
       }
