@@ -34,6 +34,7 @@ import { expandRecords, cascadeDelete } from "./relations";
 import { listMigrations, getPendingMigrations, applyMigrations, rollbackLastMigration } from "./migrations";
 import { importData, exportData } from "./admin/import-export";
 import { createBackup, listBackups, restoreBackup } from "./admin/backup";
+import { createView, listViews, getView, queryView, dropView } from "./admin/views";
 import pkg from "../package.json";
 
 export interface ServerConfig {
@@ -649,6 +650,106 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         const message = err instanceof Error ? err.message : "Failed to explain query";
         const status = (err as { status?: number }).status || 500;
         return errorResponse("EXPLAIN_ERROR", message, status);
+      }
+    });
+
+    // --- Views routes ---
+
+    // POST /api/admin/:database/views — create a view (admin)
+    router.post("/api/admin/:database/views", async (req, params) => {
+      try {
+        const body = await req.json();
+        const { name, sql } = body;
+
+        if (!name || typeof name !== "string") {
+          return errorResponse("VALIDATION", "Field 'name' is required and must be a string.", 400);
+        }
+        if (!sql || typeof sql !== "string") {
+          return errorResponse("VALIDATION", "Field 'sql' is required and must be a string.", 400);
+        }
+
+        const pool = manager!.get(params.database);
+        const result = createView(pool, name, sql);
+        const resp: ApiResponse = { data: result };
+        return jsonResponse(resp, 201);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create view";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("CREATE_VIEW_ERROR", message, status);
+      }
+    });
+
+    // GET /api/admin/:database/views — list all views (admin)
+    router.get("/api/admin/:database/views", (_req, params) => {
+      try {
+        const pool = manager!.get(params.database);
+        const views = listViews(pool);
+        const body: ApiResponse = { data: views };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to list views";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("LIST_VIEWS_ERROR", message, status);
+      }
+    });
+
+    // GET /api/admin/:database/views/:name — get view metadata and query data (admin)
+    router.get("/api/admin/:database/views/:name", (req, params) => {
+      try {
+        const url = new URL(req.url);
+        const pool = manager!.get(params.database);
+
+        // Check if ?query=true is set (returns data), otherwise return metadata
+        const isQuery = url.searchParams.get("query") === "true";
+
+        if (isQuery) {
+          const options: {
+            filter?: Record<string, unknown>;
+            sort?: string;
+            direction?: "asc" | "desc";
+            limit?: number;
+            offset?: number;
+          } = {};
+
+          for (const [key, value] of url.searchParams.entries()) {
+            if (key === "query") continue;
+            if (key === "sort") options.sort = value;
+            else if (key === "direction") options.direction = value as "asc" | "desc";
+            else if (key === "limit") options.limit = parseInt(value, 10);
+            else if (key === "offset") options.offset = parseInt(value, 10);
+            else {
+              if (!options.filter) options.filter = {};
+              options.filter[key] = value;
+            }
+          }
+
+          const data = queryView(pool, params.name, options);
+          const body: ApiResponse = { data };
+          return jsonResponse(body);
+        }
+
+        // Return view metadata
+        const info = getView(pool, params.name);
+        const body: ApiResponse = { data: info };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to get view";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("GET_VIEW_ERROR", message, status);
+      }
+    });
+
+    // DELETE /api/admin/:database/views/:name — drop a view (admin)
+    router.delete("/api/admin/:database/views/:name", (_req, params) => {
+      try {
+        const pool = manager!.get(params.database);
+        dropView(pool, params.name);
+        const body: ApiResponse = { data: { deleted: true } };
+        return jsonResponse(body);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to drop view";
+        const status = (err as { status?: number }).status || 500;
+        return errorResponse("DROP_VIEW_ERROR", message, status);
       }
     });
 
