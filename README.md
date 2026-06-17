@@ -31,20 +31,53 @@ docker run -p 8080:8080 -v ./data:/data boltstore/boltstore
 
 ## Configuration
 
-CLI flags override env vars override config file:
+Boltstore merges settings from four sources. Each source overrides the one below it:
 
-```bash
-boltstore serve --port 8080 --db ./data --config boltstore.yaml
+```
+  CLI flags          (highest priority)
+      ↓
+  Environment variables
+      ↓
+  Config file        (boltstore.yaml or boltstore.json, auto-detected)
+      ↓
+  Defaults           (lowest priority)
 ```
 
-| Environment variable | Default | Description |
-|---|---|---|
-| `PORT` | `8080` | HTTP server port |
-| `DATABASE_PATH` | `./data` | Directory for SQLite database files |
-| `JWT_SECRET` | — | Secret key for JWT tokens |
-| `RATE_LIMIT_PUBLIC` | `60/min` | Rate limit for public endpoints |
-| `RATE_LIMIT_AUTH` | `600/min` | Rate limit for authenticated endpoints |
-| `SERVER_TIMEZONE` | `UTC` | Server timezone |
+If both `boltstore.yaml` and `boltstore.json` exist, YAML is used first.
+
+```bash
+# Generate a config file (YAML by default)
+boltstore init
+
+# Or generate JSON instead
+boltstore init --json
+
+# boltstore.yaml / boltstore.json is auto-detected — no --config needed
+boltstore serve
+
+# Override any setting via CLI flags or environment variables
+boltstore serve --port 3000 --db ./myapp
+PORT=3000 boltstore serve
+```
+
+| Config key | Env variable | Default | Description |
+|---|---|---|---|
+| `port` | `PORT` | `8080` | HTTP server port |
+| `databasePath` | `DATABASE_PATH` | `./data` | Directory for SQLite databases |
+| `jwtSecret` | `JWT_SECRET` | — | Secret key for JWT tokens |
+| `rateLimitPublic` | `RATE_LIMIT_PUBLIC` | `100` | Rate limit for public endpoints (req/min) |
+| `rateLimitAuth` | `RATE_LIMIT_AUTH` | `1000` | Rate limit for authenticated endpoints (req/min) |
+| `rateLimitAdmin` | `RATE_LIMIT_ADMIN` | `500` | Rate limit for admin endpoints (req/min) |
+| `rateLimitWindowSeconds` | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window in seconds |
+| `serverTimezone` | `SERVER_TIMEZONE` | `UTC` | Server timezone |
+| `logLevel` | `LOG_LEVEL` | `info` | Logging: debug, info, warn, error |
+| `maxBodySize` | `MAX_BODY_SIZE` | `1048576` | Max request body in bytes |
+| `requestTimeoutMs` | `REQUEST_TIMEOUT_MS` | `30000` | Request handler timeout in ms |
+| `maxBatchSize` | `MAX_BATCH_SIZE` | `1000` | Max operations per batch/transaction |
+| `corsOrigins` | `CORS_ORIGINS` | `[]` | Allowed CORS origins (comma-separated) |
+| `corsMethods` | `CORS_METHODS` | `GET,POST,PATCH,DELETE,OPTIONS` | Allowed CORS methods |
+| `corsHeaders` | `CORS_HEADERS` | `Content-Type,Authorization` | Allowed CORS headers |
+| `trustedProxies` | `TRUSTED_PROXIES` | `[]` | Trusted proxy IPs/CIDRs |
 
 ## API Tiers
 
@@ -57,17 +90,100 @@ boltstore serve --port 8080 --db ./data --config boltstore.yaml
 
 ## Admin Panel
 
-Open `http://localhost:8080/admin` in your browser after starting the server.
-
-During development, Vite HMR automatically refreshes the admin UI as you edit Vue files.
+> **Note:** The admin panel is not yet available. The `/admin` route currently returns a 404.
 
 ## Development
 
 ```bash
+git clone https://github.com/boltstore/boltstore.git
+cd boltstore
 bun install
-bun run build    # compile TypeScript
-bun test         # run tests
-bun run dev      # watch mode
+```
+
+### Run the server from source
+
+```bash
+JWT_SECRET="dev-secret-thats-at-least-32-bytes!!" bun run boltstore
+```
+
+> **Note:** `bolt` and `boltstore` are aliases — both point to `src/bin.ts`. Use whichever you prefer.
+
+Without a command argument, the server starts on port 8080. With a command argument, it dispatches to the corresponding CLI command.
+
+### CLI commands
+
+```bash
+# Start the server
+bun run boltstore serve
+# or: bun run bolt serve
+
+# Generate a config file (YAML by default)
+bun run boltstore init
+
+# Or generate JSON
+bun run boltstore init --json
+
+# Create an admin account (CLI-only, interactive prompt)
+bun run boltstore admin init
+
+# Run pending migrations
+bun run boltstore migrate --db myapp --dir ./migrations
+
+# Rollback last migration
+bun run boltstore migrate:rollback --db myapp
+
+# List migration status
+bun run boltstore migrations --db myapp
+
+# Import data
+bun run boltstore import todos mydata.csv --db myapp --format csv
+
+# Export data (prints to stdout)
+bun run boltstore export todos --db myapp --format json
+
+# Create a backup
+bun run boltstore backup --db myapp --label "pre-deploy"
+
+# Restore from a backup file
+bun run boltstore restore ./data/backups/myapp-20260101.db --db myapp
+
+# Check server status
+bun run boltstore status
+
+# Show help
+bun run boltstore --help
+```
+
+### Build and run from dist
+
+```bash
+bun run bolt:build
+JWT_SECRET="dev-secret-thats-at-least-32-bytes!!" cd boltstore && bun run start
+```
+
+### Run tests
+
+```bash
+bun run bolt:test
+```
+
+### Watch mode
+
+```bash
+cd boltstore && bun run dev
+```
+
+### Compile a binary
+
+```bash
+# macOS Apple Silicon
+bun run bolt:compile
+
+# Linux x64
+cd boltstore && bun run compile
+
+# Windows x64
+cd boltstore && bun run compile:windows
 ```
 
 ## Publishing

@@ -6,10 +6,12 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "boltstore": "./dist/cli.js"
+    "boltstore": "./dist/bin.js"
   },
   "files": ["dist"],
   "scripts": {
+    "bolt": "bun src/bin.ts",
+    "boltstore": "bun src/bin.ts",
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "bun run dist/index.js",

@@ -30,10 +30,10 @@ export function registerAuthRoutes(
 
   // POST /api/:database/auth/register — register a new user
   // Registration on the _system database is not allowed via API.
-  // Use the CLI to create admin API keys.
+  // Admin accounts can only be created via the CLI (boltstore admin init).
   router.post("/api/:database/auth/register", async (req, params) => {
     if (params.database === "_system") {
-      return errorResponse("FORBIDDEN", "Cannot register on the system database. Use the CLI to create admin API keys.", 403);
+      return errorResponse("FORBIDDEN", "Cannot register on the system database. Use the CLI to create an admin account: boltstore admin init", 403);
     }
     try {
       const { email, password } = await req.json();

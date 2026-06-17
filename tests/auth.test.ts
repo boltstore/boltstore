@@ -19,6 +19,7 @@ import {
   type AuthConfig,
   type User,
 } from "../src/auth";
+import { createAdminUser } from "../src/auth/users";
 import { mkdirSync, rmSync } from "node:fs";
 
 const TEST_DATA_DIR = "/tmp/boltstore_test_auth";
@@ -432,6 +433,73 @@ describe("Full auth flow", () => {
     } catch (err: unknown) {
       const e = err as { status?: number };
       expect(e.status).toBe(401);
+    }
+  });
+});
+
+describe("Admin user creation", () => {
+  test("createAdminUser creates a user with source=cli", async () => {
+    const user = await createAdminUser(pool, "admin@example.com", "adminpass123", "Admin User");
+    expect(user.email).toBe("admin@example.com");
+    expect(user.source).toBe("cli");
+    expect(user.name).toBe("Admin User");
+  });
+
+  test("createAdminUser stores name as null when omitted", async () => {
+    const user2 = await createAdminUser(pool, "admin2@example.com", "adminpass456");
+    expect(user2.name).toBeUndefined();
+    expect(user2.source).toBe("cli");
+  });
+
+  test("admin user can login with credentials", async () => {
+    await createAdminUser(pool, "loginadmin@example.com", "testpass789");
+    const tokens = await loginUser(pool, "loginadmin@example.com", "testpass789", config);
+    expect(tokens.accessToken).toBeTruthy();
+    expect(tokens.email).toBe("loginadmin@example.com");
+  });
+
+  test("createAdminUser rejects duplicate email", async () => {
+    await createAdminUser(pool, "dupadmin@example.com", "pass1234");
+    try {
+      await createAdminUser(pool, "dupadmin@example.com", "pass5678");
+      expect.unreachable("Should have thrown");
+    } catch (err: unknown) {
+      const e = err as { status?: number };
+      expect(e.status).toBe(409);
+    }
+  });
+
+  test("regular registerUser creates user with source=register", async () => {
+    const user = await registerUser(pool, "normaluser@example.com", "pass1234");
+    expect(user.source).toBe("register");
+    expect(user.name).toBeUndefined();
+  });
+
+  test("getUserById returns name and source fields", async () => {
+    const user = await createAdminUser(pool, "withname@example.com", "pass1234", "Test Name");
+    const fetched = getUserById(pool, user.id);
+    expect(fetched.name).toBe("Test Name");
+    expect(fetched.source).toBe("cli");
+    expect(fetched.email).toBe("withname@example.com");
+  });
+
+  test("createAdminUser rejects invalid email", async () => {
+    try {
+      await createAdminUser(pool, "notanemail", "pass1234");
+      expect.unreachable("Should have thrown");
+    } catch (err: unknown) {
+      const e = err as { status?: number };
+      expect(e.status).toBe(400);
+    }
+  });
+
+  test("createAdminUser rejects short password", async () => {
+    try {
+      await createAdminUser(pool, "valid@example.com", "1234");
+      expect.unreachable("Should have thrown");
+    } catch (err: unknown) {
+      const e = err as { status?: number };
+      expect(e.status).toBe(400);
     }
   });
 });

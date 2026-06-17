@@ -9,8 +9,8 @@ export async function findOrCreateOAuthUser(
   const db = pool.read();
 
   const existing = db
-    .query("SELECT id, email, oauth_only, password_set, created_at, updated_at FROM _users WHERE email=?")
-    .get(profile.email) as (User & { oauth_only?: number; password_set?: number }) | null;
+    .query("SELECT id, email, name, source, oauth_only, password_set, created_at, updated_at FROM _users WHERE email=?")
+    .get(profile.email) as (User & { oauth_only?: number; password_set?: number; name?: string; source?: string }) | null;
 
   if (existing) {
     const passwordSet = existing.password_set ?? (existing.oauth_only === 1 ? 0 : 1);
@@ -27,11 +27,20 @@ export async function findOrCreateOAuthUser(
   return pool.writeTransaction(() => {
     const writeDb = pool.write();
     writeDb.run(
-      "INSERT INTO _users (id, email, password_hash, oauth_only, password_set, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [id, profile.email, randomPassword, 1, 0, ts, ts]
+      "INSERT INTO _users (id, email, name, password_hash, source, oauth_only, password_set, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, profile.email, profile.name ?? null, randomPassword, "oauth", 1, 0, ts, ts]
     );
 
-    return { id, email: profile.email, oauth_only: 1, password_set: 0, created_at: ts, updated_at: ts };
+    return {
+      id,
+      email: profile.email,
+      name: profile.name,
+      source: "oauth",
+      oauth_only: 1,
+      password_set: 0,
+      created_at: ts,
+      updated_at: ts,
+    };
   });
 }
 

@@ -4,10 +4,12 @@
  * Three sources, merged in priority order:
  * 1. CLI flags (highest priority)
  * 2. Environment variables
- * 3. Config file (JSON)
+ * 3. Config file (YAML or JSON)
  *
  * @module boltstore/config
  */
+
+import { parseYaml } from "./yaml";
 
 export interface BoltstoreConfig {
   port: number;
@@ -156,7 +158,8 @@ function parseEnvVars(): Partial<BoltstoreConfig> {
 }
 
 /**
- * Parse a JSON config file.
+ * Parse a config file (JSON or YAML) into a typed partial config.
+ * Format is detected by file extension.
  */
 async function parseConfigFile(filePath: string): Promise<Partial<BoltstoreConfig>> {
   try {
@@ -165,32 +168,41 @@ async function parseConfigFile(filePath: string): Promise<Partial<BoltstoreConfi
     if (!exists) return {};
 
     const content = await file.text();
-    const parsed = JSON.parse(content);
 
-    const config: Partial<BoltstoreConfig> = {};
-    if (typeof parsed.port === "number") config.port = parsed.port;
-    if (typeof parsed.databasePath === "string") config.databasePath = parsed.databasePath;
-    if (typeof parsed.jwtSecret === "string") config.jwtSecret = parsed.jwtSecret;
-    if (typeof parsed.rateLimitPublic === "number") config.rateLimitPublic = parsed.rateLimitPublic;
-    if (typeof parsed.rateLimitAuth === "number") config.rateLimitAuth = parsed.rateLimitAuth;
-    if (typeof parsed.rateLimitAdmin === "number") config.rateLimitAdmin = parsed.rateLimitAdmin;
-    if (typeof parsed.rateLimitWindowSeconds === "number") config.rateLimitWindowSeconds = parsed.rateLimitWindowSeconds;
-    if (typeof parsed.serverTimezone === "string") config.serverTimezone = parsed.serverTimezone;
-    if (Array.isArray(parsed.corsOrigins)) config.corsOrigins = parsed.corsOrigins;
-    if (Array.isArray(parsed.corsMethods)) config.corsMethods = parsed.corsMethods;
-    if (Array.isArray(parsed.corsHeaders)) config.corsHeaders = parsed.corsHeaders;
+    // Detect format from extension
+    const isYaml = filePath.endsWith(".yaml") || filePath.endsWith(".yml");
+    const parsed: Record<string, unknown> = isYaml ? parseYaml(content) : JSON.parse(content);
+
+    return mapToConfig(parsed);
+  } catch {
+    return {};
+  }
+}
+
+/** Map a parsed object to typed BoltstoreConfig fields. */
+function mapToConfig(parsed: Record<string, unknown>): Partial<BoltstoreConfig> {
+  const config: Partial<BoltstoreConfig> = {};
+
+  if (typeof parsed.port === "number") config.port = parsed.port;
+  if (typeof parsed.databasePath === "string") config.databasePath = parsed.databasePath;
+  if (typeof parsed.jwtSecret === "string") config.jwtSecret = parsed.jwtSecret;
+  if (typeof parsed.rateLimitPublic === "number") config.rateLimitPublic = parsed.rateLimitPublic;
+  if (typeof parsed.rateLimitAuth === "number") config.rateLimitAuth = parsed.rateLimitAuth;
+  if (typeof parsed.rateLimitAdmin === "number") config.rateLimitAdmin = parsed.rateLimitAdmin;
+  if (typeof parsed.rateLimitWindowSeconds === "number") config.rateLimitWindowSeconds = parsed.rateLimitWindowSeconds;
+  if (typeof parsed.serverTimezone === "string") config.serverTimezone = parsed.serverTimezone;
+  if (Array.isArray(parsed.corsOrigins)) config.corsOrigins = parsed.corsOrigins as string[];
+  if (Array.isArray(parsed.corsMethods)) config.corsMethods = parsed.corsMethods as string[];
+  if (Array.isArray(parsed.corsHeaders)) config.corsHeaders = parsed.corsHeaders as string[];
   if (typeof parsed.logLevel === "string") config.logLevel = parsed.logLevel;
   if (typeof parsed.maxBodySize === "number") config.maxBodySize = parsed.maxBodySize;
   if (typeof parsed.requestTimeoutMs === "number") config.requestTimeoutMs = parsed.requestTimeoutMs;
   if (typeof parsed.maxBatchSize === "number") config.maxBatchSize = parsed.maxBatchSize;
   if (typeof parsed.queryTimeoutMs === "number") config.queryTimeoutMs = parsed.queryTimeoutMs;
-  if (Array.isArray(parsed.trustedProxies)) config.trustedProxies = parsed.trustedProxies;
+  if (Array.isArray(parsed.trustedProxies)) config.trustedProxies = parsed.trustedProxies as string[];
   if (typeof parsed.maxImportRows === "number") config.maxImportRows = parsed.maxImportRows;
 
   return config;
-  } catch {
-    return {};
-  }
 }
 
 /**
@@ -199,13 +211,27 @@ async function parseConfigFile(filePath: string): Promise<Partial<BoltstoreConfi
  * Priority: CLI flags > environment variables > config file > defaults
  */
 export async function loadConfig(): Promise<BoltstoreConfig> {
-  // Get config file path from CLI or env
+  // Get config file path: CLI flag > env var > auto-detect boltstore.yaml / boltstore.json
   const cliArgs = process.argv.slice(2);
   const configFlagIdx = cliArgs.indexOf("--config");
-  const configPath =
+  let configPath: string | undefined =
     configFlagIdx >= 0 && cliArgs[configFlagIdx + 1]
       ? cliArgs[configFlagIdx + 1]
       : Bun.env.BOLTSTORE_CONFIG;
+
+  // Auto-detect boltstore.yaml or boltstore.json if no explicit path given
+  if (!configPath) {
+    for (const candidate of ["boltstore.yaml", "boltstore.yml", "boltstore.json"]) {
+      try {
+        if (await Bun.file(candidate).exists()) {
+          configPath = candidate;
+          break;
+        }
+      } catch {
+        // File doesn't exist or can't be read — skip
+      }
+    }
+  }
 
   // Load from file
   const fileConfig = configPath ? await parseConfigFile(configPath) : {};

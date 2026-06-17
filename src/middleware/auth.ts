@@ -11,6 +11,7 @@ export interface AuthContext {
   email?: string;
   apiKey?: ApiKeyContext;
   isApiKey: boolean;
+  isAdmin: boolean;
 }
 
 export type AuthResult = AuthContext | Response;
@@ -50,11 +51,13 @@ export async function authenticateRequest(
 
   if (apiKey) {
     try {
-      const ctx = await verifyApiKey(pool, apiKey);
+      // Admin API keys are always stored in the system meta database
+      const ctx = await verifyApiKey(manager.getMetaPool(), apiKey);
       return {
         principalId: ctx.keyId,
         apiKey: ctx,
         isApiKey: true,
+        isAdmin: true,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Invalid API key";
@@ -67,10 +70,24 @@ export async function authenticateRequest(
 
   try {
     const ctx = verifyAccessToken(pool, token!, authConfig);
+
+    // Check if this user exists in the system database — system users are admins
+    let isAdmin = false;
+    try {
+      const metaDb = manager.getMetaPool().read();
+      const sysUser = metaDb
+        .query("SELECT 1 FROM _users WHERE id=?")
+        .get(ctx.userId);
+      if (sysUser) isAdmin = true;
+    } catch {
+      // Meta pool might not be available — not admin
+    }
+
     return {
       principalId: ctx.userId,
       email: ctx.email,
       isApiKey: false,
+      isAdmin,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Invalid token";
@@ -82,20 +99,25 @@ export async function authenticateRequest(
 }
 
 export function requireAdmin(auth: AuthContext): Response | null {
-  if (!auth.isApiKey) {
-    return new Response(
-      JSON.stringify({ error: { code: "FORBIDDEN", message: "Admin access requires an API key." } }),
-      { status: 403, headers: { "Content-Type": "application/json" } }
-    );
+  // API keys with admin scope
+  if (auth.isApiKey) {
+    const ops = auth.apiKey?.permissions.operations ?? [];
+    if (!ops.includes("admin")) {
+      return new Response(
+        JSON.stringify({ error: { code: "FORBIDDEN", message: "Admin access required." } }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return null;
   }
 
-  const ops = auth.apiKey?.permissions.operations ?? [];
-  if (!ops.includes("admin")) {
-    return new Response(
-      JSON.stringify({ error: { code: "FORBIDDEN", message: "Admin access required." } }),
-      { status: 403, headers: { "Content-Type": "application/json" } }
-    );
+  // JWT users that exist in the system database are admins
+  if (auth.isAdmin) {
+    return null;
   }
 
-  return null;
+  return new Response(
+    JSON.stringify({ error: { code: "FORBIDDEN", message: "Admin access required." } }),
+    { status: 403, headers: { "Content-Type": "application/json" } }
+  );
 }

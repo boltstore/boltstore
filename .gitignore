@@ -5,3 +5,6 @@ dist/
 *.db-shm
 data/
 .env
+boltstore.yaml
+boltstore.yml
+boltstore.json

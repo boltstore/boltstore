@@ -14,40 +14,61 @@ import { createServer, stopServerBackgroundTasks } from "./server";
 import { loadConfig } from "./config";
 import { listMigrations, applyMigrations, rollbackLastMigration } from "./migrations";
 import { importData, exportData } from "./admin/import-export";
-import { createBackup, listBackups, restoreFromFile } from "./admin/backup";
-import { createApiKey } from "./admin/api-keys";
-import { bootstrapAuthTables } from "./auth";
+import { createBackup, restoreFromFile } from "./admin/backup";
+import { createAdminUser } from "./auth/users";
+import { info, success, warn, error as cliError, out } from "./cli-style";
 
 const HELP = `
-Boltstore — Lightweight backend-as-a-service
+ ⚡ boltstore — Lightweight backend-as-a-service
 
-Usage: boltstore <command> [options]
+ Usage: boltstore <command> [options]
 
-Commands:
-  serve                 Start the HTTP server
-  init                  Generate a config file (boltstore.json)
-  admin init            Create an admin API key for a database
-  migrate [--db <path>] [--dir <path>]  Run pending migrations
-  migrate:rollback [--db <path>]        Rollback last migration
-  migrations [--db <path>]              List migration status
-  import <collection> <file> [--db <path>] [--format csv|json]  Import data
-  export <collection> [--db <path>] [--format csv|json]         Export data (stdout)
-  backup [--db <path>] [--label <text>]   Create a backup snapshot
-  restore <file> [--db <path>]            Restore from a backup file
-  status                                  Display server health and stats
+ Commands:
+   serve                 Start the HTTP server
+   init [--json]         Generate a config file (boltstore.yaml by default)
+   admin init            Create an admin account interactively
+   migrate [--db <path>] [--dir <path>]  Run pending migrations
+   migrate:rollback [--db <path>]        Rollback last migration
+   migrations [--db <path>]              List migration status
+   import <collection> <file> [--db <path>] [--format csv|json]  Import data
+   export <collection> [--db <path>] [--format csv|json]         Export data (stdout)
+   backup [--db <path>] [--label <text>]   Create a backup snapshot
+   restore <file> [--db <path>]            Restore from a backup file
+   status                                  Display server health and stats
 
-Options:
-  --port <number>       HTTP server port (default: 8080)
-  --db <path>           Database path or data directory
-  --config <path>       Path to config file
-  --log-level <level>   Log level: debug, info, warn, error
-  --timezone <tz>       Server timezone
-  --format <fmt>        Format for import/export: csv or json
-  --help                Show this help
+ Options:
+   --port <number>       HTTP server port (default: 8080)
+   --db <path>           Database path or data directory
+   --config <path>       Path to config file
+   --log-level <level>   Log level: debug, info, warn, error
+   --timezone <tz>       Server timezone
+   --format <fmt>        Format for import/export: csv or json
+   --help                Show this help
 `;
 
 export async function runCli(args: string[]): Promise<void> {
   const command = args[0];
+
+  // Commands that don't require a config file
+  const NO_CONFIG_COMMANDS = new Set(["init", "help", "--help", "-h"]);
+
+  if (!NO_CONFIG_COMMANDS.has(command)) {
+    let configExists = false;
+    for (const candidate of ["boltstore.yaml", "boltstore.yml", "boltstore.json"]) {
+      try {
+        if (await Bun.file(candidate).exists()) {
+          configExists = true;
+          break;
+        }
+      } catch {
+        // Skip
+      }
+    }
+    if (!configExists) {
+      cliError("No config file found. Run boltstore init first to create one.");
+      process.exit(1);
+    }
+  }
 
   switch (command) {
     case "serve": {
@@ -75,16 +96,18 @@ export async function runCli(args: string[]): Promise<void> {
         trustedProxies: config.trustedProxies,
       });
 
-      console.log(`[boltstore] Server running on http://localhost:${config.port}`);
-      console.log(`[boltstore] Data directory: ${config.databasePath}`);
+      info(`Server running on http://localhost:${config.port}`);
+      info(`Data directory: ${config.databasePath}`);
 
-      process.on("SIGINT", () => { console.log("\n[boltstore] Shutting down..."); stopServerBackgroundTasks(); manager.close(); server.stop(); process.exit(0); });
-      process.on("SIGTERM", () => { console.log("[boltstore] Shutting down..."); stopServerBackgroundTasks(); manager.close(); server.stop(); process.exit(0); });
+      process.on("SIGINT", () => { info("Shutting down..."); stopServerBackgroundTasks(); manager.close(); server.stop(); process.exit(0); });
+      process.on("SIGTERM", () => { info("Shutting down..."); stopServerBackgroundTasks(); manager.close(); server.stop(); process.exit(0); });
       break;
     }
 
     case "init": {
+      const asJson = args.includes("--json");
       const jwtSecret = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+
       const config = {
         port: 8080,
         databasePath: "./data",
@@ -98,47 +121,89 @@ export async function runCli(args: string[]): Promise<void> {
         corsMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         corsHeaders: ["Content-Type", "Authorization"],
         logLevel: "info",
-        maxBodySize: 1024 * 1024,
+        maxBodySize: 1048576,
         requestTimeoutMs: 30000,
         maxBatchSize: 1000,
         queryTimeoutMs: 0,
         trustedProxies: [],
       };
 
-      await Bun.write("boltstore.json", JSON.stringify(config, null, 2));
-      console.log("[boltstore] Created boltstore.json");
-      console.warn("[boltstore] A random JWT secret was generated. In production, set a strong JWT_SECRET and keep it secret.");
+      if (asJson) {
+        await Bun.write("boltstore.json", JSON.stringify(config, null, 2));
+        success("Created boltstore.json");
+      } else {
+        const yaml = `# Boltstore configuration
+port: ${config.port}
+databasePath: ${config.databasePath}
+jwtSecret: "${config.jwtSecret}"
+rateLimitPublic: ${config.rateLimitPublic}
+rateLimitAuth: ${config.rateLimitAuth}
+rateLimitAdmin: ${config.rateLimitAdmin}
+rateLimitWindowSeconds: ${config.rateLimitWindowSeconds}
+serverTimezone: ${config.serverTimezone}
+corsOrigins:
+corsMethods:
+  - GET
+  - POST
+  - PATCH
+  - DELETE
+  - OPTIONS
+corsHeaders:
+  - Content-Type
+  - Authorization
+logLevel: ${config.logLevel}
+maxBodySize: ${config.maxBodySize}
+requestTimeoutMs: ${config.requestTimeoutMs}
+maxBatchSize: ${config.maxBatchSize}
+queryTimeoutMs: ${config.queryTimeoutMs}
+trustedProxies:
+`;
+        await Bun.write("boltstore.yaml", yaml);
+        success("Created boltstore.yaml");
+      }
+
+      warn("A random JWT secret was generated. In production, set a strong JWT_SECRET and keep it secret.");
       break;
     }
 
     case "admin": {
       const subcommand = args[1];
       if (subcommand === "init") {
+        const { prompt, promptPassword } = await import("./prompt");
+
+        out("");
+        info("Create an admin account for the Boltstore server.");
+
+        const name = (await prompt("  Name (optional): ")) || undefined;
+        const email = await prompt("  Email: ");
+        const password = await promptPassword("  Password (min 8 chars): ");
+
+        if (!email || !password) {
+          cliError("Email and password are required.");
+          break;
+        }
+
         const config = await loadConfig();
-        const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
         const manager = new DatabaseManager({ dataDir: config.databasePath });
 
         try {
-          if (!manager.exists(dbName)) {
-            manager.createDatabase(dbName);
-          }
+          const metaPool = manager.getMetaPool();
+          const user = await createAdminUser(metaPool, email.trim(), password, name?.trim() || undefined);
 
-          const pool = manager.get(dbName);
-          bootstrapAuthTables(pool);
-          const key = await createApiKey(pool, "admin-cli-key", { operations: ["admin"] });
-
-          console.log(`[boltstore] Admin API key created for database "${dbName}":`);
-          console.log(`  Key:    ${key.secret}`);
-          console.log(`  Prefix: ${key.prefix}`);
-          console.log(`  ID:     ${key.id}`);
-          console.log(`\nUse this key in the Authorization header:\n`);
-          console.log(`  Authorization: Bearer ${key.secret}\n`);
-          console.log("Store this key securely. It will not be shown again.");
+          out("");
+          success(`Admin account created (source: ${user.source}).`);
+          out(`  ID:    ${user.id}`);
+          out(`  Email: ${user.email}`);
+          if (user.name) out(`  Name:  ${user.name}`);
+          out("");
+          info("You can now log in at POST /api/_system/auth/login");
+          out(`  { "email": "${user.email}", "password": "..." }`);
+          out("");
         } finally {
           manager.close();
         }
       } else {
-        console.log("Usage: boltstore admin init [--db <name>]");
+        cliError("Usage: boltstore admin init");
       }
       break;
     }
@@ -151,7 +216,6 @@ export async function runCli(args: string[]): Promise<void> {
       const manager = new DatabaseManager({ dataDir: config.databasePath });
 
       try {
-        // Create the database if it doesn't exist
         if (!manager.exists(dbName)) {
           manager.createDatabase(dbName);
         }
@@ -160,11 +224,11 @@ export async function runCli(args: string[]): Promise<void> {
         const result = await applyMigrations(pool, migrationDir);
 
         if (result.applied.length === 0) {
-          console.log("[boltstore] No pending migrations.");
+          info("No pending migrations.");
         } else {
-          console.log(`[boltstore] Applied ${result.applied.length} migration(s):`);
+          success(`Applied ${result.applied.length} migration(s):`);
           for (const name of result.applied) {
-            console.log(`  ✓ ${name}`);
+            out(`  ✓ ${name}`);
           }
         }
       } finally {
@@ -181,7 +245,7 @@ export async function runCli(args: string[]): Promise<void> {
 
       try {
         if (!manager.exists(dbName)) {
-          console.log(`[boltstore] Database "${dbName}" not found.`);
+          cliError(`Database "${dbName}" not found.`);
           break;
         }
 
@@ -189,9 +253,9 @@ export async function runCli(args: string[]): Promise<void> {
         const result = rollbackLastMigration(pool);
 
         if (result.rolledBack) {
-          console.log(`[boltstore] Rolled back: ${result.rolledBack}`);
+          success(`Rolled back: ${result.rolledBack}`);
         } else {
-          console.log("[boltstore] No migrations to roll back.");
+          info("No migrations to roll back.");
         }
       } finally {
         manager.close();
@@ -207,7 +271,7 @@ export async function runCli(args: string[]): Promise<void> {
 
       try {
         if (!manager.exists(dbName)) {
-          console.log(`[boltstore] Database "${dbName}" not found.`);
+          cliError(`Database "${dbName}" not found.`);
           break;
         }
 
@@ -215,11 +279,11 @@ export async function runCli(args: string[]): Promise<void> {
         const migrations = listMigrations(pool);
 
         if (migrations.length === 0) {
-          console.log("[boltstore] No migrations applied.");
+          info("No migrations applied.");
         } else {
-          console.log(`[boltstore] Applied migrations (${migrations.length}):`);
+          out(`Applied migrations (${migrations.length}):`);
           for (const m of migrations) {
-            console.log(`  ${m.name} — ${m.appliedAt}`);
+            out(`  ${m.name} — ${m.appliedAt}`);
           }
         }
       } finally {
@@ -233,7 +297,7 @@ export async function runCli(args: string[]): Promise<void> {
       const filePath = args[2];
 
       if (!collection || !filePath) {
-        console.log("Usage: boltstore import <collection> <file> [--db <path>] [--format csv|json]");
+        cliError("Usage: boltstore import <collection> <file> [--db <path>] [--format csv|json]");
         break;
       }
 
@@ -245,7 +309,6 @@ export async function runCli(args: string[]): Promise<void> {
       if (formatArg === "csv") format = "csv";
       else if (formatArg === "json") format = "json";
       else {
-        // Auto-detect from file extension
         if (filePath.endsWith(".csv")) format = "csv";
         else format = "json";
       }
@@ -262,14 +325,14 @@ export async function runCli(args: string[]): Promise<void> {
         const result = importData(pool, collection, input, { format, autoCreate: true });
 
         if (result.collection) {
-          console.log(`[boltstore] Created collection "${collection}" with auto-detected schema.`);
+          info(`Created collection "${collection}" with auto-detected schema.`);
         }
-        console.log(`[boltstore] Imported ${result.imported} record(s).`);
+        success(`Imported ${result.imported} record(s).`);
         if (result.failed > 0) {
-          console.log(`[boltstore] ${result.failed} row(s) failed validation.`);
+          warn(`${result.failed} row(s) failed validation.`);
           if (result.errors) {
             for (const err of result.errors) {
-              console.log(`  Row ${err.row + 1}: ${err.message}`);
+              cliError(`Row ${err.row + 1}: ${err.message}`);
             }
           }
         }
@@ -283,7 +346,7 @@ export async function runCli(args: string[]): Promise<void> {
       const collection = args[1];
 
       if (!collection) {
-        console.log("Usage: boltstore export <collection> [--db <path>] [--format csv|json]");
+        cliError("Usage: boltstore export <collection> [--db <path>] [--format csv|json]");
         break;
       }
 
@@ -296,7 +359,7 @@ export async function runCli(args: string[]): Promise<void> {
 
       try {
         if (!manager.exists(dbName)) {
-          console.log(`[boltstore] Database "${dbName}" not found.`);
+          cliError(`Database "${dbName}" not found.`);
           break;
         }
 
@@ -306,7 +369,7 @@ export async function runCli(args: string[]): Promise<void> {
         if (format === "csv") {
           process.stdout.write(result.data);
         } else {
-          console.log(result.data);
+          out(result.data);
         }
       } finally {
         manager.close();
@@ -323,17 +386,17 @@ export async function runCli(args: string[]): Promise<void> {
 
       try {
         if (!manager.exists(dbName)) {
-          console.log(`[boltstore] Database "${dbName}" not found.`);
+          cliError(`Database "${dbName}" not found.`);
           break;
         }
 
         const pool = manager.get(dbName);
         const result = createBackup(pool, dbName, manager.getDataDir(), { label });
 
-        console.log(`[boltstore] Backup created: ${result.id}`);
-        console.log(`  Path: ${result.path}`);
-        console.log(`  Size: ${result.sizeBytes} bytes`);
-        if (result.label) console.log(`  Label: ${result.label}`);
+        success(`Backup created: ${result.id}`);
+        out(`  Path: ${result.path}`);
+        out(`  Size: ${result.sizeBytes} bytes`);
+        if (result.label) out(`  Label: ${result.label}`);
       } finally {
         manager.close();
       }
@@ -344,7 +407,7 @@ export async function runCli(args: string[]): Promise<void> {
       const filePath = args[1];
 
       if (!filePath) {
-        console.log("Usage: boltstore restore <file> [--db <path>]");
+        cliError("Usage: boltstore restore <file> [--db <path>]");
         break;
       }
 
@@ -355,14 +418,14 @@ export async function runCli(args: string[]): Promise<void> {
 
       try {
         if (!manager.exists(dbName)) {
-          console.log(`[boltstore] Database "${dbName}" not found.`);
+          cliError(`Database "${dbName}" not found.`);
           break;
         }
 
         const result = restoreFromFile(manager, dbName, filePath);
 
-        console.log(`[boltstore] Restored database "${result.database}" from ${result.backupPath}`);
-        console.log(`  Restored at: ${result.restoredAt}`);
+        success(`Restored database "${result.database}" from ${result.backupPath}`);
+        out(`  Restored at: ${result.restoredAt}`);
       } finally {
         manager.close();
       }
@@ -376,9 +439,9 @@ export async function runCli(args: string[]): Promise<void> {
       try {
         const response = await fetch(healthUrl);
         const body = await response.json();
-        console.log(JSON.stringify(body.data, null, 2));
+        out(JSON.stringify(body.data, null, 2));
       } catch {
-        console.log('[boltstore] Server is not running.');
+        cliError("Server is not running.");
       }
       break;
     }
@@ -387,7 +450,7 @@ export async function runCli(args: string[]): Promise<void> {
     case "-h":
     case "help":
     default:
-      console.log(HELP);
+      out(HELP);
       break;
   }
 }

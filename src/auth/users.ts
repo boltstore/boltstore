@@ -7,6 +7,46 @@ import { now } from "./jwt";
 import { generateSecureId } from "@boltstore/utils";
 import { markPasswordSet } from "../admin/oauth";
 
+/**
+ * Create an admin user in the system database.
+ * Only callable from the CLI — creates with source="cli".
+ */
+export async function createAdminUser(
+  pool: DatabasePool,
+  email: string,
+  password: string,
+  name?: string
+): Promise<User> {
+  validateEmail(email);
+  validatePassword(password);
+
+  bootstrapAuthTables(pool);
+
+  const passwordHash = await hashPassword(password);
+  const id = generateUserId();
+  const ts = now();
+
+  return pool.writeTransaction(() => {
+    const db = pool.write();
+
+    const existing = db.query("SELECT 1 FROM _users WHERE email=?").get(email);
+    if (existing) {
+      throw Object.assign(
+        new Error("A user with this email already exists."),
+        { status: 409 }
+      );
+    }
+
+    db.run(
+      `INSERT INTO _users (id, email, name, password_hash, source, oauth_only, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, email.toLowerCase(), name ?? null, passwordHash, "cli", 0, ts, ts]
+    );
+
+    return { id, email, name, source: "cli", created_at: ts, updated_at: ts };
+  });
+}
+
 function generateUserId(): string {
   return generateSecureId("usr");
 }
@@ -37,12 +77,12 @@ export async function registerUser(
     }
 
     db.run(
-      `INSERT INTO _users (id, email, password_hash, oauth_only, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, email.toLowerCase(), passwordHash, 0, ts, ts]
+      `INSERT INTO _users (id, email, name, password_hash, source, oauth_only, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, email.toLowerCase(), null, passwordHash, "register", 0, ts, ts]
     );
 
-    return { id, email, created_at: ts, updated_at: ts };
+    return { id, email, source: "register", created_at: ts, updated_at: ts };
   });
 }
 
@@ -54,7 +94,7 @@ export function getUserById(
   const db = pool.read();
 
   const row = db
-    .query("SELECT id, email, created_at, updated_at FROM _users WHERE id=?")
+    .query("SELECT id, email, name, source, created_at, updated_at FROM _users WHERE id=?")
     .get(userId) as User | null;
 
   if (!row) {
@@ -83,7 +123,7 @@ export async function updateProfile(
 
   const db = pool.read();
   const existing = db
-    .query("SELECT id, email, created_at, updated_at FROM _users WHERE id=?")
+    .query("SELECT id, email, name, source, created_at, updated_at FROM _users WHERE id=?")
     .get(userId) as User | null;
 
   if (!existing) {
@@ -128,7 +168,7 @@ export async function updateProfile(
     }
 
     const updated = writeDb
-      .query("SELECT id, email, created_at, updated_at FROM _users WHERE id=?")
+      .query("SELECT id, email, name, source, created_at, updated_at FROM _users WHERE id=?")
       .get(userId) as User;
 
     return updated;
