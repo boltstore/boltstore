@@ -18,7 +18,8 @@
  */
 
 import { DatabasePool } from "./pool";
-import { validateIdentifier, isReservedTable } from "@boltstore/utils";
+import { validateIdentifier, isReservedTable, sanitizePathComponent } from "@boltstore/utils";
+import { mkdirSync, rmSync } from "node:fs";
 
 export interface DatabaseInfo {
   /** Application (database) name. */
@@ -35,9 +36,7 @@ export interface ManagerConfig {
 }
 
 const DEFAULT_CONFIG: ManagerConfig = {
-  dataDir: Bun.env.DATABASE_PATH
-    ? Bun.env.DATABASE_PATH.substring(0, Bun.env.DATABASE_PATH.lastIndexOf("/")) || "./data"
-    : "./data",
+  dataDir: Bun.env.DATABASE_PATH || "./data",
 };
 
 /**
@@ -55,10 +54,10 @@ export class DatabaseManager {
     this.config = { ...DEFAULT_CONFIG, ...config };
 
     // Ensure data directory exists
-    Bun.spawnSync(["mkdir", "-p", this.config.dataDir!]);
+    mkdirSync(this.config.dataDir!, { recursive: true });
 
     // Create the system directories and meta database
-    Bun.spawnSync(["mkdir", "-p", `${this.config.dataDir}/system/db`]);
+    mkdirSync(`${this.config.dataDir}/system/db`, { recursive: true });
 
     const metaPath = `${this.config.dataDir}/system/db/_boltstore.db`;
     this.metaPool = new DatabasePool({ path: metaPath, readConnections: 1 });
@@ -107,7 +106,8 @@ export class DatabaseManager {
     }
 
     // Create the pool
-    const pool = new DatabasePool({ path: row.path });
+    const parentMetaQueryTimeoutMs = (this.metaPool as unknown as { config?: { queryTimeoutMs?: number } }).config?.queryTimeoutMs ?? 0;
+    const pool = new DatabasePool({ path: row.path, queryTimeoutMs: parentMetaQueryTimeoutMs });
     this.appPools.set(name, pool);
     return pool;
   }
@@ -147,9 +147,10 @@ export class DatabaseManager {
     }
 
     // Create app directory structure
-    Bun.spawnSync(["mkdir", "-p", `${this.config.dataDir}/${name}/db`]);
+    const safeName = sanitizePathComponent(name);
+    mkdirSync(`${this.config.dataDir}/${safeName}/db`, { recursive: true });
 
-    const dbPath = `${this.config.dataDir}/${name}/db/${name}.db`;
+    const dbPath = `${this.config.dataDir}/${safeName}/db/${safeName}.db`;
     const now = new Date().toISOString();
 
     // Use writeTransaction on the meta pool for atomicity
@@ -161,7 +162,8 @@ export class DatabaseManager {
       ]);
 
       // Create the database pool (this auto-creates the SQLite file)
-      const pool = new DatabasePool({ path: dbPath });
+      const parentMetaQueryTimeoutMs = (this.metaPool as unknown as { config?: { queryTimeoutMs?: number } }).config?.queryTimeoutMs ?? 0;
+      const pool = new DatabasePool({ path: dbPath, queryTimeoutMs: parentMetaQueryTimeoutMs });
       this.appPools.set(name, pool);
 
       return { name, path: dbPath, createdAt: now };
@@ -210,9 +212,9 @@ export class DatabaseManager {
       metaDb.run("DELETE FROM _databases WHERE name=?", [name]);
 
       // Remove the entire app directory (db files + future files dir)
-      const appDir = `${this.config.dataDir}/${name}`;
+      const appDir = `${this.config.dataDir}/${sanitizePathComponent(name)}`;
       try {
-        Bun.spawnSync(["rm", "-rf", appDir]);
+        rmSync(appDir, { recursive: true, force: true });
       } catch {
         // Best effort cleanup
       }
@@ -251,6 +253,13 @@ export class DatabaseManager {
    */
   getDataDir(): string {
     return this.config.dataDir!;
+  }
+
+  /**
+   * Get the system/meta database pool used for global operations.
+   */
+  getMetaPool(): DatabasePool {
+    return this.metaPool;
   }
 
   /**

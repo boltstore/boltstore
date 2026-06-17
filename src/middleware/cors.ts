@@ -16,7 +16,9 @@ export interface CorsConfig {
 }
 
 const defaultConfig: CorsConfig = {
-  origins: (Bun.env.CORS_ORIGINS || "*").split(",").map((s) => s.trim()),
+  origins: Bun.env.CORS_ORIGINS
+    ? Bun.env.CORS_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+    : ["*"],
   methods: (Bun.env.CORS_METHODS || "GET,POST,PATCH,DELETE,OPTIONS").split(",").map((s) => s.trim()),
   headers: (Bun.env.CORS_HEADERS || "Content-Type,Authorization").split(",").map((s) => s.trim()),
 };
@@ -30,11 +32,17 @@ export function applyCors(
   requestOrigin: string | null,
   config: CorsConfig = defaultConfig
 ): Response {
-  const origin: string = config.origins.includes("*")
-    ? requestOrigin || "*"
-    : (requestOrigin && config.origins.includes(requestOrigin))
-      ? requestOrigin
-      : config.origins[0] || "*";
+  let origin: string | null = null;
+
+  if (config.origins.includes("*")) {
+    // When wildcard is explicitly configured, send wildcard (do not echo).
+    origin = "*";
+  } else if (requestOrigin && config.origins.includes(requestOrigin)) {
+    origin = requestOrigin;
+  }
+
+  // No matching origin — return response unchanged.
+  if (!origin) return response;
 
   const headers = new Headers(response.headers);
   headers.set("Access-Control-Allow-Origin", origin);
@@ -54,11 +62,17 @@ export function applyCors(
  * Returns a 204 No Content response with appropriate CORS headers.
  */
 export function handlePreflight(requestOrigin: string | null, config: CorsConfig = defaultConfig): Response {
-  const origin: string = config.origins.includes("*")
-    ? requestOrigin || "*"
-    : (requestOrigin && config.origins.includes(requestOrigin))
-      ? requestOrigin
-      : config.origins[0] || "*";
+  let origin: string | null = null;
+
+  if (config.origins.includes("*")) {
+    origin = "*";
+  } else if (requestOrigin && config.origins.includes(requestOrigin)) {
+    origin = requestOrigin;
+  }
+
+  if (!origin) {
+    return new Response(null, { status: 204 });
+  }
 
   return new Response(null, {
     status: 204,

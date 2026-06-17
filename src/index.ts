@@ -4,7 +4,7 @@
  * @module boltstore
  */
 
-import { createServer } from "./server";
+import { createServer, stopServerBackgroundTasks } from "./server";
 import { DatabaseManager } from "./db/manager";
 import { loadConfig } from "./config";
 
@@ -38,6 +38,7 @@ if (config.serverTimezone && config.serverTimezone !== "UTC") {
 // Graceful shutdown
 process.on("SIGINT", () => {
   console.log("\n[boltstore] Shutting down...");
+  stopServerBackgroundTasks();
   manager.close();
   server.stop();
   process.exit(0);
@@ -45,6 +46,7 @@ process.on("SIGINT", () => {
 
 process.on("SIGTERM", () => {
   console.log("[boltstore] Shutting down...");
+  stopServerBackgroundTasks();
   manager.close();
   server.stop();
   process.exit(0);

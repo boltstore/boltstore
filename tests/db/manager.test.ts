@@ -6,6 +6,7 @@
 
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { DatabaseManager } from "../../src/db/manager";
+import { mkdirSync, rmSync } from "node:fs";
 
 const TEST_DATA_DIR = "/tmp/boltstore_test_manager";
 
@@ -18,7 +19,7 @@ function cleanup() {
     // ignore
   }
   try {
-    Bun.spawnSync(["rm", "-rf", TEST_DATA_DIR]);
+    rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   } catch {
     // ignore
   }
@@ -26,7 +27,7 @@ function cleanup() {
 
 beforeAll(() => {
   cleanup();
-  Bun.spawnSync(["mkdir", "-p", TEST_DATA_DIR]);
+  mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
 });
 

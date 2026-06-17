@@ -26,6 +26,18 @@ export interface BoltstoreConfig {
   corsMethods: string[];
   corsHeaders: string[];
   logLevel: string;
+  /** Maximum request body size in bytes. Default: 1 MB. */
+  maxBodySize: number;
+  /** Request handler timeout in milliseconds. Default: 30000. */
+  requestTimeoutMs: number;
+  /** Maximum number of operations in a single transaction/batch. Default: 1000. */
+  maxBatchSize: number;
+  /** SQLite query timeout in milliseconds. 0 disables. Default: 0. */
+  queryTimeoutMs: number;
+  /** Optional list of trusted proxy IPs/CIDRs. */
+  trustedProxies: string[];
+  /** Maximum number of rows accepted by the import endpoint. Default: 100000. */
+  maxImportRows: number;
 }
 
 const DEFAULT_CONFIG: BoltstoreConfig = {
@@ -36,15 +48,21 @@ const DEFAULT_CONFIG: BoltstoreConfig = {
   rateLimitAdmin: 500,
   rateLimitWindowSeconds: 60,
   serverTimezone: "UTC",
-  corsOrigins: ["*"],
+  corsOrigins: [],
   corsMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   corsHeaders: ["Content-Type", "Authorization"],
   logLevel: "info",
+  maxBodySize: 1024 * 1024,
+  requestTimeoutMs: 30000,
+  maxBatchSize: 1000,
+  maxImportRows: parseInt(Bun.env.MAX_IMPORT_ROWS || "100000", 10) || 100000,
+  queryTimeoutMs: parseInt(Bun.env.QUERY_TIMEOUT_MS || "0", 10) || 0,
+  trustedProxies: [],
 };
 
 /**
  * Parse CLI flags from process.argv.
- * Supports: --port, --db, --config, --jwt-secret, --rate-limit-public, --rate-limit-auth, --rate-limit-admin, --rate-limit-window, --timezone, --log-level
+ * Supports: --port, --db, --config, --jwt-secret, --rate-limit-public, --rate-limit-auth, --rate-limit-admin, --rate-limit-window, --timezone, --log-level, --max-body-size, --request-timeout, --max-batch-size, --query-timeout, --trusted-proxies
  */
 function parseCliArgs(): Partial<BoltstoreConfig> {
   const config: Partial<BoltstoreConfig> = {};
@@ -85,6 +103,24 @@ function parseCliArgs(): Partial<BoltstoreConfig> {
       case "--log-level":
         if (next) { config.logLevel = next; i++; }
         break;
+      case "--max-body-size":
+        if (next) { config.maxBodySize = parseInt(next, 10); i++; }
+        break;
+      case "--request-timeout":
+        if (next) { config.requestTimeoutMs = parseInt(next, 10); i++; }
+        break;
+      case "--max-batch-size":
+        if (next) { config.maxBatchSize = parseInt(next, 10); i++; }
+        break;
+      case "--query-timeout":
+        if (next) { config.queryTimeoutMs = parseInt(next, 10); i++; }
+        break;
+      case "--trusted-proxies":
+        if (next) { config.trustedProxies = next.split(",").map((s) => s.trim()).filter(Boolean); i++; }
+        break;
+      case "--max-import-rows":
+        if (next) { config.maxImportRows = parseInt(next, 10); i++; }
+        break;
     }
   }
 
@@ -109,6 +145,12 @@ function parseEnvVars(): Partial<BoltstoreConfig> {
   if (Bun.env.CORS_METHODS) config.corsMethods = Bun.env.CORS_METHODS.split(",").map((s) => s.trim());
   if (Bun.env.CORS_HEADERS) config.corsHeaders = Bun.env.CORS_HEADERS.split(",").map((s) => s.trim());
   if (Bun.env.LOG_LEVEL) config.logLevel = Bun.env.LOG_LEVEL;
+  if (Bun.env.MAX_BODY_SIZE) config.maxBodySize = parseInt(Bun.env.MAX_BODY_SIZE, 10);
+  if (Bun.env.REQUEST_TIMEOUT_MS) config.requestTimeoutMs = parseInt(Bun.env.REQUEST_TIMEOUT_MS, 10);
+  if (Bun.env.MAX_BATCH_SIZE) config.maxBatchSize = parseInt(Bun.env.MAX_BATCH_SIZE, 10);
+  if (Bun.env.QUERY_TIMEOUT_MS) config.queryTimeoutMs = parseInt(Bun.env.QUERY_TIMEOUT_MS, 10);
+  if (Bun.env.TRUSTED_PROXIES) config.trustedProxies = Bun.env.TRUSTED_PROXIES.split(",").map((s) => s.trim()).filter(Boolean);
+  if (Bun.env.MAX_IMPORT_ROWS) config.maxImportRows = parseInt(Bun.env.MAX_IMPORT_ROWS, 10);
 
   return config;
 }
@@ -137,9 +179,15 @@ async function parseConfigFile(filePath: string): Promise<Partial<BoltstoreConfi
     if (Array.isArray(parsed.corsOrigins)) config.corsOrigins = parsed.corsOrigins;
     if (Array.isArray(parsed.corsMethods)) config.corsMethods = parsed.corsMethods;
     if (Array.isArray(parsed.corsHeaders)) config.corsHeaders = parsed.corsHeaders;
-    if (typeof parsed.logLevel === "string") config.logLevel = parsed.logLevel;
+  if (typeof parsed.logLevel === "string") config.logLevel = parsed.logLevel;
+  if (typeof parsed.maxBodySize === "number") config.maxBodySize = parsed.maxBodySize;
+  if (typeof parsed.requestTimeoutMs === "number") config.requestTimeoutMs = parsed.requestTimeoutMs;
+  if (typeof parsed.maxBatchSize === "number") config.maxBatchSize = parsed.maxBatchSize;
+  if (typeof parsed.queryTimeoutMs === "number") config.queryTimeoutMs = parsed.queryTimeoutMs;
+  if (Array.isArray(parsed.trustedProxies)) config.trustedProxies = parsed.trustedProxies;
+  if (typeof parsed.maxImportRows === "number") config.maxImportRows = parsed.maxImportRows;
 
-    return config;
+  return config;
   } catch {
     return {};
   }
@@ -182,6 +230,11 @@ export async function loadConfig(): Promise<BoltstoreConfig> {
   }
   if (!merged.databasePath) {
     throw new Error("Database path is required.");
+  }
+  if (!merged.jwtSecret || merged.jwtSecret.length < 32) {
+    throw new Error(
+      "JWT secret is required and must be at least 32 characters long. Set JWT_SECRET environment variable or add jwtSecret to your config file."
+    );
   }
 
   return merged;

@@ -8,6 +8,37 @@ export interface RouteHandler {
   (request: Request, params: Record<string, string>): Response | Promise<Response>;
 }
 
+export type RouteHandlerWithError = (
+  request: Request,
+  params: Record<string, string>
+) => Response | Promise<Response>;
+
+/** Wrap a route handler so all errors are caught and passed to a resolver. */
+export function wrapRoute(
+  handler: RouteHandler,
+  onError: (err: unknown, request: Request) => Response
+): RouteHandler {
+  return async (request, params) => {
+    try {
+      return await handler(request, params);
+    } catch (err) {
+      return onError(err, request);
+    }
+  };
+}
+
+/** Default safe error factory used by `wrapRoute` when no resolver is provided. */
+export function defaultRouteError(err: unknown): Response {
+  const status = err instanceof Error ? (err as { status?: number }).status : undefined;
+  const isOperational = typeof status === "number";
+  const message = isOperational ? (err as Error).message : "An unexpected error occurred.";
+  const code = isOperational ? "REQUEST_ERROR" : "INTERNAL_ERROR";
+  return new Response(
+    JSON.stringify({ error: { code, message } }),
+    { status: isOperational ? status : 500, headers: { "Content-Type": "application/json" } }
+  );
+}
+
 interface Route {
   method: string;
   pattern: string;
@@ -97,7 +128,8 @@ export class Router {
     });
 
     const regex = new RegExp(`^${regexStr}$`);
-    this.routes.push({ method, pattern, paramNames, regex, handler });
+    const safeHandler = wrapRoute(handler, defaultRouteError);
+    this.routes.push({ method, pattern, paramNames, regex, handler: safeHandler });
   }
 }
 

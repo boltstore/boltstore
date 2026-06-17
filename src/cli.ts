@@ -10,7 +10,7 @@
  */
 
 import { DatabaseManager } from "./db/manager";
-import { createServer } from "./server";
+import { createServer, stopServerBackgroundTasks } from "./server";
 import { loadConfig } from "./config";
 import { listMigrations, applyMigrations, rollbackLastMigration } from "./migrations";
 import { importData, exportData } from "./admin/import-export";
@@ -66,33 +66,45 @@ export async function runCli(args: string[]): Promise<void> {
           admin: config.rateLimitAdmin,
           windowSeconds: config.rateLimitWindowSeconds,
         },
+        maxBodySize: config.maxBodySize,
+        requestTimeoutMs: config.requestTimeoutMs,
+        maxBatchSize: config.maxBatchSize,
+        trustedProxies: config.trustedProxies,
       });
 
       console.log(`[boltstore] Server running on http://localhost:${config.port}`);
       console.log(`[boltstore] Data directory: ${config.databasePath}`);
 
-      process.on("SIGINT", () => { console.log("\n[boltstore] Shutting down..."); manager.close(); server.stop(); process.exit(0); });
-      process.on("SIGTERM", () => { console.log("[boltstore] Shutting down..."); manager.close(); server.stop(); process.exit(0); });
+      process.on("SIGINT", () => { console.log("\n[boltstore] Shutting down..."); stopServerBackgroundTasks(); manager.close(); server.stop(); process.exit(0); });
+      process.on("SIGTERM", () => { console.log("[boltstore] Shutting down..."); stopServerBackgroundTasks(); manager.close(); server.stop(); process.exit(0); });
       break;
     }
 
     case "init": {
+      const jwtSecret = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
       const config = {
         port: 8080,
         databasePath: "./data",
+        jwtSecret,
         rateLimitPublic: 100,
         rateLimitAuth: 1000,
         rateLimitAdmin: 500,
         rateLimitWindowSeconds: 60,
         serverTimezone: "UTC",
-        corsOrigins: ["*"],
+        corsOrigins: [],
         corsMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         corsHeaders: ["Content-Type", "Authorization"],
         logLevel: "info",
+        maxBodySize: 1024 * 1024,
+        requestTimeoutMs: 30000,
+        maxBatchSize: 1000,
+        queryTimeoutMs: 0,
+        trustedProxies: [],
       };
 
       await Bun.write("boltstore.json", JSON.stringify(config, null, 2));
       console.log("[boltstore] Created boltstore.json");
+      console.warn("[boltstore] A random JWT secret was generated. In production, set a strong JWT_SECRET and keep it secret.");
       break;
     }
 

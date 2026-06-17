@@ -7,12 +7,15 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { createServer } from "../src/server";
 import { DatabaseManager } from "../src/db/manager";
+import { mkdirSync, rmSync } from "node:fs";
+import { createAdminUserAndToken, testAuthConfig } from "./helpers/auth";
 import pkg from "../package.json";
 
 const TEST_PORT = 9877;
 const TEST_DATA_DIR = "/tmp/boltstore_test_server";
 let server: ReturnType<typeof Bun.serve>;
 let manager: DatabaseManager;
+let authHeaders: Record<string, string>;
 
 function cleanup() {
   try {
@@ -21,17 +24,19 @@ function cleanup() {
     // ignore
   }
   try {
-    Bun.spawnSync(["rm", "-rf", TEST_DATA_DIR]);
+    rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   } catch {
     // ignore
   }
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   cleanup();
-  Bun.spawnSync(["mkdir", "-p", TEST_DATA_DIR]);
+  mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
-  server = createServer({ port: TEST_PORT, manager });
+  const { token } = await createAdminUserAndToken(manager.getMetaPool());
+  authHeaders = { Authorization: `Bearer ${token}` };
+  server = createServer({ port: TEST_PORT, manager, auth: testAuthConfig() });
 });
 
 afterAll(() => {
@@ -58,8 +63,7 @@ describe("GET /api/health", () => {
     expect(body.data.version).toBe(pkg.version);
     expect(body.data.uptime).toBeGreaterThanOrEqual(0);
     expect(body.data.timestamp).toBeDefined();
-    expect(body.data.databases).toBeDefined();
-    expect(typeof body.data.databases).toBe("number");
+    expect(body.data.databases).toBeUndefined();
   });
 
   test("health check does not include error field", async () => {
@@ -70,8 +74,15 @@ describe("GET /api/health", () => {
 });
 
 describe("GET /api/admin/databases", () => {
-  test("returns empty list initially", async () => {
+  test("returns 401 without auth", async () => {
     const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`);
+    expect(response.status).toBe(401);
+  });
+
+  test("returns empty list initially", async () => {
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`, {
+      headers: authHeaders,
+    });
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.data).toEqual([]);
@@ -80,7 +91,9 @@ describe("GET /api/admin/databases", () => {
   test("returns created databases", async () => {
     manager.createDatabase("servertest");
 
-    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`);
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`, {
+      headers: authHeaders,
+    });
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.data.length).toBe(1);
@@ -94,7 +107,7 @@ describe("POST /api/admin/databases", () => {
   test("creates a new database", async () => {
     const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({ name: "integration_test" }),
     });
     expect(response.status).toBe(201);
@@ -110,7 +123,7 @@ describe("POST /api/admin/databases", () => {
 
     const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({ name: "dupe_test" }),
     });
     expect(response.status).toBe(409);
@@ -123,7 +136,7 @@ describe("POST /api/admin/databases", () => {
   test("rejects missing name with 400", async () => {
     const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({}),
     });
     expect(response.status).toBe(400);
@@ -136,6 +149,7 @@ describe("DELETE /api/admin/databases/:database", () => {
 
     const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases/delete_me`, {
       method: "DELETE",
+      headers: authHeaders,
     });
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -147,6 +161,7 @@ describe("DELETE /api/admin/databases/:database", () => {
   test("returns 404 for non-existent database", async () => {
     const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases/ghost`, {
       method: "DELETE",
+      headers: authHeaders,
     });
     expect(response.status).toBe(404);
   });
@@ -174,7 +189,7 @@ describe("CORS headers", () => {
     const response = await fetch(`http://localhost:${TEST_PORT}/api/health`, {
       headers: { Origin: "http://example.com" },
     });
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("http://example.com");
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
     expect(response.headers.get("Access-Control-Allow-Methods")).toBeTruthy();
     expect(response.headers.get("Access-Control-Allow-Headers")).toBeTruthy();
   });
@@ -185,13 +200,13 @@ describe("CORS headers", () => {
       headers: { Origin: "http://example.com" },
     });
     expect(response.status).toBe(204);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("http://example.com");
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
 
   test("allows any origin by default", async () => {
     const response = await fetch(`http://localhost:${TEST_PORT}/api/health`, {
       headers: { Origin: "https://random-origin.com" },
     });
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://random-origin.com");
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
 });

@@ -16,6 +16,7 @@ import {
   updateCollection,
   deleteCollection,
 } from "../src/collections";
+import { mkdirSync, rmSync } from "node:fs";
 
 const TEST_DATA_DIR = "/tmp/boltstore_test_data";
 const TEST_APP = "testapp";
@@ -30,7 +31,7 @@ function cleanup() {
     // ignore
   }
   try {
-    Bun.spawnSync(["rm", "-rf", TEST_DATA_DIR]);
+    rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   } catch {
     // ignore
   }
@@ -38,7 +39,7 @@ function cleanup() {
 
 beforeAll(() => {
   cleanup();
-  Bun.spawnSync(["mkdir", "-p", TEST_DATA_DIR]);
+  mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
   // Create a test application database
   manager.createDatabase(TEST_APP);

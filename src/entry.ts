@@ -52,6 +52,10 @@ if (isCliCommand) {
       admin: config.rateLimitAdmin,
       windowSeconds: config.rateLimitWindowSeconds,
     },
+    maxBodySize: config.maxBodySize,
+    requestTimeoutMs: config.requestTimeoutMs,
+    maxBatchSize: config.maxBatchSize,
+    trustedProxies: config.trustedProxies,
   });
 
   console.log(`[boltstore] Server running on http://localhost:${config.port}`);
@@ -65,14 +69,18 @@ if (isCliCommand) {
     process.env.TZ = config.serverTimezone;
   }
 
+  const { stopServerBackgroundTasks } = await import("./server");
+
   process.on("SIGINT", () => {
     console.log("\n[boltstore] Shutting down...");
+    stopServerBackgroundTasks();
     manager.close();
     server.stop();
     process.exit(0);
   });
   process.on("SIGTERM", () => {
     console.log("[boltstore] Shutting down...");
+    stopServerBackgroundTasks();
     manager.close();
     server.stop();
     process.exit(0);

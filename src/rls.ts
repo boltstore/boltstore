@@ -14,6 +14,8 @@
  */
 
 import { DatabasePool } from "./db/pool";
+import { toBindings } from "./db/cast";
+import type { AuthContext } from "./middleware/auth";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -170,7 +172,18 @@ export function setRLS(
   if (updates.length === 0) return;
 
   params.push(collection);
-  db.run(`UPDATE _collections SET ${updates.join(", ")} WHERE name=?`, params);
+  db.run(`UPDATE _collections SET ${updates.join(", ")} WHERE name=?`, toBindings(params));
+}
+
+/**
+ * Convert the generic auth context into the RLS-specific context.
+ * Returns null for API-key-authenticated requests because RLS applies only
+ * to end-user principals.
+ */
+export function toRLSContext(auth: AuthContext): RLSContext | null {
+  if (auth.isApiKey) return null;
+  if (!auth.email) return null;
+  return { userId: auth.principalId, email: auth.email };
 }
 
 /**

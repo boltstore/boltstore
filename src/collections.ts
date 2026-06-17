@@ -18,6 +18,8 @@ import {
   type ColumnType,
 } from "@boltstore/utils";
 import { setRLS, type RLSConfig } from "./rls";
+import { setRelations, type RelationDefinition } from "./relations";
+import { invalidateSchemaCache } from "./records";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -105,7 +107,7 @@ export function createCollection(
   pool: DatabasePool,
   name: string,
   columns: ColumnDefinition[],
-  options?: { rls?: RLSConfig }
+  options?: { rls?: RLSConfig; relations?: Record<string, RelationDefinition> }
 ): CollectionInfo {
   // Validate collection name
   validateIdentifier(name, "collection name");
@@ -167,17 +169,20 @@ export function createCollection(
         schema_json TEXT NOT NULL,
         read_rule TEXT,
         write_rule TEXT,
+        relations_json TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
-    // Migrate existing _collections that lack RLS columns
+    // Migrate existing _collections that lack RLS/relations columns
     try { db.run("ALTER TABLE _collections ADD COLUMN read_rule TEXT"); } catch {}
     try { db.run("ALTER TABLE _collections ADD COLUMN write_rule TEXT"); } catch {}
+    try { db.run("ALTER TABLE _collections ADD COLUMN relations_json TEXT"); } catch {}
 
     // Create the actual table
     const sql = buildCreateTableSQL(name, columns);
     db.run(sql);
+    invalidateSchemaCache(pool, name);
 
     // Store metadata
     const now = new Date().toISOString();
@@ -190,6 +195,11 @@ export function createCollection(
     // Apply RLS if provided
     if (options?.rls) {
       setRLS(pool, name, options.rls);
+    }
+
+    // Apply relation metadata if provided
+    if (options?.relations) {
+      setRelations(pool, name, options.relations);
     }
 
     return {
@@ -302,7 +312,7 @@ export function updateCollection(
   pool: DatabasePool,
   name: string,
   newColumns: ColumnDefinition[],
-  options?: { rls?: RLSConfig }
+  options?: { rls?: RLSConfig; relations?: Record<string, RelationDefinition> }
 ): CollectionInfo {
   validateIdentifier(name, "collection name");
 
@@ -395,6 +405,13 @@ export function updateCollection(
       setRLS(pool, name, options.rls);
     }
 
+    // Apply relation metadata if provided
+    if (options?.relations) {
+      setRelations(pool, name, options.relations);
+    }
+
+    invalidateSchemaCache(pool, name);
+
     // Return info
     const countRow = db.query(`SELECT COUNT(*) as cnt FROM "${name}"`).get() as { cnt?: number } | null;
 
@@ -442,5 +459,6 @@ export function deleteCollection(pool: DatabasePool, name: string): void {
 
     db.run(`DROP TABLE "${name}"`);
     db.run("DELETE FROM _collections WHERE name=?", [name]);
+    invalidateSchemaCache(pool, name);
   });
 }

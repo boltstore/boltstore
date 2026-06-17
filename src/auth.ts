@@ -12,7 +12,12 @@
  */
 
 import { DatabasePool } from "./db/pool";
-import { validateIdentifier } from "@boltstore/utils";
+import { validateIdentifier, generateSecureId } from "@boltstore/utils";
+import { markPasswordSet } from "./admin/oauth";
+import { applyRLS, toRLSContext, type RLSContext } from "./rls";
+import type { AuthContext } from "./middleware/auth";
+
+export { generateSecureId };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,7 +35,7 @@ export interface AuthConfig {
 export interface User {
   /** Unique user ID. */
   id: string;
-  /** Email address (unique per database). */
+  /** Email address (unique per database, stored lowercase). */
   email: string;
   /** Role: "user" or "admin". */
   role: "user" | "admin";
@@ -40,6 +45,12 @@ export interface User {
   updated_at: string;
 }
 
+/** Internal user row including the oauth_only flag. */
+export interface UserRow extends User {
+  oauth_only?: number;
+  password_hash?: string;
+}
+
 export interface TokenPair {
   /** Short-lived JWT access token. */
   accessToken: string;
@@ -47,6 +58,12 @@ export interface TokenPair {
   refreshToken: string;
   /** Access token expiry in seconds from now. */
   expiresIn: number;
+  /** User ID the token pair was issued for. */
+  userId?: string;
+  /** User email the token pair was issued for. */
+  email?: string;
+  /** User role the token pair was issued for. */
+  role?: "user" | "admin";
 }
 
 export interface JwtPayload {
@@ -64,6 +81,10 @@ export interface JwtPayload {
   jti: string;
   /** Token type. */
   type?: "access" | "refresh";
+  /** Audience (database domain binding). */
+  aud?: string;
+  /** Issuer claim. */
+  iss?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +93,7 @@ export interface JwtPayload {
 
 const DEFAULT_ACCESS_EXPIRY = 900;       // 15 minutes
 const DEFAULT_REFRESH_EXPIRY = 604800;   // 7 days
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 const MIN_PASSWORD_LENGTH = 8;
 
 // ---------------------------------------------------------------------------
@@ -89,10 +110,14 @@ export function bootstrapAuthTables(pool: DatabasePool): void {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
+      oauth_only INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
   `);
+
+  // Migrate older _users tables to include the oauth_only column.
+  try { db.run("ALTER TABLE _users ADD COLUMN oauth_only INTEGER NOT NULL DEFAULT 0"); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS _tokens (
@@ -104,6 +129,51 @@ export function bootstrapAuthTables(pool: DatabasePool): void {
       created_at TEXT NOT NULL
     )
   `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_tokens_user_expires ON _tokens(user_id, expires_at)
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_tokens_expires ON _tokens(expires_at)
+  `);
+}
+
+let tokenCleanupIntervals: Map<DatabasePool, ReturnType<typeof setInterval>> = new Map();
+
+/**
+ * Start a periodic cleanup of expired and revoked tokens for a specific pool.
+ * Default interval: 5 minutes.
+ */
+export function startTokenCleanup(pool: DatabasePool, intervalMs = 5 * 60 * 1000): void {
+  if (tokenCleanupIntervals.has(pool)) return;
+  const interval = setInterval(() => {
+    try {
+      const db = pool.write();
+      db.run("DELETE FROM _tokens WHERE expires_at < datetime('now') OR revoked = 1");
+    } catch {
+      // Ignore cleanup errors.
+    }
+  }, intervalMs);
+  tokenCleanupIntervals.set(pool, interval);
+}
+
+/**
+ * Stop the periodic token cleanup task for a specific pool, or all pools if none given.
+ */
+export function stopTokenCleanup(pool?: DatabasePool): void {
+  if (pool) {
+    const interval = tokenCleanupIntervals.get(pool);
+    if (interval) {
+      clearInterval(interval);
+      tokenCleanupIntervals.delete(pool);
+    }
+  } else {
+    for (const interval of tokenCleanupIntervals.values()) {
+      clearInterval(interval);
+    }
+    tokenCleanupIntervals.clear();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -112,16 +182,12 @@ export function bootstrapAuthTables(pool: DatabasePool): void {
 
 /** Generate a unique user ID. */
 function generateUserId(): string {
-  const ts = Date.now().toString(36);
-  const rnd = Math.random().toString(36).slice(2, 10);
-  return `usr_${ts}_${rnd}`;
+  return generateSecureId("usr");
 }
 
 /** Generate a unique JWT ID. */
 function generateJti(): string {
-  const ts = Date.now().toString(36);
-  const rnd = Math.random().toString(36).slice(2, 10);
-  return `jti_${ts}_${rnd}`;
+  return generateSecureId("jti");
 }
 
 /** Get current ISO-8601 timestamp. */
@@ -139,11 +205,14 @@ function validateEmail(email: string): void {
   if (!email || typeof email !== "string") {
     throw Object.assign(new Error("Email is required."), { status: 400 });
   }
-  if (!EMAIL_REGEX.test(email)) {
-    throw Object.assign(new Error("Invalid email format."), { status: 400 });
-  }
   if (email.length > 254) {
     throw Object.assign(new Error("Email exceeds maximum length."), { status: 400 });
+  }
+  if (email.toLowerCase() !== email || email.includes("\n") || email.includes("\r")) {
+    throw Object.assign(new Error("Invalid email format."), { status: 400 });
+  }
+  if (!EMAIL_REGEX.test(email)) {
+    throw Object.assign(new Error("Invalid email format."), { status: 400 });
   }
 }
 
@@ -196,10 +265,11 @@ function base64urlEncode(data: ArrayBuffer | Buffer): string {
 /**
  * Sign a JWT using HMAC-SHA256 (Bun.CryptoHasher).
  */
-function signJwt(payload: Record<string, unknown>, secret: string): string {
+function signJwt(payload: Record<string, unknown>, secret: string, audience?: string): string {
   const header = { alg: "HS256", typ: "JWT" };
   const headerB64 = Buffer.from(JSON.stringify(header)).toString("base64url");
-  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const fullPayload: Record<string, unknown> = audience ? { ...payload, iss: "boltstore", aud: audience } : { ...payload, iss: "boltstore" };
+  const payloadB64 = Buffer.from(JSON.stringify(fullPayload)).toString("base64url");
   const signingInput = `${headerB64}.${payloadB64}`;
 
   const hasher = new Bun.CryptoHasher("sha256", secret);
@@ -213,7 +283,7 @@ function signJwt(payload: Record<string, unknown>, secret: string): string {
  * Verify a JWT signature and return the decoded payload.
  * Throws if the token is invalid, expired, or malformed.
  */
-function verifyJwt(token: string, secret: string): JwtPayload {
+function verifyJwt(token: string, secret: string, audience?: string): JwtPayload {
   if (!token || typeof token !== "string") {
     throw Object.assign(new Error("Missing or invalid token."), { status: 401 });
   }
@@ -225,13 +295,30 @@ function verifyJwt(token: string, secret: string): JwtPayload {
 
   const [headerB64, payloadB64, signatureB64] = parts;
 
-  // Verify signature
+  // Decode and validate header
+  let header: { alg?: string; typ?: string };
+  try {
+    header = JSON.parse(Buffer.from(headerB64, "base64url").toString());
+  } catch {
+    throw Object.assign(new Error("Invalid token header."), { status: 401 });
+  }
+  if (header.alg !== "HS256" || header.typ !== "JWT") {
+    throw Object.assign(new Error("Unsupported token algorithm or type."), { status: 401 });
+  }
+
+  // Verify signature (constant-time)
   const signingInput = `${headerB64}.${payloadB64}`;
   const hasher = new Bun.CryptoHasher("sha256", secret);
   hasher.update(signingInput);
   const expectedSig = base64urlEncode(hasher.digest());
 
-  if (expectedSig !== signatureB64) {
+  // Constant-time comparison
+  const expectedBuf = Buffer.from(expectedSig);
+  const actualBuf = Buffer.from(signatureB64);
+  if (expectedBuf.length !== actualBuf.length) {
+    throw Object.assign(new Error("Invalid token signature."), { status: 401 });
+  }
+  if (!crypto.timingSafeEqual(expectedBuf, actualBuf)) {
     throw Object.assign(new Error("Invalid token signature."), { status: 401 });
   }
 
@@ -243,15 +330,25 @@ function verifyJwt(token: string, secret: string): JwtPayload {
     throw Object.assign(new Error("Invalid token payload."), { status: 401 });
   }
 
-  // Check expiry
+  // Check expiry with small clock skew allowance
   const now = unixNow();
-  if (payload.exp && payload.exp < now) {
+  if (payload.exp && payload.exp < now - 60) {
     throw Object.assign(new Error("Token has expired."), { status: 401 });
   }
 
   // Validate required fields
   if (!payload.sub || !payload.jti) {
     throw Object.assign(new Error("Invalid token claims."), { status: 401 });
+  }
+
+  // Validate audience (database binding)
+  if (audience && payload.aud !== audience) {
+    throw Object.assign(new Error("Invalid token audience."), { status: 401 });
+  }
+
+  // Validate issuer
+  if (payload.iss !== "boltstore") {
+    throw Object.assign(new Error("Invalid token issuer."), { status: 401 });
   }
 
   return payload;
@@ -293,12 +390,78 @@ export async function registerUser(
     }
 
     db.run(
-      "INSERT INTO _users (id, email, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-      [id, email, passwordHash, "user", ts, ts]
+      `INSERT INTO _users (id, email, password_hash, role, oauth_only, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, email.toLowerCase(), passwordHash, "user", 0, ts, ts]
     );
 
     return { id, email, role: "user" as const, created_at: ts, updated_at: ts };
   });
+}
+
+/**
+ * Issue a fresh access/refresh token pair for an existing user.
+ */
+export function createTokenPairForUser(
+  pool: DatabasePool,
+  user: { id: string; email: string; role: string },
+  config: AuthConfig
+): TokenPair {
+  if (!config.secret) {
+    throw Object.assign(
+      new Error("JWT secret is not configured."),
+      { status: 500 }
+    );
+  }
+
+  bootstrapAuthTables(pool);
+
+  const accessExpiry = config.accessTokenExpiry ?? DEFAULT_ACCESS_EXPIRY;
+  const refreshExpiry = config.refreshTokenExpiry ?? DEFAULT_REFRESH_EXPIRY;
+  const nowSec = unixNow();
+
+  const accessJti = generateJti();
+  const accessPayload: Record<string, unknown> = {
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+    type: "access",
+    jti: accessJti,
+    iat: nowSec,
+    exp: nowSec + accessExpiry,
+  };
+  const accessToken = signJwt(accessPayload, config.secret, user.email.split("@")[1] || "boltstore");
+
+  const refreshJti = generateJti();
+  const refreshPayload: Record<string, unknown> = {
+    sub: user.id,
+    type: "refresh",
+    jti: refreshJti,
+    iat: nowSec,
+    exp: nowSec + refreshExpiry,
+  };
+  const refreshToken = signJwt(refreshPayload, config.secret, user.email.split("@")[1] || "boltstore");
+
+  pool.writeTransaction(() => {
+    const writeDb = pool.write();
+    writeDb.run(
+      "INSERT INTO _tokens (jti, user_id, type, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+      [accessJti, user.id, "access", new Date((nowSec + accessExpiry) * 1000).toISOString(), now()]
+    );
+    writeDb.run(
+      "INSERT INTO _tokens (jti, user_id, type, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+      [refreshJti, user.id, "refresh", new Date((nowSec + refreshExpiry) * 1000).toISOString(), now()]
+    );
+  });
+
+  return {
+    accessToken,
+    refreshToken,
+    expiresIn: accessExpiry,
+    userId: user.id,
+    email: user.email,
+    role: user.role as "user" | "admin",
+  };
 }
 
 /**
@@ -326,13 +489,20 @@ export async function loginUser(
 
   const db = pool.read();
   const row = db
-    .query("SELECT id, email, password_hash, role FROM _users WHERE email=?")
-    .get(email) as { id: string; email: string; password_hash: string; role: string } | null;
+    .query("SELECT id, email, password_hash, role, oauth_only FROM _users WHERE email=?")
+    .get(email.toLowerCase()) as { id: string; email: string; password_hash: string; role: string; oauth_only: number } | null;
 
   if (!row) {
     throw Object.assign(
       new Error("Invalid email or password."),
       { status: 401 }
+    );
+  }
+
+  if (row.oauth_only === 1) {
+    throw Object.assign(
+      new Error("Password login is disabled for this account until a password is set via profile update."),
+      { status: 403 }
     );
   }
 
@@ -344,46 +514,7 @@ export async function loginUser(
     );
   }
 
-  const accessExpiry = config.accessTokenExpiry ?? DEFAULT_ACCESS_EXPIRY;
-  const refreshExpiry = config.refreshTokenExpiry ?? DEFAULT_REFRESH_EXPIRY;
-  const nowSec = unixNow();
-
-  // Issue access token
-  const accessJti = generateJti();
-  const accessPayload: Record<string, unknown> = {
-    sub: row.id,
-    email: row.email,
-    role: row.role,
-    type: "access",
-    jti: accessJti,
-    iat: nowSec,
-    exp: nowSec + accessExpiry,
-  };
-  const accessToken = signJwt(accessPayload, config.secret);
-
-  // Issue refresh token
-  const refreshJti = generateJti();
-  const refreshPayload: Record<string, unknown> = {
-    sub: row.id,
-    type: "refresh",
-    jti: refreshJti,
-    iat: nowSec,
-    exp: nowSec + refreshExpiry,
-  };
-  const refreshToken = signJwt(refreshPayload, config.secret);
-
-  // Store token metadata
-  const writeDb = pool.write();
-  writeDb.run(
-    "INSERT INTO _tokens (jti, user_id, type, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
-    [accessJti, row.id, "access", new Date((nowSec + accessExpiry) * 1000).toISOString(), now()]
-  );
-  writeDb.run(
-    "INSERT INTO _tokens (jti, user_id, type, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
-    [refreshJti, row.id, "refresh", new Date((nowSec + refreshExpiry) * 1000).toISOString(), now()]
-  );
-
-  return { accessToken, refreshToken, expiresIn: accessExpiry };
+  return createTokenPairForUser(pool, { id: row.id, email: row.email, role: row.role }, config);
 }
 
 /**
@@ -419,9 +550,9 @@ export async function refreshAccessToken(
     .query("SELECT revoked FROM _tokens WHERE jti=?")
     .get(payload.jti) as { revoked: number } | null;
 
-  if (tokenRow && tokenRow.revoked) {
+  if (!tokenRow || tokenRow.revoked) {
     throw Object.assign(
-      new Error("Token has been revoked."),
+      new Error("Token has been revoked or is invalid."),
       { status: 401 }
     );
   }
@@ -441,45 +572,7 @@ export async function refreshAccessToken(
   // Revoke the old refresh token
   pool.write().run("UPDATE _tokens SET revoked=1 WHERE jti=?", [payload.jti]);
 
-  // Issue new token pair
-  const accessExpiry = config.accessTokenExpiry ?? DEFAULT_ACCESS_EXPIRY;
-  const refreshExpiry = config.refreshTokenExpiry ?? DEFAULT_REFRESH_EXPIRY;
-  const nowSec = unixNow();
-
-  const accessJti = generateJti();
-  const accessPayload: Record<string, unknown> = {
-    sub: userRow.id,
-    email: userRow.email,
-    role: userRow.role,
-    type: "access",
-    jti: accessJti,
-    iat: nowSec,
-    exp: nowSec + accessExpiry,
-  };
-  const newAccessToken = signJwt(accessPayload, config.secret);
-
-  const refreshJti = generateJti();
-  const refreshPayload: Record<string, unknown> = {
-    sub: userRow.id,
-    type: "refresh",
-    jti: refreshJti,
-    iat: nowSec,
-    exp: nowSec + refreshExpiry,
-  };
-  const newRefreshToken = signJwt(refreshPayload, config.secret);
-
-  // Store new tokens
-  const writeDb = pool.write();
-  writeDb.run(
-    "INSERT INTO _tokens (jti, user_id, type, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
-    [accessJti, userRow.id, "access", new Date((nowSec + accessExpiry) * 1000).toISOString(), now()]
-  );
-  writeDb.run(
-    "INSERT INTO _tokens (jti, user_id, type, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
-    [refreshJti, userRow.id, "refresh", new Date((nowSec + refreshExpiry) * 1000).toISOString(), now()]
-  );
-
-  return { accessToken: newAccessToken, refreshToken: newRefreshToken, expiresIn: accessExpiry };
+  return createTokenPairForUser(pool, userRow, config);
 }
 
 /**
@@ -489,7 +582,7 @@ export async function refreshAccessToken(
  */
 export function logoutUser(pool: DatabasePool, userId: string): void {
   bootstrapAuthTables(pool);
-  pool.write().run("UPDATE _tokens SET revoked=1 WHERE user_id=?", [userId]);
+  pool.write().run("DELETE FROM _tokens WHERE user_id=?", [userId]);
 }
 
 /**
@@ -548,17 +641,24 @@ export async function updateProfile(
     );
   }
 
-  return pool.writeTransaction(async () => {
+  let passwordHash: string | undefined;
+  if (data.password) {
+    validatePassword(data.password);
+    passwordHash = await hashPassword(data.password);
+  }
+
+  return pool.writeTransaction(() => {
     const writeDb = pool.write();
     const ts = now();
 
     if (data.email) {
       validateEmail(data.email);
+      const normalizedEmail = data.email.toLowerCase();
 
       // Check for duplicate email
       const dup = writeDb
         .query("SELECT 1 FROM _users WHERE email=? AND id!=?")
-        .get(data.email, userId);
+        .get(normalizedEmail, userId);
       if (dup) {
         throw Object.assign(
           new Error("A user with this email already exists."),
@@ -566,13 +666,12 @@ export async function updateProfile(
         );
       }
 
-      writeDb.run("UPDATE _users SET email=?, updated_at=? WHERE id=?", [data.email, ts, userId]);
+      writeDb.run("UPDATE _users SET email=?, updated_at=? WHERE id=?", [normalizedEmail, ts, userId]);
     }
 
-    if (data.password) {
-      validatePassword(data.password);
-      const passwordHash = await hashPassword(data.password);
-      writeDb.run("UPDATE _users SET password_hash=?, updated_at=? WHERE id=?", [passwordHash, ts, userId]);
+    if (passwordHash) {
+      writeDb.run("UPDATE _users SET password_hash=?, oauth_only=0, updated_at=? WHERE id=?", [passwordHash, ts, userId]);
+      markPasswordSet(pool, userId);
     } else if (data.email) {
       writeDb.run("UPDATE _users SET updated_at=? WHERE id=?", [ts, userId]);
     }
@@ -611,6 +710,13 @@ export function verifyAccessToken(
     );
   }
 
+  if (payload.iss !== "boltstore") {
+    throw Object.assign(
+      new Error("Invalid token issuer."),
+      { status: 401 }
+    );
+  }
+
   // Check revocation
   bootstrapAuthTables(pool);
   const db = pool.read();
@@ -618,9 +724,9 @@ export function verifyAccessToken(
     .query("SELECT revoked FROM _tokens WHERE jti=?")
     .get(payload.jti) as { revoked: number } | null;
 
-  if (tokenRow && tokenRow.revoked) {
+  if (!tokenRow || tokenRow.revoked) {
     throw Object.assign(
-      new Error("Token has been revoked."),
+      new Error("Token has been revoked or does not exist."),
       { status: 401 }
     );
   }
@@ -630,4 +736,11 @@ export function verifyAccessToken(
     email: payload.email,
     role: payload.role,
   };
+}
+
+/** Generate a cryptographically random password for OAuth users. */
+export async function generateRandomPassword(): Promise<string> {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return await hashPassword(Buffer.from(bytes).toString("base64url"));
 }

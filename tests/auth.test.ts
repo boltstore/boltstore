@@ -19,6 +19,7 @@ import {
   type AuthConfig,
   type User,
 } from "../src/auth";
+import { mkdirSync, rmSync } from "node:fs";
 
 const TEST_DATA_DIR = "/tmp/boltstore_test_auth";
 const TEST_APP = "authapp";
@@ -30,12 +31,12 @@ let config: AuthConfig;
 
 function cleanup() {
   try { if (manager) manager.close(); } catch {}
-  try { Bun.spawnSync(["rm", "-rf", TEST_DATA_DIR]); } catch {}
+  try { rmSync(TEST_DATA_DIR, { recursive: true, force: true }); } catch {}
 }
 
 beforeAll(() => {
   cleanup();
-  Bun.spawnSync(["mkdir", "-p", TEST_DATA_DIR]);
+  mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
   manager.createDatabase(TEST_APP);
   pool = manager.get(TEST_APP);
@@ -189,6 +190,20 @@ describe("loginUser", () => {
     }
   });
 
+  test("blocks password login for OAuth-only accounts", async () => {
+    const email = "oauthonly@example.com";
+    const password = "password123";
+    await registerUser(pool, email, password);
+    pool.write().run("UPDATE _users SET oauth_only=1 WHERE email=?", [email]);
+    try {
+      await loginUser(pool, email, password, config);
+      expect.unreachable("Should have thrown");
+    } catch (err: unknown) {
+      const e = err as { status?: number };
+      expect(e.status).toBe(403);
+    }
+  });
+
   test("returns 500 when JWT secret is not configured", async () => {
     await registerUser(pool, "eve@example.com", "password123");
     try {
@@ -214,6 +229,11 @@ describe("verifyAccessToken", () => {
     expect(context.userId).toBeTruthy();
     expect(context.email).toBe("frank@example.com");
     expect(context.role).toBe("user");
+
+    // Issuer claim is present and verified.
+    const payloadB64 = tokens.accessToken.split(".")[1];
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString());
+    expect(payload.iss).toBe("boltstore");
   });
 
   test("returns 401 for invalid token", async () => {
