@@ -9,6 +9,7 @@ import { DatabaseManager } from "../../src/db/manager";
 import { importData, exportData, parseCSV } from "../../src/admin/import-export";
 import { createCollection, getCollection } from "../../src/collections";
 import { listRecords } from "../../src/records";
+import { performance } from "node:perf_hooks";
 
 const TEST_DATA_DIR = "/tmp/boltstore_test_import_export";
 const TEST_APP = "importexportapp";
@@ -768,9 +769,45 @@ describe("importData — Edge cases", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Integration: import → export round-trip
-// ---------------------------------------------------------------------------
+describe("Benchmark", () => {
+  test("bulk JSON import targets at least 1,000 inserts/sec", () => {
+    createCollection(pool, "benchmark", [
+      { name: "name", type: "TEXT" },
+      { name: "value", type: "INTEGER" },
+    ]);
+
+    const rows = [];
+    for (let i = 0; i < 5000; i++) {
+      rows.push({ name: `item_${i}`, value: i });
+    }
+    const json = JSON.stringify(rows);
+
+    const start = performance.now();
+    const result = importData(pool, "benchmark", json, { format: "json" });
+    const durationMs = performance.now() - start;
+
+    expect(result.imported).toBe(5000);
+    const insertsPerSec = (result.imported / durationMs) * 1000;
+    expect(insertsPerSec).toBeGreaterThanOrEqual(1000);
+  });
+
+  test("bulk create targets at least 1,000 inserts/sec", () => {
+    createCollection(pool, "benchmark_create", [
+      { name: "name", type: "TEXT" },
+      { name: "value", type: "INTEGER" },
+    ]);
+
+    const { createRecord } = require("../../src/records");
+    const start = performance.now();
+    for (let i = 0; i < 1000; i++) {
+      createRecord(pool, "benchmark_create", { name: `item_${i}`, value: i });
+    }
+    const durationMs = performance.now() - start;
+
+    const insertsPerSec = (1000 / durationMs) * 1000;
+    expect(insertsPerSec).toBeGreaterThanOrEqual(1000);
+  });
+});
 
 describe("Import/Export round-trip", () => {
   test("JSON: import then export produces equivalent data", () => {

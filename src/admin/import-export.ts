@@ -12,7 +12,8 @@
 
 import { DatabasePool } from "../db/pool";
 import { toBindings } from "../db/cast";
-import { validateIdentifier } from "@boltstore/utils";
+import { validateIdentifier, type ColumnDefinition, type ColumnType } from "@boltstore/utils";
+import { generateSecureId } from "../auth";
 import { createCollection, getCollection } from "../collections";
 import { listRecords } from "../records";
 
@@ -29,6 +30,8 @@ export interface ImportOptions {
   dryRun?: boolean;
   /** Whether the input has a header row (CSV only). Default: true. */
   hasHeader?: boolean;
+  /** Maximum number of rows allowed in the import payload. */
+  maxRows?: number;
 }
 
 export interface ImportResult {
@@ -532,6 +535,13 @@ export function importData(
     records = parseJSONInput(input);
   }
 
+  if (options.maxRows !== undefined && records.length > options.maxRows) {
+    throw Object.assign(
+      new Error(`Import data exceeds maximum of ${options.maxRows} rows.`),
+      { status: 413 }
+    );
+  }
+
   if (records.length === 0) {
     return { imported: 0, failed: 0, errors: [], dryRun };
   }
@@ -564,7 +574,11 @@ export function importData(
         };
       }
 
-      const created = createCollection(pool, collection, schema);
+      const typedSchema: ColumnDefinition[] = schema.map((s) => ({
+        name: s.name,
+        type: s.type as ColumnType,
+      }));
+      const created = createCollection(pool, collection, typedSchema);
       collectionResult = { name: created.name, schema: created.schema };
       collectionExists = true; // Collection now exists, proceed with import
     } else {
@@ -619,6 +633,24 @@ export function importData(
 
   pool.writeTransaction(() => {
     const writeDb = pool.write();
+
+    // Determine the union of all user columns across the import batch.
+    // We always insert id, created_at, updated_at plus every user column seen.
+    const userCols = new Set<string>();
+    for (const record of validRecords) {
+      for (const k of Object.keys(record)) {
+        if (k !== "id" && k !== "created_at" && k !== "updated_at") {
+          userCols.add(k);
+        }
+      }
+    }
+    const insertColumns = ["id", "created_at", "updated_at", ...userCols];
+    const colPlaceholders = insertColumns.map(() => "?").join(", ");
+    const colNames = insertColumns.map((k) => `"${k}"`).join(", ");
+    const insertStmt = writeDb.query(
+      `INSERT OR REPLACE INTO "${collection}" (${colNames}) VALUES (${colPlaceholders})`
+    );
+
     for (const record of validRecords) {
       const id = (record.id as string) || generateImportId();
       const timestamp = new Date().toISOString();
@@ -629,22 +661,20 @@ export function importData(
         updated_at: timestamp,
       };
 
-      for (const [k, v] of Object.entries(record)) {
-        if (k === "id" || k === "created_at" || k === "updated_at") continue;
-        finalRecord[k] = v;
+      for (const col of userCols) {
+        if (col in record) {
+          finalRecord[col] = record[col];
+        } else {
+          finalRecord[col] = null;
+        }
       }
 
-      const keys = Object.keys(finalRecord);
-      const placeholders = keys.map(() => "?").join(", ");
-      const quotedKeys = keys.map((k) => `"${k}"`).join(", ");
-      const values = keys.map((k) => finalRecord[k]);
-
-      writeDb.run(
-        `INSERT OR REPLACE INTO "${collection}" (${quotedKeys}) VALUES (${placeholders})`,
-        toBindings(values)
-      );
+      const values = insertColumns.map((k) => finalRecord[k]);
+      insertStmt.run(...toBindings(values));
       imported++;
     }
+
+    insertStmt.finalize();
   });
 
   return {
@@ -658,10 +688,9 @@ export function importData(
 
 /** Generate a unique record ID for imports. */
 function generateImportId(): string {
-  const timestamp = Date.now().toString(36);
-  const randomPart1 = Math.random().toString(36).slice(2, 7);
-  const randomPart2 = Math.random().toString(36).slice(2, 7);
-  return `imp_${timestamp}_${randomPart1}${randomPart2}`;
+  const random = new Uint8Array(12);
+  crypto.getRandomValues(random);
+  return `imp_${Date.now().toString(36)}_${Buffer.from(random).toString("base64url")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -710,7 +739,7 @@ export function exportData(
 
   // Filter records to only include requested fields
   const filtered = exportFields.length > 0
-    ? records.map((rec) => {
+    ? records.map((rec: Record<string, unknown>) => {
         const out: Record<string, unknown> = {};
         for (const f of exportFields) {
           if (f in rec) out[f] = rec[f];
@@ -721,7 +750,7 @@ export function exportData(
 
   if (format === "csv") {
     const fields = exportFields.length > 0 ? exportFields : Array.from(
-      new Set(filtered.flatMap((r) => Object.keys(r)))
+      new Set<string>(filtered.flatMap((r: Record<string, unknown>) => Object.keys(r)))
     );
 
     const csv = recordsToCSV(filtered, fields);
