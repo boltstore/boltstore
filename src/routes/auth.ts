@@ -6,48 +6,28 @@
 
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
-import {
-  registerUser,
-  loginUser,
-  refreshAccessToken,
-  logoutUser,
-  getUserById,
-  updateProfile,
-  verifyAccessToken,
-  type AuthConfig,
-} from "../auth";
-import { jsonResponse, errorResponse } from "../server";
-
-/** Extract Bearer token from Authorization header. */
-function extractBearerToken(request: Request): string | null {
-  const auth = request.headers.get("Authorization");
-  if (!auth || !auth.startsWith("Bearer ")) return null;
-  return auth.slice(7);
-}
-
-/** Verify token and return user context, or return a 401 response. */
-function requireAuth(
-  pool: ReturnType<DatabaseManager["get"]>,
-  token: string | null,
-  config: AuthConfig
-): { userId: string; email: string; role: "user" | "admin" } | Response {
-  if (!token) {
-    return errorResponse("UNAUTHORIZED", "Authentication required.", 401);
-  }
-  try {
-    return verifyAccessToken(pool, token, config);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Authentication failed";
-    const status = (err as { status?: number }).status || 401;
-    return errorResponse("UNAUTHORIZED", message, status);
-  }
-}
+import { registerUser, loginUser, refreshAccessToken, logoutUser, getUserById, updateProfile, type AuthConfig } from "../auth";
+import { jsonResponse, errorResponse, logAuditEvent, auditFromRequest } from "../server";
+import { authenticateRequest } from "../middleware/auth";
 
 export function registerAuthRoutes(
   router: Router,
   manager: DatabaseManager,
   config: AuthConfig
 ): void {
+  const audit = (req: Request, type: "auth.register" | "auth.login" | "auth.refresh" | "auth.logout" | "auth.profile_update" | "auth.password_change", success: boolean, database?: string, principalId?: string, details?: Record<string, unknown>, error?: string) => {
+    logAuditEvent(auditFromRequest(req, {
+      type,
+      principalId,
+      principalType: "user",
+      database,
+      action: type.split(".")[1],
+      success,
+      details,
+      error,
+    }));
+  };
+
   // POST /api/:database/auth/register — register a new user
   router.post("/api/:database/auth/register", async (req, params) => {
     try {
@@ -56,8 +36,10 @@ export function registerAuthRoutes(
       if (!password || typeof password !== "string") return errorResponse("VALIDATION", "Field 'password' is required.", 400);
       const pool = manager.get(params.database);
       const user = await registerUser(pool, email, password);
+      audit(req, "auth.register", true, params.database, user.id, { email });
       return jsonResponse({ data: user }, 201);
     } catch (err) {
+      audit(req, "auth.register", false, params.database, undefined, undefined, err instanceof Error ? err.message : "Registration failed");
       const message = err instanceof Error ? err.message : "Registration failed";
       return errorResponse("REGISTER_ERROR", message, (err as { status?: number }).status || 500);
     }
@@ -71,8 +53,10 @@ export function registerAuthRoutes(
       if (!password || typeof password !== "string") return errorResponse("VALIDATION", "Field 'password' is required.", 400);
       const pool = manager.get(params.database);
       const tokens = await loginUser(pool, email, password, config);
+      audit(req, "auth.login", true, params.database, tokens.userId, { email });
       return jsonResponse({ data: tokens });
     } catch (err) {
+      audit(req, "auth.login", false, params.database, undefined, undefined, err instanceof Error ? err.message : "Login failed");
       const message = err instanceof Error ? err.message : "Login failed";
       return errorResponse("LOGIN_ERROR", message, (err as { status?: number }).status || 500);
     }
@@ -85,36 +69,37 @@ export function registerAuthRoutes(
       if (!refreshToken || typeof refreshToken !== "string") return errorResponse("VALIDATION", "Field 'refreshToken' is required.", 400);
       const pool = manager.get(params.database);
       const tokens = await refreshAccessToken(pool, refreshToken, config);
+      audit(req, "auth.refresh", true, params.database, tokens.userId);
       return jsonResponse({ data: tokens });
     } catch (err) {
+      audit(req, "auth.refresh", false, params.database, undefined, undefined, err instanceof Error ? err.message : "Token refresh failed");
       const message = err instanceof Error ? err.message : "Token refresh failed";
       return errorResponse("REFRESH_ERROR", message, (err as { status?: number }).status || 500);
     }
   });
 
   // POST /api/:database/auth/logout — logout (requires auth)
-  router.post("/api/:database/auth/logout", (req, params) => {
+  router.post("/api/:database/auth/logout", async (req, params) => {
     try {
-      const token = extractBearerToken(req);
-      const pool = manager.get(params.database);
-      const auth = requireAuth(pool, token, config);
-      if (auth instanceof Response) return auth;
-      logoutUser(pool, auth.userId);
+      const authCtx = await authenticateRequest(req, manager, params.database, config);
+      if (authCtx instanceof Response) return authCtx;
+      logoutUser(manager.get(params.database), authCtx.principalId);
+      audit(req, "auth.logout", true, params.database, authCtx.principalId);
       return jsonResponse({ data: { loggedOut: true } });
     } catch (err) {
+      audit(req, "auth.logout", false, params.database, undefined, undefined, err instanceof Error ? err.message : "Logout failed");
       const message = err instanceof Error ? err.message : "Logout failed";
       return errorResponse("LOGOUT_ERROR", message, (err as { status?: number }).status || 500);
     }
   });
 
   // GET /api/:database/auth/me — get current user (requires auth)
-  router.get("/api/:database/auth/me", (req, params) => {
+  router.get("/api/:database/auth/me", async (req, params) => {
     try {
-      const token = extractBearerToken(req);
+      const authCtx = await authenticateRequest(req, manager, params.database, config);
+      if (authCtx instanceof Response) return authCtx;
       const pool = manager.get(params.database);
-      const auth = requireAuth(pool, token, config);
-      if (auth instanceof Response) return auth;
-      const user = getUserById(pool, auth.userId);
+      const user = getUserById(pool, authCtx.principalId);
       return jsonResponse({ data: user });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to get user";
@@ -125,14 +110,15 @@ export function registerAuthRoutes(
   // PATCH /api/:database/auth/me — update profile (requires auth)
   router.patch("/api/:database/auth/me", async (req, params) => {
     try {
-      const token = extractBearerToken(req);
-      const pool = manager.get(params.database);
-      const auth = requireAuth(pool, token, config);
-      if (auth instanceof Response) return auth;
+      const authCtx = await authenticateRequest(req, manager, params.database, config);
+      if (authCtx instanceof Response) return authCtx;
       const { email, password } = await req.json();
-      const user = await updateProfile(pool, auth.userId, { email, password });
+      const user = await updateProfile(manager.get(params.database), authCtx.principalId, { email, password });
+      const type: "auth.profile_update" | "auth.password_change" = password ? "auth.password_change" : "auth.profile_update";
+      audit(req, type, true, params.database, authCtx.principalId, { emailChanged: !!email, passwordChanged: !!password });
       return jsonResponse({ data: user });
     } catch (err) {
+      audit(req, "auth.profile_update", false, params.database, undefined, undefined, err instanceof Error ? err.message : "Failed to update profile");
       const message = err instanceof Error ? err.message : "Failed to update profile";
       return errorResponse("UPDATE_ME_ERROR", message, (err as { status?: number }).status || 500);
     }
