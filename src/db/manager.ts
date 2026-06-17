@@ -20,6 +20,7 @@
 import { DatabasePool } from "./pool";
 import { validateIdentifier, isReservedTable, sanitizePathComponent } from "@boltstore/utils";
 import { mkdirSync, rmSync } from "node:fs";
+import { bootstrapAuthTables } from "../auth/tables";
 
 export interface DatabaseInfo {
   /** Application (database) name. */
@@ -170,6 +171,9 @@ export class DatabaseManager {
       const parentMetaQueryTimeoutMs = (this.metaPool as unknown as { config?: { queryTimeoutMs?: number } }).config?.queryTimeoutMs ?? 0;
       const pool = new DatabasePool({ path: dbPath, queryTimeoutMs: parentMetaQueryTimeoutMs });
       this.appPools.set(name, pool);
+
+      // Auto-create auth tables (_users, _tokens) so the app can use auth immediately
+      bootstrapAuthTables(pool);
 
       return { name, path: dbPath, createdAt: now };
     });
