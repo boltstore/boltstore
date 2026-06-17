@@ -13,6 +13,7 @@
 import { DatabasePool } from "../db/pool";
 import { toBindings } from "../db/cast";
 import { validateIdentifier } from "@boltstore/utils";
+import { logAuditEvent, sanitizeSqlForAudit, type AuditEvent } from "../audit";
 
 /** System tables that must not be dropped or altered via raw SQL. */
 const PROTECTED_TABLES = [
@@ -37,6 +38,58 @@ const BLOCKED_PATTERNS = [
   /\bDROP\s+VIEW\s+/i,
   /\bDROP\s+TRIGGER\s+/i,
 ];
+
+/** Dangerous statements that are never allowed via the raw write endpoint. */
+const DANGEROUS_KEYWORDS = [
+  "ATTACH",
+  "DETACH",
+  "REINDEX",
+  "VACUUM",
+  "PRAGMA",
+  "CREATE TRIGGER",
+  "CREATE VIRTUAL TABLE",
+];
+
+function hasDangerousKeyword(sql: string): string | null {
+  const upper = sql.toUpperCase();
+  for (const kw of DANGEROUS_KEYWORDS) {
+    if (upper.includes(kw)) return kw;
+  }
+  return null;
+}
+
+/** Context for a raw SQL execution. */
+export interface QueryContext {
+  principalId?: string;
+  principalType?: "user" | "api_key";
+  ip?: string;
+  userAgent?: string;
+  database: string;
+}
+
+/** Maximum length of a raw SQL statement accepted by the write endpoint. */
+const MAX_SQL_LENGTH = 10000;
+
+function auditRawWrite(
+  pool: DatabasePool,
+  ctx: QueryContext,
+  sql: string,
+  success: boolean,
+  error?: string
+): void {
+  const event: AuditEvent = {
+    type: "raw_sql.write",
+    principalId: ctx.principalId,
+    principalType: ctx.principalType,
+    database: ctx.database,
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+    success,
+    details: { sql: sanitizeSqlForAudit(sql) },
+    error,
+  };
+  logAuditEvent(event, pool);
+}
 
 /**
  * Execute a read-only SQL query.
@@ -85,8 +138,22 @@ export function executeReadQuery(
 export function executeWriteQuery(
   pool: DatabasePool,
   sql: string,
-  params: unknown[] = []
+  params: unknown[] = [],
+  ctx?: QueryContext
 ): { changes: number; lastInsertRowid: number | bigint } {
+  if (sql.length > MAX_SQL_LENGTH) {
+    const err = `SQL statement exceeds maximum length of ${MAX_SQL_LENGTH} characters.`;
+    if (ctx) auditRawWrite(pool, ctx, sql, false, err);
+    throw Object.assign(new Error(err), { status: 413 });
+  }
+
+  const dangerous = hasDangerousKeyword(sql);
+  if (dangerous) {
+    const err = `Dangerous statement "${dangerous}" is not allowed via the raw SQL write endpoint.`;
+    if (ctx) auditRawWrite(pool, ctx, sql, false, err);
+    throw Object.assign(new Error(err), { status: 403 });
+  }
+
   // Validate system table protection
   for (const pattern of BLOCKED_PATTERNS) {
     const match = sql.match(pattern);
@@ -97,28 +164,34 @@ export function executeWriteQuery(
       if (tableMatch) {
         const tableName = tableMatch[1].toLowerCase();
         if (PROTECTED_TABLES.includes(tableName) || tableName.startsWith("sqlite_") || tableName.startsWith("_")) {
-          throw Object.assign(
-            new Error(`Cannot perform destructive operation on system table "${tableName}".`),
-            { status: 403 }
-          );
+          const err = `Cannot perform destructive operation on system table "${tableName}".`;
+          if (ctx) auditRawWrite(pool, ctx, sql, false, err);
+          throw Object.assign(new Error(err), { status: 403 });
         }
       }
     }
   }
 
-  return pool.writeTransaction(() => {
-    const db = pool.write();
-    db.run(sql, toBindings(params));
+  try {
+    return pool.writeTransaction(() => {
+      const db = pool.write();
+      db.run(sql, toBindings(params));
 
-    // Use db.query() for SELECT-based introspection (run() doesn't support .values())
-    const changesQuery = db.query("SELECT changes() as cnt").get() as { cnt: number } | null;
-    const rowIdQuery = db.query("SELECT last_insert_rowid() as id").get() as { id: number } | null;
+      // Use db.query() for SELECT-based introspection (run() doesn't support .values())
+      const changesQuery = db.query("SELECT changes() as cnt").get() as { cnt: number } | null;
+      const rowIdQuery = db.query("SELECT last_insert_rowid() as id").get() as { id: number } | null;
 
-    return {
-      changes: changesQuery?.cnt ?? 0,
-      lastInsertRowid: rowIdQuery?.id ?? 0,
-    };
-  });
+      if (ctx) auditRawWrite(pool, ctx, sql, true);
+
+      return {
+        changes: changesQuery?.cnt ?? 0,
+        lastInsertRowid: rowIdQuery?.id ?? 0,
+      };
+    });
+  } catch (err) {
+    if (ctx) auditRawWrite(pool, ctx, sql, false, (err as Error).message);
+    throw Object.assign(err as Error, { status: (err as { status?: number }).status || 500 });
+  }
 }
 
 /**

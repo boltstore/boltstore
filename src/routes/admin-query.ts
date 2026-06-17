@@ -1,10 +1,32 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
-import { executeReadQuery, executeWriteQuery, explainQuery } from "../admin/query";
-import { jsonResponse, errorResponse } from "../server";
+import { executeReadQuery, executeWriteQuery, explainQuery, type QueryContext } from "../admin/query";
+import { jsonResponse, errorResponse, auditFromRequest, logAuditEvent } from "../server";
+import { authenticateRequest, requireAdmin, type AuthConfig, type AuthContext } from "../middleware/auth";
+import { requestContext } from "../server";
 
-export function registerAdminQueryRoutes(router: Router, manager: DatabaseManager): void {
+function queryContext(req: Request, database: string, auth: AuthContext): QueryContext {
+  const ctx = requestContext.get(req);
+  return {
+    database,
+    principalId: auth.principalId,
+    principalType: auth.isApiKey ? "api_key" : "user",
+    ip: ctx?.ip,
+    userAgent: ctx?.userAgent,
+  };
+}
+
+export function registerAdminQueryRoutes(
+  router: Router,
+  manager: DatabaseManager,
+  authConfig: AuthConfig
+): void {
   router.post("/api/admin/:database/query", async (req, params) => {
+    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    if (auth instanceof Response) return auth;
+    const admin = requireAdmin(auth);
+    if (admin) return admin;
+
     try {
       const { sql, params: queryParams } = await req.json();
       if (!sql || typeof sql !== "string") return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
@@ -17,11 +39,17 @@ export function registerAdminQueryRoutes(router: Router, manager: DatabaseManage
   });
 
   router.post("/api/admin/:database/query/write", async (req, params) => {
+    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    if (auth instanceof Response) return auth;
+    const admin = requireAdmin(auth);
+    if (admin) return admin;
+
     try {
       const { sql, params: queryParams } = await req.json();
       if (!sql || typeof sql !== "string") return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
       const pool = manager.get(params.database);
-      return jsonResponse({ data: executeWriteQuery(pool, sql, Array.isArray(queryParams) ? queryParams : []) });
+      const ctx = queryContext(req, params.database, auth);
+      return jsonResponse({ data: executeWriteQuery(pool, sql, Array.isArray(queryParams) ? queryParams : [], ctx) });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to execute write query";
       return errorResponse("RAW_WRITE_ERROR", message, (err as { status?: number }).status || 500);
@@ -29,6 +57,11 @@ export function registerAdminQueryRoutes(router: Router, manager: DatabaseManage
   });
 
   router.post("/api/admin/:database/query/explain", async (req, params) => {
+    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    if (auth instanceof Response) return auth;
+    const admin = requireAdmin(auth);
+    if (admin) return admin;
+
     try {
       const { sql, params: queryParams } = await req.json();
       if (!sql || typeof sql !== "string") return errorResponse("VALIDATION", "Field 'sql' is required.", 400);

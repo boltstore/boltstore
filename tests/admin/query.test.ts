@@ -7,6 +7,7 @@
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from "bun:test";
 import { DatabaseManager } from "../../src/db/manager";
 import { executeReadQuery, executeWriteQuery, explainQuery } from "../../src/admin/query";
+import { mkdirSync, rmSync } from "node:fs";
 
 const TEST_DATA_DIR = "/tmp/boltstore_test_admin_query";
 const TEST_APP = "adminqueryapp";
@@ -16,12 +17,12 @@ let pool: ReturnType<typeof manager.get>;
 
 function cleanup() {
   try { if (manager) manager.close(); } catch {}
-  try { Bun.spawnSync(["rm", "-rf", TEST_DATA_DIR]); } catch {}
+  try { rmSync(TEST_DATA_DIR, { recursive: true, force: true }); } catch {}
 }
 
 beforeAll(() => {
   cleanup();
-  Bun.spawnSync(["mkdir", "-p", TEST_DATA_DIR]);
+  mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
   manager.createDatabase(TEST_APP);
   pool = manager.get(TEST_APP);
@@ -180,6 +181,18 @@ describe("executeWriteQuery", () => {
     } catch (err: unknown) {
       const e = err as { status?: number };
       expect(e.status).toBe(403);
+    }
+  });
+
+  test("rejects dangerous statements (ATTACH, VACUUM, PRAGMA, CREATE TRIGGER)", () => {
+    for (const stmt of ["ATTACH 'x.db' AS x", "VACUUM", "PRAGMA journal_mode", "CREATE TRIGGER trg BEFORE INSERT ON items BEGIN SELECT 1; END"]) {
+      try {
+        executeWriteQuery(pool, stmt);
+        expect.unreachable(`Should have thrown for ${stmt}`);
+      } catch (err: unknown) {
+        const e = err as { status?: number };
+        expect(e.status).toBe(403);
+      }
     }
   });
 
