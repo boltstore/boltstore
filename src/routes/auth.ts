@@ -29,7 +29,12 @@ export function registerAuthRoutes(
   };
 
   // POST /api/:database/auth/register — register a new user
+  // Registration on the _system database is not allowed via API.
+  // Use the CLI to create admin API keys.
   router.post("/api/:database/auth/register", async (req, params) => {
+    if (params.database === "_system") {
+      return errorResponse("FORBIDDEN", "Cannot register on the system database. Use the CLI to create admin API keys.", 403);
+    }
     try {
       const { email, password } = await req.json();
       if (!email || typeof email !== "string") return errorResponse("VALIDATION", "Field 'email' is required.", 400);

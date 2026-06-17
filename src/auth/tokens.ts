@@ -10,7 +10,7 @@ const DEFAULT_REFRESH_EXPIRY = 604800;
 
 export function createTokenPairForUser(
   pool: DatabasePool,
-  user: { id: string; email: string; role: string },
+  user: { id: string; email: string },
   config: AuthConfig
 ): TokenPair {
   if (!config.secret) {
@@ -30,7 +30,6 @@ export function createTokenPairForUser(
   const accessPayload: Record<string, unknown> = {
     sub: user.id,
     email: user.email,
-    role: user.role,
     type: "access",
     jti: accessJti,
     iat: nowSec,
@@ -66,7 +65,6 @@ export function createTokenPairForUser(
     expiresIn: accessExpiry,
     userId: user.id,
     email: user.email,
-    role: user.role as "user" | "admin",
   };
 }
 
@@ -90,8 +88,8 @@ export async function loginUser(
 
   const db = pool.read();
   const row = db
-    .query("SELECT id, email, password_hash, role, oauth_only FROM _users WHERE email=?")
-    .get(email.toLowerCase()) as { id: string; email: string; password_hash: string; role: string; oauth_only: number } | null;
+    .query("SELECT id, email, password_hash, oauth_only FROM _users WHERE email=?")
+    .get(email.toLowerCase()) as { id: string; email: string; password_hash: string; oauth_only: number } | null;
 
   if (!row) {
     throw Object.assign(
@@ -115,7 +113,7 @@ export async function loginUser(
     );
   }
 
-  return createTokenPairForUser(pool, { id: row.id, email: row.email, role: row.role }, config);
+  return createTokenPairForUser(pool, { id: row.id, email: row.email }, config);
 }
 
 export async function refreshAccessToken(
@@ -152,8 +150,8 @@ export async function refreshAccessToken(
   }
 
   const userRow = db
-    .query("SELECT id, email, role FROM _users WHERE id=?")
-    .get(payload.sub) as { id: string; email: string; role: string } | null;
+    .query("SELECT id, email FROM _users WHERE id=?")
+    .get(payload.sub) as { id: string; email: string } | null;
 
   if (!userRow) {
     throw Object.assign(
@@ -176,7 +174,7 @@ export function verifyAccessToken(
   pool: DatabasePool,
   token: string,
   config: AuthConfig
-): { userId: string; email: string; role: "user" | "admin" } {
+): { userId: string; email: string } {
   if (!config.secret) {
     throw Object.assign(
       new Error("JWT secret is not configured."),
@@ -216,6 +214,5 @@ export function verifyAccessToken(
   return {
     userId: payload.sub,
     email: payload.email,
-    role: payload.role,
   };
 }

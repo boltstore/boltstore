@@ -8,7 +8,6 @@ export function bootstrapAuthTables(pool: DatabasePool): void {
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'user',
       oauth_only INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL

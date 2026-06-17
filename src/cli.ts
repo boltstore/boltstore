@@ -15,6 +15,8 @@ import { loadConfig } from "./config";
 import { listMigrations, applyMigrations, rollbackLastMigration } from "./migrations";
 import { importData, exportData } from "./admin/import-export";
 import { createBackup, listBackups, restoreFromFile } from "./admin/backup";
+import { createApiKey } from "./admin/api-keys";
+import { bootstrapAuthTables } from "./auth";
 
 const HELP = `
 Boltstore — Lightweight backend-as-a-service
@@ -24,6 +26,7 @@ Usage: boltstore <command> [options]
 Commands:
   serve                 Start the HTTP server
   init                  Generate a config file (boltstore.json)
+  admin init            Create an admin API key for a database
   migrate [--db <path>] [--dir <path>]  Run pending migrations
   migrate:rollback [--db <path>]        Rollback last migration
   migrations [--db <path>]              List migration status
@@ -105,6 +108,38 @@ export async function runCli(args: string[]): Promise<void> {
       await Bun.write("boltstore.json", JSON.stringify(config, null, 2));
       console.log("[boltstore] Created boltstore.json");
       console.warn("[boltstore] A random JWT secret was generated. In production, set a strong JWT_SECRET and keep it secret.");
+      break;
+    }
+
+    case "admin": {
+      const subcommand = args[1];
+      if (subcommand === "init") {
+        const config = await loadConfig();
+        const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+        const manager = new DatabaseManager({ dataDir: config.databasePath });
+
+        try {
+          if (!manager.exists(dbName)) {
+            manager.createDatabase(dbName);
+          }
+
+          const pool = manager.get(dbName);
+          bootstrapAuthTables(pool);
+          const key = await createApiKey(pool, "admin-cli-key", { operations: ["admin"] });
+
+          console.log(`[boltstore] Admin API key created for database "${dbName}":`);
+          console.log(`  Key:    ${key.secret}`);
+          console.log(`  Prefix: ${key.prefix}`);
+          console.log(`  ID:     ${key.id}`);
+          console.log(`\nUse this key in the Authorization header:\n`);
+          console.log(`  Authorization: Bearer ${key.secret}\n`);
+          console.log("Store this key securely. It will not be shown again.");
+        } finally {
+          manager.close();
+        }
+      } else {
+        console.log("Usage: boltstore admin init [--db <name>]");
+      }
       break;
     }
 

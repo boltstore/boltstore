@@ -8,7 +8,7 @@ import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { createServer } from "../src/server";
 import { DatabaseManager } from "../src/db/manager";
 import { mkdirSync, rmSync } from "node:fs";
-import { createAdminUserAndToken, testAuthConfig } from "./helpers/auth";
+import { createAdminApiKey, testAuthConfig } from "./helpers/auth";
 import pkg from "../package.json";
 
 const TEST_PORT = 9877;
@@ -34,8 +34,8 @@ beforeAll(async () => {
   cleanup();
   mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
-  const { token } = await createAdminUserAndToken(manager.getMetaPool());
-  authHeaders = { Authorization: `Bearer ${token}` };
+  const apiKey = await createAdminApiKey(manager.getMetaPool());
+  authHeaders = { Authorization: `Bearer ${apiKey}` };
   server = createServer({ port: TEST_PORT, manager, auth: testAuthConfig() });
 });
 

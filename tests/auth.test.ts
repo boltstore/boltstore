@@ -91,7 +91,6 @@ describe("registerUser", () => {
     const user = await registerUser(pool, "alice@example.com", "password123");
     expect(user.id).toStartWith("usr_");
     expect(user.email).toBe("alice@example.com");
-    expect(user.role).toBe("user");
     expect(user.created_at).toBeTruthy();
     expect(user.updated_at).toBeTruthy();
     // Password hash must never be returned
@@ -228,7 +227,6 @@ describe("verifyAccessToken", () => {
     const context = verifyAccessToken(pool, tokens.accessToken, config);
     expect(context.userId).toBeTruthy();
     expect(context.email).toBe("frank@example.com");
-    expect(context.role).toBe("user");
 
     // Issuer claim is present and verified.
     const payloadB64 = tokens.accessToken.split(".")[1];
@@ -375,7 +373,6 @@ describe("getUserById", () => {
     const created = await registerUser(pool, "mia@example.com", "password123");
     const user = getUserById(pool, created.id);
     expect(user.email).toBe("mia@example.com");
-    expect(user.role).toBe("user");
   });
 
   test("returns 404 for non-existent user", () => {

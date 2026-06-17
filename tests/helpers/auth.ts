@@ -1,10 +1,3 @@
-/**
- * Test helpers for creating admin credentials.
- *
- * These helpers let route-level integration tests obtain valid JWTs
- * or API keys without going through the full auth routes.
- */
-
 import { DatabasePool } from "../../src/db/pool";
 import { DatabaseManager } from "../../src/db/manager";
 import { bootstrapAuthTables, hashPassword, type AuthConfig } from "../../src/auth";
@@ -17,20 +10,20 @@ export function testAuthConfig(): AuthConfig {
   return { secret: TEST_SECRET, accessTokenExpiry: 3600 };
 }
 
-/** Insert an admin user directly and return a valid access token. */
-export async function createAdminUserAndToken(
+/** Insert a user directly and return a valid access token. */
+export async function createUserAndToken(
   pool: DatabasePool,
-  email = "admin@boltstore.local"
+  email = "user@boltstore.local"
 ): Promise<{ userId: string; email: string; token: string }> {
   bootstrapAuthTables(pool);
-  const passwordHash = await hashPassword("admin-password-123");
+  const passwordHash = await hashPassword("user-password-123");
   const userId = generateSecureId("usr");
   const ts = new Date().toISOString();
 
   const db = pool.write();
   db.run(
-    "INSERT INTO _users (id, email, password_hash, role, oauth_only, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [userId, email.toLowerCase(), passwordHash, "admin", 0, ts, ts]
+    "INSERT INTO _users (id, email, password_hash, oauth_only, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    [userId, email.toLowerCase(), passwordHash, 0, ts, ts]
   );
 
   const accessJti = generateSecureId("jti");
@@ -38,7 +31,6 @@ export async function createAdminUserAndToken(
   const payload = {
     sub: userId,
     email: email.toLowerCase(),
-    role: "admin",
     type: "access",
     jti: accessJti,
     iss: "boltstore",
@@ -73,7 +65,7 @@ export async function createAdminApiKey(pool: DatabasePool): Promise<string> {
   return key.secret;
 }
 
-/** Create a fresh DatabaseManager and a single test database with an admin token. */
+/** Create a fresh DatabaseManager and a single test database with an admin API key. */
 export async function setupTestEnvironment(
   dataDir: string,
   appName: string
@@ -85,10 +77,10 @@ export async function setupTestEnvironment(
   const manager = new DatabaseManager({ dataDir });
   manager.createDatabase(appName);
   const pool = manager.get(appName);
-  const { token } = await createAdminUserAndToken(pool);
+  const apiKey = await createAdminApiKey(pool);
   return {
     manager,
     pool,
-    authHeaders: { Authorization: `Bearer ${token}` },
+    authHeaders: { Authorization: `Bearer ${apiKey}` },
   };
 }

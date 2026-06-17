@@ -9,7 +9,7 @@ export async function findOrCreateOAuthUser(
   const db = pool.read();
 
   const existing = db
-    .query("SELECT id, email, role, oauth_only, password_set, created_at, updated_at FROM _users WHERE email=?")
+    .query("SELECT id, email, oauth_only, password_set, created_at, updated_at FROM _users WHERE email=?")
     .get(profile.email) as (User & { oauth_only?: number; password_set?: number }) | null;
 
   if (existing) {
@@ -27,11 +27,11 @@ export async function findOrCreateOAuthUser(
   return pool.writeTransaction(() => {
     const writeDb = pool.write();
     writeDb.run(
-      "INSERT INTO _users (id, email, password_hash, role, oauth_only, password_set, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, profile.email, randomPassword, "user", 1, 0, ts, ts]
+      "INSERT INTO _users (id, email, password_hash, oauth_only, password_set, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [id, profile.email, randomPassword, 1, 0, ts, ts]
     );
 
-    return { id, email: profile.email, role: "user" as const, oauth_only: 1, password_set: 0, created_at: ts, updated_at: ts };
+    return { id, email: profile.email, oauth_only: 1, password_set: 0, created_at: ts, updated_at: ts };
   });
 }
 

@@ -37,12 +37,12 @@ export async function registerUser(
     }
 
     db.run(
-      `INSERT INTO _users (id, email, password_hash, role, oauth_only, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, email.toLowerCase(), passwordHash, "user", 0, ts, ts]
+      `INSERT INTO _users (id, email, password_hash, oauth_only, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, email.toLowerCase(), passwordHash, 0, ts, ts]
     );
 
-    return { id, email, role: "user" as const, created_at: ts, updated_at: ts };
+    return { id, email, created_at: ts, updated_at: ts };
   });
 }
 
@@ -54,7 +54,7 @@ export function getUserById(
   const db = pool.read();
 
   const row = db
-    .query("SELECT id, email, role, created_at, updated_at FROM _users WHERE id=?")
+    .query("SELECT id, email, created_at, updated_at FROM _users WHERE id=?")
     .get(userId) as User | null;
 
   if (!row) {
@@ -83,7 +83,7 @@ export async function updateProfile(
 
   const db = pool.read();
   const existing = db
-    .query("SELECT id, email, role, created_at, updated_at FROM _users WHERE id=?")
+    .query("SELECT id, email, created_at, updated_at FROM _users WHERE id=?")
     .get(userId) as User | null;
 
   if (!existing) {
@@ -128,7 +128,7 @@ export async function updateProfile(
     }
 
     const updated = writeDb
-      .query("SELECT id, email, role, created_at, updated_at FROM _users WHERE id=?")
+      .query("SELECT id, email, created_at, updated_at FROM _users WHERE id=?")
       .get(userId) as User;
 
     return updated;

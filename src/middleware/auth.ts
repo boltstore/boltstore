@@ -1,14 +1,3 @@
-/**
- * Authentication/authorization middleware for Boltstore.
- *
- * Extracts a Bearer JWT token or an API key secret from the incoming request,
- * verifies it against the database, and returns an auth context. Admin-only
- * routes must additionally ensure the principal has role "admin" (or a valid
- * API key with admin-scoped permissions).
- *
- * @module boltstore/middleware/auth
- */
-
 import { DatabaseManager } from "../db/manager";
 import {
   verifyAccessToken,
@@ -17,29 +6,19 @@ import {
 export { type AuthConfig } from "../auth";
 import { verifyApiKey, type ApiKeyContext } from "../admin/api-keys";
 
-/** Authenticated principal returned by the middleware. */
 export interface AuthContext {
-  /** User ID (JWT) or API key ID (API key). */
   principalId: string;
-  /** Email when authenticated via JWT. */
   email?: string;
-  /** Role when authenticated via JWT. */
-  role?: "user" | "admin";
-  /** API key context when authenticated via API key. */
   apiKey?: ApiKeyContext;
-  /** True if the principal was resolved from an API key. */
   isApiKey: boolean;
 }
 
-/** Result of authentication: context on success, Response on failure. */
 export type AuthResult = AuthContext | Response;
 
-/** Extract a Bearer token or API key secret from request headers. */
 function extractCredentials(request: Request): { token?: string; apiKey?: string } {
   const auth = request.headers.get("Authorization");
   if (auth?.startsWith("Bearer ")) {
     const value = auth.slice(7).trim();
-    // API keys always start with "blt_"
     if (value.startsWith("blt_")) {
       return { apiKey: value };
     }
@@ -52,11 +31,6 @@ function extractCredentials(request: Request): { token?: string; apiKey?: string
   return {};
 }
 
-/**
- * Authenticate the request against the given database.
- *
- * Returns an `AuthContext` on success or a 401/403 Response on failure.
- */
 export async function authenticateRequest(
   request: Request,
   manager: DatabaseManager,
@@ -96,7 +70,6 @@ export async function authenticateRequest(
     return {
       principalId: ctx.userId,
       email: ctx.email,
-      role: ctx.role,
       isApiKey: false,
     };
   } catch (err) {
@@ -108,25 +81,16 @@ export async function authenticateRequest(
   }
 }
 
-/**
- * Require an authenticated admin principal.
- *
- * JWT users must have role "admin". API keys are not allowed for admin
- * routes unless the key explicitly includes the "admin" operation.
- */
 export function requireAdmin(auth: AuthContext): Response | null {
-  if (auth.isApiKey) {
-    const ops = auth.apiKey?.permissions.operations ?? [];
-    if (!ops.includes("admin")) {
-      return new Response(
-        JSON.stringify({ error: { code: "FORBIDDEN", message: "Admin access required." } }),
-        { status: 403, headers: { "Content-Type": "application/json" } }
-      );
-    }
-    return null;
+  if (!auth.isApiKey) {
+    return new Response(
+      JSON.stringify({ error: { code: "FORBIDDEN", message: "Admin access requires an API key." } }),
+      { status: 403, headers: { "Content-Type": "application/json" } }
+    );
   }
 
-  if (auth.role !== "admin") {
+  const ops = auth.apiKey?.permissions.operations ?? [];
+  if (!ops.includes("admin")) {
     return new Response(
       JSON.stringify({ error: { code: "FORBIDDEN", message: "Admin access required." } }),
       { status: 403, headers: { "Content-Type": "application/json" } }
