@@ -1,6 +1,6 @@
 {
   "name": "boltstore",
-  "version": "1.0.0",
+  "version": "0.6.0",
   "private": false,
   "description": "Boltstore server — lightweight backend with realtime sync",
   "main": "dist/index.js",
@@ -20,7 +20,7 @@
     "prepublish": "bun run build"
   },
   "dependencies": {
-    "@boltstore/utils": "^1.0.0"
+    "@boltstore/utils": "^0.6.0"
   },
   "license": "MIT",
   "devDependencies": {
