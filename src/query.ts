@@ -190,6 +190,11 @@ function buildLogicalGroup(group: LogicalGroup): SqlFragment {
 }
 
 function buildOperator(field: string, op: FilterOperator, value: unknown): SqlFragment {
+  // Validate scalar values for safety: reject objects/arrays except for the $in/$nin operators.
+  if (value !== null && value !== undefined && typeof value === "object" && op !== "$in" && op !== "$nin") {
+    throw Object.assign(new Error(`Filter value for operator "${op}" must be a scalar.`), { status: 400 });
+  }
+
   switch (op) {
     case "$eq":
       return value === null
@@ -271,6 +276,47 @@ function validateAndQuote(name: string): string {
 // Public query builder
 // ---------------------------------------------------------------------------
 
+/** Check whether an FTS5 virtual table exists for a collection. */
+function ftsTableExists(db: import("bun:sqlite").Database, collection: string): boolean {
+  const row = db
+    .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1")
+    .get(`${collection}_fts`) as { 1?: number } | null;
+  return row !== null;
+}
+
+/** Build a search clause, falling back to LIKE if no FTS5 table exists. */
+function buildSearchClause(
+  collection: string,
+  term: string,
+  searchFields?: string[],
+  db?: import("bun:sqlite").Database
+): SqlFragment {
+  const ftsTable = `${collection}_fts`;
+  const hasFts = db ? ftsTableExists(db, collection) : true;
+
+  if (hasFts) {
+    return {
+      sql: `id IN (SELECT rowid FROM "${ftsTable}" WHERE "${ftsTable}" MATCH ?)`,
+      params: [term],
+    };
+  }
+
+  // Fallback: LIKE scan across requested text columns (or all columns)
+  const fields = searchFields && searchFields.length > 0 ? searchFields : [];
+  if (fields.length === 0) {
+    // No fields specified and no FTS table; we cannot safely scan every column type.
+    // Return a clause that matches nothing and let the caller decide whether to error.
+    return { sql: "1 = 0", params: [] };
+  }
+
+  const pattern = `%${term}%`;
+  const clauses = fields.map((f) => `${validateAndQuote(f)} LIKE ?`);
+  return {
+    sql: `(${clauses.join(" OR ")})`,
+    params: fields.map(() => pattern),
+  };
+}
+
 /**
  * Build a complete parameterized SQL query from a QueryParams object.
  *
@@ -278,7 +324,8 @@ function validateAndQuote(name: string): string {
  */
 export function buildQuery(
   collection: string,
-  params: QueryParams
+  params: QueryParams,
+  db?: import("bun:sqlite").Database
 ): { sql: string; bindings: unknown[] } {
   validateIdentifier(collection, "collection name");
 
@@ -319,15 +366,11 @@ export function buildQuery(
   // --- Full-text search ---
 
   if (params.search) {
-    // Add a FTS5 search: use a sub-select on the FTS virtual table
-    // The convention: if collection is "posts", FTS table is "posts_fts"
-    const ftsTable = `${collection}_fts`;
-    const searchFields = params.searchFields
-      ? params.searchFields.map((f) => validateAndQuote(f)).join(", ")
-      : ""; // empty → matches the FTS table default (all indexed columns)
-
-    sql += ` WHERE id IN (SELECT rowid FROM "${ftsTable}" WHERE "${ftsTable}" MATCH ?)`;
-    bindings.push(params.search);
+    const ftsFragment = buildSearchClause(collection, params.search, params.searchFields, db);
+    if (ftsFragment.sql) {
+      sql += ` WHERE ${ftsFragment.sql}`;
+      bindings.push(...ftsFragment.params);
+    }
   } else if (params.filter) {
     // --- WHERE clause ---
     const where = buildWhere(params.filter);
@@ -366,6 +409,15 @@ export function buildQuery(
   // --- PAGINATION ---
 
   if (!isAggregate) {
+    // Cursor pagination takes precedence
+    if (params.cursor) {
+      const cursorSortField = params.sort && params.sort.length > 0 ? params.sort[0].split(":")[0] : "created_at";
+      validateIdentifier(cursorSortField, "cursor sort field");
+      sql += sql.includes(" WHERE ")
+        ? ` AND "${cursorSortField}" > ?`
+        : ` WHERE "${cursorSortField}" > ?`;
+      bindings.push(params.cursor);
+    }
     if (params.limit !== undefined) {
       sql += ` LIMIT ?`;
       bindings.push(params.limit);
@@ -398,13 +450,13 @@ export function executeQuery(
   const isAggregate =
     params.aggregate !== undefined || params.groupBy !== undefined;
 
-  // Apply offset pagination if page/per_page provided
-  if (page !== undefined && perPage !== undefined) {
+  // Apply offset pagination if page/per_page provided and cursor is absent
+  if (page !== undefined && perPage !== undefined && !params.cursor) {
     params.limit = perPage;
     params.offset = (page - 1) * perPage;
   }
 
-  const { sql, bindings } = buildQuery(collection, params);
+  const { sql, bindings } = buildQuery(collection, params, db);
 
   // Execute query
   const data = db.query(sql).all(...toBindings(bindings)) as Record<string, unknown>[];
@@ -414,12 +466,18 @@ export function executeQuery(
     return { data, meta: {} };
   }
 
-  // Calculate total count (unless we're just getting a slice for pagination)
+  // Calculate total count (unless we're just getting a slice for pagination or using cursor)
   let total: number | undefined;
   let totalPages: number | undefined;
-  if (page !== undefined && perPage !== undefined) {
+  let nextCursor: string | null = null;
+  if (page !== undefined && perPage !== undefined && !params.cursor) {
     total = countTotal(db, collection, params);
     totalPages = Math.ceil(total / perPage);
+  }
+  if (params.cursor && data.length > 0) {
+    const cursorSortField = params.sort && params.sort.length > 0 ? params.sort[0].split(":")[0] : "created_at";
+    const lastRow = data[data.length - 1];
+    nextCursor = lastRow[cursorSortField] as string | null;
   }
 
   return {
@@ -429,6 +487,7 @@ export function executeQuery(
       page,
       per_page: perPage,
       total_pages: totalPages,
+      next_cursor: nextCursor,
     },
   };
 }
@@ -452,9 +511,15 @@ function countTotal(
   }
 
   if (params.search) {
-    const ftsTable = `${collection}_fts`;
-    countSql = `SELECT COUNT(*) as cnt FROM "${collection}" WHERE id IN (SELECT rowid FROM "${ftsTable}" WHERE "${ftsTable}" MATCH ?)`;
-    countBindings.push(params.search);
+    const countFts = buildSearchClause(collection, params.search, params.searchFields, db);
+    if (countFts.sql) {
+      if (countSql.includes(" WHERE ")) {
+        countSql += ` AND ${countFts.sql}`;
+      } else {
+        countSql += ` WHERE ${countFts.sql}`;
+      }
+      countBindings.push(...countFts.params);
+    }
   }
 
   const row = db.query(countSql).get(...toBindings(countBindings)) as { cnt?: number } | null;

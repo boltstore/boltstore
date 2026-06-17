@@ -8,6 +8,9 @@
  */
 
 import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { logger } from "../logger";
+import { toBindings } from "../db/cast";
 
 export interface PoolConfig {
   /** Path to the SQLite database file. Defaults to DATABASE_PATH env var or "./data/boltstore.db". */
@@ -20,6 +23,8 @@ export interface PoolConfig {
   synchronousNormal?: boolean;
   /** Busy timeout in milliseconds. Default: 5000. */
   busyTimeout?: number;
+  /** Maximum query execution time in milliseconds. 0 disables. Default: 0. */
+  queryTimeoutMs?: number;
 }
 
 const DEFAULT_CONFIG: PoolConfig = {
@@ -28,6 +33,7 @@ const DEFAULT_CONFIG: PoolConfig = {
   wal: true,
   synchronousNormal: true,
   busyTimeout: 5000,
+  queryTimeoutMs: parseInt(Bun.env.QUERY_TIMEOUT_MS || "0", 10) || 0,
 };
 
 /**
@@ -44,6 +50,7 @@ export class DatabasePool {
   private writeDb: Database;
   private readIndex = 0;
   private config: PoolConfig;
+  private transactionDepth = 0;
 
   constructor(config?: PoolConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -52,8 +59,7 @@ export class DatabasePool {
     // Ensure directory exists
     const dir = dbPath.substring(0, dbPath.lastIndexOf("/"));
     if (dir) {
-      // Use Bun's mkdir
-      Bun.spawnSync(["mkdir", "-p", dir]);
+      mkdirSync(dir, { recursive: true });
     }
 
     // Create write connection first
@@ -67,6 +73,45 @@ export class DatabasePool {
       this.applyPragmas(readDb, true);
       this.readPool.push(readDb);
     }
+  }
+
+  private queryTimer(db: Database, isReadOnly = false): (() => void) | null {
+    const timeout = this.config.queryTimeoutMs;
+    if (!timeout || timeout <= 0) return null;
+    let finished = false;
+    const t = setTimeout(() => {
+      if (finished) return;
+      try {
+        db.run("SELECT 1");
+      } catch {
+        // Best-effort interrupt; Bun/Node SQLite abort is limited.
+      }
+    }, timeout);
+    return () => {
+      finished = true;
+      clearTimeout(t);
+    };
+  }
+
+  /**
+   * Log a slow query if execution time exceeds the configured threshold.
+   * Threshold defaults to queryTimeoutMs if set, otherwise 1000ms.
+   */
+  private logSlowQuery(
+    sql: string,
+    params: unknown[],
+    durationMs: number,
+    isReadOnly = false
+  ): void {
+    const threshold = this.config.queryTimeoutMs || 1000;
+    if (durationMs < threshold) return;
+    logger.warn("Slow query detected", {
+      path: this.config.path,
+      type: isReadOnly ? "read" : "write",
+      duration_ms: Math.round(durationMs),
+      sql: sql.slice(0, 500),
+      params: params.length > 0 ? params.slice(0, 20) : undefined,
+    });
   }
 
   /**
@@ -105,6 +150,67 @@ export class DatabasePool {
   }
 
   /**
+   * Execute a read query with optional timeout and slow-query logging.
+   */
+  readQuery<T = Record<string, unknown>>(
+    sql: string,
+    params: unknown[] = []
+  ): T[] {
+    const db = this.read();
+    const start = performance.now();
+    const cleanup = this.queryTimer(db, true);
+    try {
+      return db.query(sql).all(...toBindings(params)) as T[];
+    } finally {
+      const duration = performance.now() - start;
+      cleanup?.();
+      this.logSlowQuery(sql, params, duration, true);
+    }
+  }
+
+  /**
+   * Execute a write query with optional timeout and slow-query logging.
+   */
+  writeQuery<T = Record<string, unknown>>(
+    sql: string,
+    params: unknown[] = []
+  ): { rows: T[]; changes: number; lastInsertRowid: number | bigint } {
+    const db = this.write();
+    const start = performance.now();
+    const cleanup = this.queryTimer(db, false);
+    try {
+      const rows = db.query(sql).all(...toBindings(params)) as T[];
+      const changes = db.query("SELECT changes() as cnt").get() as { cnt: number };
+      const lastId = db.query("SELECT last_insert_rowid() as id").get() as { id: number | bigint };
+      return {
+        rows,
+        changes: changes.cnt,
+        lastInsertRowid: lastId.id,
+      };
+    } finally {
+      const duration = performance.now() - start;
+      cleanup?.();
+      this.logSlowQuery(sql, params, duration, false);
+    }
+  }
+
+  /**
+   * Execute a write statement with optional timeout and slow-query logging.
+   */
+  writeRun(sql: string, params: unknown[] = []): ReturnType<Database["run"]> {
+    const db = this.write();
+    const start = performance.now();
+    const cleanup = this.queryTimer(db, false);
+    try {
+      return db.run(sql, toBindings(params));
+    } finally {
+      const duration = performance.now() - start;
+      cleanup?.();
+      this.logSlowQuery(sql, params, duration, false);
+    }
+  }
+
+  /**
    * Execute a function within a transaction on the write connection.
    * All operations are serialized through this single connection.
    *
@@ -113,15 +219,24 @@ export class DatabasePool {
    */
   writeTransaction<T>(fn: () => T): T {
     const db = this.writeDb;
-    db.run("BEGIN");
+    if (this.transactionDepth === 0) {
+      db.run("BEGIN");
+    }
+    this.transactionDepth++;
     try {
       const result = fn();
-      db.run("COMMIT");
-      // Checkpoint WAL so read connections see the changes
-      try { db.run("PRAGMA wal_checkpoint(PASSIVE)"); } catch {}
+      this.transactionDepth--;
+      if (this.transactionDepth === 0) {
+        db.run("COMMIT");
+        // Checkpoint WAL so read connections see the changes
+        try { db.run("PRAGMA wal_checkpoint(PASSIVE)"); } catch {}
+      }
       return result;
     } catch (error) {
-      db.run("ROLLBACK");
+      this.transactionDepth--;
+      if (this.transactionDepth === 0) {
+        db.run("ROLLBACK");
+      }
       throw error;
     }
   }

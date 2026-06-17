@@ -10,6 +10,10 @@
 
 import { DatabasePool } from "./db/pool";
 import { validateIdentifier } from "@boltstore/utils";
+import type { AuthContext } from "./middleware/auth";
+
+/** Maximum recursion depth for nested expansion. */
+const MAX_EXPAND_DEPTH = 2;
 
 /** Metadata for a single relation field. */
 export interface RelationDefinition {
@@ -19,6 +23,71 @@ export interface RelationDefinition {
   foreignCollection: string;
   /** Whether deleting a record in this collection cascades to children (Phase 1 feature). */
   cascadeDelete?: boolean;
+}
+
+/** Resolve a target collection for an expand field using relation metadata first, then heuristic. */
+function resolveTargetCollection(pool: DatabasePool, parentCollection: string, field: string): string | null {
+  // 1. Try explicit relation metadata stored in _collections
+  try {
+    const db = pool.read();
+    const meta = db
+      .query("SELECT relations_json FROM _collections WHERE name = ?")
+      .get(parentCollection) as { relations_json?: string } | null;
+    if (meta?.relations_json) {
+      const relations = JSON.parse(meta.relations_json) as Record<string, { foreignCollection: string }>;
+      if (relations[field]?.foreignCollection) {
+        return relations[field].foreignCollection;
+      }
+    }
+  } catch {
+    // _collections may not exist yet; fall through to heuristic.
+  }
+
+  // 2. Heuristic pluralization
+  let targetCollection = `${field}s`;
+  if (field.endsWith("y")) {
+    targetCollection = field.slice(0, -1) + "ies";
+  } else if (field.endsWith("s") || field.endsWith("x") || field.endsWith("ch") || field.endsWith("sh")) {
+    targetCollection = field + "es";
+  }
+
+  try {
+    validateIdentifier(targetCollection, "target collection");
+    return targetCollection;
+  } catch {
+    return null;
+  }
+}
+
+/** Load explicit relation definitions for a collection from metadata. */
+export function getRelations(pool: DatabasePool, collection: string): Record<string, RelationDefinition> {
+  try {
+    const db = pool.read();
+    const meta = db
+      .query("SELECT relations_json FROM _collections WHERE name = ?")
+      .get(collection) as { relations_json?: string } | null;
+    if (meta?.relations_json) {
+      return JSON.parse(meta.relations_json) as Record<string, RelationDefinition>;
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+/** Persist explicit relation definitions for a collection. */
+export function setRelations(
+  pool: DatabasePool,
+  collection: string,
+  relations: Record<string, RelationDefinition>
+): void {
+  const db = pool.write();
+  try {
+    db.run("ALTER TABLE _collections ADD COLUMN relations_json TEXT");
+  } catch {
+    // Column may already exist.
+  }
+  db.run("UPDATE _collections SET relations_json = ? WHERE name = ?", [JSON.stringify(relations), collection]);
 }
 
 /**
@@ -39,36 +108,20 @@ export function expandRecords(
   pool: DatabasePool,
   parentCollection: string,
   records: Record<string, unknown>[],
-  expandFields: string[]
+  expandFields: string[],
+  _depth = 0
 ): Record<string, unknown>[] {
   if (!Array.isArray(records) || records.length === 0) return records;
   if (!Array.isArray(expandFields) || expandFields.length === 0) return records;
+  if (_depth >= MAX_EXPAND_DEPTH) return records;
 
   const expanded = records.map((r) => ({ ...r }));
 
   for (const field of expandFields) {
     validateIdentifier(field, "field name");
 
-    // Heuristic: if the field name is "author", the target collection is "authors"
-    // unless overridden via a relation definition (future: metadata-driven)
-    // For now, we use a simple convention: field name maps to collection
-    // "user" → "users", "author" → "authors", "category" → "categories"
-    // Otherwise, target = {field}s
-    let targetCollection = `${field}s`;
-
-    // Special pluralization rules
-    if (field.endsWith("y")) {
-      targetCollection = field.slice(0, -1) + "ies";
-    } else if (field.endsWith("s") || field.endsWith("x") || field.endsWith("ch") || field.endsWith("sh")) {
-      targetCollection = field + "es";
-    }
-
-    try {
-      validateIdentifier(targetCollection, "target collection");
-    } catch {
-      // If the pluralized name isn't valid, skip expansion for this field
-      continue;
-    }
+    const targetCollection = resolveTargetCollection(pool, parentCollection, field);
+    if (!targetCollection) continue;
 
     // Group parent IDs to fetch in batch
     const foreignIds = new Set<string>();
@@ -88,7 +141,13 @@ export function expandRecords(
     const tableExists = db
       .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
       .get(targetCollection);
-    if (!tableExists) continue;
+    if (!tableExists) {
+      // Still set explicit null for non-existent heuristic targets so callers see a deterministic key.
+      for (const record of expanded) {
+        record[`${field}_expanded`] = null;
+      }
+      continue;
+    }
 
     // Build batch query
     const placeholders = Array.from(foreignIds).map(() => "?").join(", ");
@@ -127,7 +186,8 @@ export function expandRecords(
 export function cascadeDelete(
   pool: DatabasePool,
   parentCollection: string,
-  parentId: string
+  parentId: string,
+  _auth?: AuthContext
 ): { deleted: string[] } {
   validateIdentifier(parentCollection, "collection name");
   const deleted: string[] = [];

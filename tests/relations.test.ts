@@ -4,11 +4,11 @@
  * @module tests/relations
  */
 
-import { describe, expect, test, beforeAll, afterAll, beforeEach } from "bun:test";
+import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { DatabaseManager } from "../src/db/manager";
 import { createCollection } from "../src/collections";
-import { createRecord, listRecords, getRecord, deleteRecord } from "../src/records";
-import { expandRecords, cascadeDelete } from "../src/relations";
+import { createRecord, listRecords } from "../src/records";
+import { expandRecords, cascadeDelete, setRelations, getRelations } from "../src/relations";
 
 const TEST_DATA_DIR = "/tmp/boltstore_test_relations";
 const TEST_APP = "relapp";
@@ -112,6 +112,32 @@ describe("expandRecords", () => {
   test("returns records unchanged for empty records array", () => {
     const result = expandRecords(pool, "posts", [], ["author"]);
     expect(result).toEqual([]);
+  });
+
+  test("uses explicit relation metadata when heuristic would fail", () => {
+    // Create a user collection and an article collection with a foreign key named "owner"
+    createCollection(pool, "users", [{ name: "name", type: "TEXT" }]);
+    createCollection(pool, "articles", [
+      { name: "title", type: "TEXT" },
+      { name: "owner", type: "TEXT" },
+    ]);
+
+    createRecord(pool, "users", { id: "u1", name: "Carol" });
+    createRecord(pool, "articles", { id: "a1", title: "Article 1", owner: "u1" });
+
+    // Without metadata the heuristic would look for "owners" and fail
+    const withoutMeta = expandRecords(pool, "articles", listRecords(pool, "articles"), ["owner"]);
+    expect(withoutMeta[0].owner_expanded).toBeNull();
+
+    // With explicit relation metadata pointing to "users"
+    // Need a fresh pool after setRelations modifies metadata in a transaction.
+    setRelations(pool, "articles", { owner: { field: "owner", foreignCollection: "users" } });
+    pool = manager.get(TEST_APP);
+    const withMeta = expandRecords(pool, "articles", listRecords(pool, "articles"), ["owner"]);
+    expect((withMeta[0].owner_expanded as Record<string, unknown>).name).toBe("Carol");
+
+    const loaded = getRelations(pool, "articles");
+    expect(loaded.owner.foreignCollection).toBe("users");
   });
 });
 

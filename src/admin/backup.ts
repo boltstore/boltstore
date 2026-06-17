@@ -8,9 +8,23 @@
  * @module boltstore/admin/backup
  */
 
+import { Database } from "bun:sqlite";
 import { DatabasePool } from "../db/pool";
 import { DatabaseManager } from "../db/manager";
-import { validateIdentifier } from "@boltstore/utils";
+import { validateIdentifier, resolveSafePath, sanitizePathComponent, generateSecureId } from "@boltstore/utils";
+
+/** Wrap a path traversal error as a 400 response-like error. */
+function safeResolvePath(baseDir: string, relative: string): string {
+  try {
+    return resolveSafePath(baseDir, relative);
+  } catch {
+    throw Object.assign(
+      new Error(`Invalid or unsafe path "${relative}".`),
+      { status: 400 }
+    );
+  }
+}
+import { mkdirSync, rmSync, existsSync, readFileSync, copyFileSync, statSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,15 +76,37 @@ const BOOTSTRAP_BACKUPS = `CREATE TABLE IF NOT EXISTS _backups (
 
 /** Generate a unique backup ID. */
 function generateBackupId(): string {
-  const ts = Date.now().toString(36);
-  const rnd = Math.random().toString(36).slice(2, 8);
-  return `bkp_${ts}_${rnd}`;
+  return generateSecureId("bkp");
 }
 
-/** Escapes a string for safe use in a filesystem path by replacing characters
- *  that could cause path traversal or filesystem issues. */
-function sanitizePathComponent(input: string): string {
-  return input.replace(/[^a-zA-Z0-9._-]/g, "_");
+/** Verify a SQLite backup file by opening it read-only and running PRAGMA integrity_check. */
+function verifyBackupIntegrity(path: string): void {
+  let db: Database | undefined;
+  try {
+    db = new Database(path, { readonly: true });
+    const result = db.query("PRAGMA integrity_check").get() as { integrity_check?: string } | null;
+    if (!result || result.integrity_check !== "ok") {
+      throw Object.assign(
+        new Error(`Backup integrity check failed: ${result?.integrity_check ?? "unknown error"}.`),
+        { status: 400 }
+      );
+    }
+  } finally {
+    db?.close();
+  }
+}
+
+/** Replace the live database file with a verified backup, keeping a `.pre-restore` copy. */
+function swapDatabaseFile(safeBackupPath: string, safeDbPath: string): void {
+  const preRestorePath = `${safeDbPath}.pre-restore`;
+  try {
+    copyFileSync(safeDbPath, preRestorePath);
+  } catch {
+    // Best effort; continue even if pre-restore copy fails.
+  }
+
+  verifyBackupIntegrity(safeBackupPath);
+  copyFileSync(safeBackupPath, safeDbPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,12 +135,12 @@ export function createBackup(
   db.run(BOOTSTRAP_BACKUPS);
 
   // Ensure backups directory exists
-  const backupsDir = `${dataDir}/${sanitizePathComponent(databaseName)}/backups`;
-  Bun.spawnSync(["mkdir", "-p", backupsDir]);
+  const safeName = sanitizePathComponent(databaseName);
+  const backupsDir = safeResolvePath(dataDir, `${safeName}/backups`);
+  mkdirSync(backupsDir, { recursive: true });
 
   // Generate backup file name
   const id = generateBackupId();
-  const safeName = sanitizePathComponent(databaseName);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = `${backupsDir}/${safeName}-${timestamp}.db`;
 
@@ -115,10 +151,7 @@ export function createBackup(
   // Get file size
   let sizeBytes = 0;
   try {
-    const stat = Bun.spawnSync(["stat", "-f", "%z", backupPath]);
-    if (stat.exitCode === 0) {
-      sizeBytes = parseInt(stat.stdout.toString().trim(), 10) || 0;
-    }
+    sizeBytes = statSync(backupPath).size;
   } catch {
     // Best effort
   }
@@ -236,16 +269,12 @@ export function restoreBackup(
   const backup = getBackup(pool, backupId);
 
   // Verify the backup file exists on disk
-  const backupFile = Bun.file(backup.path);
-  if (!backupFile.size) {
-    // Try to check existence via stat
-    const stat = Bun.spawnSync(["test", "-f", backup.path]);
-    if (stat.exitCode !== 0) {
-      throw Object.assign(
-        new Error(`Backup file not found at "${backup.path}". The file may have been deleted.`),
-        { status: 404 }
-      );
-    }
+  const safeBackupPath = safeResolvePath(manager.getDataDir(), backup.path);
+  if (!existsSync(safeBackupPath)) {
+    throw Object.assign(
+      new Error(`Backup file not found at "${backup.path}". The file may have been deleted.`),
+      { status: 404 }
+    );
   }
 
   // Get the database path before closing
@@ -254,18 +283,20 @@ export function restoreBackup(
     throw Object.assign(new Error(`Database "${databaseName}" not found.`), { status: 404 });
   }
 
+  const safeDbPath = safeResolvePath(manager.getDataDir(), dbInfo.path);
+
   // Close the existing pool (drops all connections)
   manager.closePool(databaseName);
 
   // Copy backup file over the live database file
   try {
-    Bun.spawnSync(["cp", backup.path, dbInfo.path]);
+    swapDatabaseFile(safeBackupPath, safeDbPath);
   } catch (err) {
     // Try to reopen the original pool on failure
     manager.get(databaseName);
     throw Object.assign(
       new Error(`Failed to restore from backup: ${(err as Error).message}`),
-      { status: 500 }
+      { status: (err as { status?: number }).status || 500 }
     );
   }
 
@@ -292,9 +323,9 @@ export function restoreFromFile(
 ): RestoreResult {
   validateIdentifier(databaseName, "database name");
 
-  // Verify the backup file exists
-  const stat = Bun.spawnSync(["test", "-f", backupFilePath]);
-  if (stat.exitCode !== 0) {
+  // Verify the backup file exists and is inside the data directory
+  const safeBackupPath = safeResolvePath(manager.getDataDir(), backupFilePath);
+  if (!existsSync(safeBackupPath)) {
     throw Object.assign(
       new Error(`Backup file not found at "${backupFilePath}".`),
       { status: 404 }
@@ -302,9 +333,9 @@ export function restoreFromFile(
   }
 
   // Verify it looks like a SQLite database
-  const header = Bun.spawnSync(["head", "-c", "16", backupFilePath]);
-  const magic = header.stdout.toString();
-  if (!magic.startsWith("SQLite format 3")) {
+  const headerBytes = readFileSync(safeBackupPath);
+  const header = Buffer.from(headerBytes.subarray(0, 16)).toString("utf8");
+  if (!header.startsWith("SQLite format 3")) {
     throw Object.assign(
       new Error(`File at "${backupFilePath}" is not a valid SQLite database.`),
       { status: 400 }
@@ -316,18 +347,19 @@ export function restoreFromFile(
   if (!dbInfo) {
     throw Object.assign(new Error(`Database "${databaseName}" not found.`), { status: 404 });
   }
+  const safeDbPath = safeResolvePath(manager.getDataDir(), dbInfo.path);
 
   // Close the existing pool
   manager.closePool(databaseName);
 
   // Copy backup file over the live database file
   try {
-    Bun.spawnSync(["cp", backupFilePath, dbInfo.path]);
+    swapDatabaseFile(safeBackupPath, safeDbPath);
   } catch (err) {
     manager.get(databaseName);
     throw Object.assign(
       new Error(`Failed to restore from file: ${(err as Error).message}`),
-      { status: 500 }
+      { status: (err as { status?: number }).status || 500 }
     );
   }
 

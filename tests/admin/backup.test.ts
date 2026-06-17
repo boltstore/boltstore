@@ -4,12 +4,14 @@
  * @module tests/admin/backup
  */
 
-import { describe, expect, test, beforeAll, afterAll, beforeEach } from "bun:test";
+import { describe, expect, test, beforeAll, afterAll, beforeEach, jest } from "bun:test";
 import { Database as SQLiteDatabase } from "bun:sqlite";
 import { DatabaseManager } from "../../src/db/manager";
 import { createBackup, listBackups, getBackup, restoreBackup, restoreFromFile } from "../../src/admin/backup";
 import { createCollection } from "../../src/collections";
 import { createRecord, listRecords } from "../../src/records";
+import { statSync, mkdirSync, rmSync } from "node:fs";
+import path from "node:path";
 
 const TEST_DATA_DIR = "/tmp/boltstore_test_backup";
 const TEST_APP = "backuptestapp";
@@ -19,12 +21,12 @@ let pool: ReturnType<typeof manager.get>;
 
 function cleanup() {
   try { if (manager) manager.close(); } catch {}
-  try { Bun.spawnSync(["rm", "-rf", TEST_DATA_DIR]); } catch {}
+  try { rmSync(TEST_DATA_DIR, { recursive: true, force: true }); } catch {}
 }
 
 beforeAll(() => {
   cleanup();
-  Bun.spawnSync(["mkdir", "-p", TEST_DATA_DIR]);
+  mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
   manager.createDatabase(TEST_APP);
   pool = manager.get(TEST_APP);
@@ -44,8 +46,10 @@ beforeEach(() => {
   for (const row of rows) {
     try { db.run(`DROP TABLE IF EXISTS "${row.name}"`); } catch {}
   }
-  // Also drop _backups to reset backup state
+  // Also drop _backups to reset backup state; avoid failing if dropped in pre_restore tests
   try { db.run("DROP TABLE IF EXISTS _backups"); } catch {}
+  // Compact the database after dropping tables to release deleted pages
+  try { db.run("VACUUM"); } catch {}
 });
 
 // ---------------------------------------------------------------------------
@@ -63,8 +67,8 @@ describe("createBackup", () => {
     expect(result.createdAt).toBeTruthy();
 
     // Verify backup file exists on disk
-    const stat = Bun.spawnSync(["test", "-f", result.path]);
-    expect(stat.exitCode).toBe(0);
+    const stat = statSync(result.path);
+    expect(stat.isFile()).toBe(true);
   });
 
   test("creates a backup with a label", () => {
@@ -123,8 +127,6 @@ describe("listBackups", () => {
 
   test("lists all backups in reverse chronological order", () => {
     createBackup(pool, TEST_APP, TEST_DATA_DIR, { label: "First" });
-    // Small delay to ensure different timestamps
-    Bun.sleepSync(2);
     createBackup(pool, TEST_APP, TEST_DATA_DIR, { label: "Second" });
 
     const backups = listBackups(pool);
@@ -285,9 +287,9 @@ describe("restoreFromFile", () => {
     expect(afterRecords[0].content).toBe("Original content");
   });
 
-  test("returns 404 for non-existent file", () => {
+  test("returns 404 for non-existent file inside data directory", () => {
     try {
-      restoreFromFile(manager, TEST_APP, "/tmp/nonexistent_backup_12345.db");
+      restoreFromFile(manager, TEST_APP, `${TEST_DATA_DIR}/nonexistent_backup_12345.db`);
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as { status?: number };
@@ -309,7 +311,7 @@ describe("restoreFromFile", () => {
     }
 
     // Cleanup
-    try { Bun.spawnSync(["rm", "-f", fakePath]); } catch {}
+    try { rmSync(fakePath, { force: true }); } catch {}
   });
 });
 
@@ -383,6 +385,56 @@ describe("Edge Cases", () => {
     const rows = tmpDb.query("SELECT * FROM verify_valid").all();
     expect(rows.length).toBe(1);
     tmpDb.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-platform backup paths
+// ---------------------------------------------------------------------------
+
+describe("Cross-platform paths", () => {
+  test("uses cross-platform path separators and relative paths", () => {
+    createCollection(pool, "path_test_2", [{ name: "x", type: "TEXT" }]);
+    createRecord(pool, "path_test_2", { x: "hello" });
+
+    const backup = createBackup(pool, TEST_APP, TEST_DATA_DIR);
+
+    // Verify path uses forward slashes (normalized) and lives under data dir
+    expect(backup.path).toContain(path.posix.sep);
+    expect(backup.path).toStartWith(TEST_DATA_DIR);
+    expect(statSync(backup.path).isFile()).toBe(true);
+  });
+
+  test("restore handles backup path with mixed separators", () => {
+    createCollection(pool, "mixed_sep_2", [{ name: "x", type: "TEXT" }]);
+    createRecord(pool, "mixed_sep_2", { x: "original" });
+
+    const backup = createBackup(pool, TEST_APP, TEST_DATA_DIR);
+    createRecord(pool, "mixed_sep_2", { x: "extra" });
+
+    // Convert to platform-specific separators and backslashes to test normalization
+    const mixedPath = backup.path.replace(/\//g, "\\").replace(/\\/g, "/");
+    const result = restoreFromFile(manager, TEST_APP, mixedPath);
+
+    expect(result.database).toBe(TEST_APP);
+    const restored = manager.get(TEST_APP);
+    const records = listRecords(restored, "mixed_sep_2");
+    expect(records).toHaveLength(1);
+    expect(records[0].x).toBe("original");
+  });
+
+  test("restore creates a pre-restore copy on disk", () => {
+    createCollection(pool, "pre_restore_2", [{ name: "x", type: "TEXT" }]);
+    createRecord(pool, "pre_restore_2", { x: "before" });
+
+    const backup = createBackup(pool, TEST_APP, TEST_DATA_DIR);
+    createRecord(pool, "pre_restore_2", { x: "after" });
+
+    restoreBackup(manager, TEST_APP, backup.id);
+
+    const dbInfo = manager.listDatabases().find((d) => d.name === TEST_APP);
+    expect(dbInfo).toBeDefined();
+    expect(statSync(dbInfo!.path + ".pre-restore").isFile()).toBe(true);
   });
 });
 

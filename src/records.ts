@@ -13,45 +13,104 @@
 
 import { DatabasePool } from "./db/pool";
 import { toBindings } from "./db/cast";
-import { validateIdentifier } from "@boltstore/utils";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+import { validateIdentifier, generateSecureId } from "@boltstore/utils";
+import { applyRLS, toRLSContext, type RLSContext } from "./rls";
+import type { AuthContext } from "./middleware/auth";
 
 /** Generate a unique record ID. */
 function generateId(): string {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).slice(2, 10);
-  return `rec_${timestamp}_${random}`;
+  return generateSecureId("rec");
 }
 
-/** Get the current ISO-8601 timestamp. */
+/** Get current ISO-8601 timestamp. */
 function now(): string {
   return new Date().toISOString();
 }
 
-/**
- * Validate that a collection exists, returning its column names.
- * Throws 404 if the table doesn't exist.
- */
-function getColumnNames(pool: DatabasePool, collection: string): string[] {
+// ---------------------------------------------------------------------------
+// Pagination constants
+// ---------------------------------------------------------------------------
+
+const MAX_LIMIT = 1000;
+const MAX_OFFSET = 100000;
+
+// ---------------------------------------------------------------------------
+// Per-pool schema cache
+// ---------------------------------------------------------------------------
+
+interface SchemaCacheEntry {
+  columns: string[];
+  exists: boolean;
+  fetchedAt: number;
+}
+
+const schemaCache = new WeakMap<DatabasePool, Map<string, SchemaCacheEntry>>();
+const SCHEMA_CACHE_TTL_MS = 30_000;
+
+function getPoolCache(pool: DatabasePool): Map<string, SchemaCacheEntry> {
+  let cache = schemaCache.get(pool);
+  if (!cache) {
+    cache = new Map();
+    schemaCache.set(pool, cache);
+  }
+  return cache;
+}
+
+export function invalidateSchemaCache(pool: DatabasePool, collection?: string): void {
+  const cache = schemaCache.get(pool);
+  if (!cache) return;
+  if (collection) {
+    cache.delete(collection);
+  } else {
+    cache.clear();
+  }
+}
+
+function fetchColumns(pool: DatabasePool, collection: string): SchemaCacheEntry {
   validateIdentifier(collection, "collection name");
   const db = pool.read();
-
-  // Check table exists
-  const exists = db
+  const existsRow = db
     .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1")
     .get(collection);
-  if (!exists) {
+  if (!existsRow) {
+    return { columns: [], exists: false, fetchedAt: Date.now() };
+  }
+  const rows = db.query(`PRAGMA table_info("${collection}")`).all() as { name: string }[];
+  return { columns: rows.map((r) => r.name), exists: true, fetchedAt: Date.now() };
+}
+
+function getColumnNames(pool: DatabasePool, collection: string): string[] {
+  const cache = getPoolCache(pool);
+  const entry = cache.get(collection);
+  if (entry && Date.now() - entry.fetchedAt < SCHEMA_CACHE_TTL_MS) {
+    if (!entry.exists) {
+      throw Object.assign(
+        new Error(`Collection "${collection}" not found.`),
+        { status: 404 }
+      );
+    }
+    return entry.columns;
+  }
+  const fresh = fetchColumns(pool, collection);
+  cache.set(collection, fresh);
+  if (!fresh.exists) {
     throw Object.assign(
       new Error(`Collection "${collection}" not found.`),
       { status: 404 }
     );
   }
+  return fresh.columns;
+}
 
-  const rows = db.query(`PRAGMA table_info("${collection}")`).all() as { name: string }[];
-  return rows.map((r) => r.name);
+export function collectionExists(pool: DatabasePool, collection: string): boolean {
+  const cache = getPoolCache(pool);
+  const entry = cache.get(collection);
+  if (entry && Date.now() - entry.fetchedAt < SCHEMA_CACHE_TTL_MS) {
+    return entry.exists;
+  }
+  const fresh = fetchColumns(pool, collection);
+  cache.set(collection, fresh);
+  return fresh.exists;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +128,8 @@ function getColumnNames(pool: DatabasePool, collection: string): string[] {
 export function createRecord(
   pool: DatabasePool,
   collection: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  auth?: AuthContext
 ): Record<string, unknown> {
   const columns = getColumnNames(pool, collection);
   const systemCols = new Set(["id", "created_at", "updated_at"]);
@@ -111,6 +171,24 @@ export function createRecord(
   });
 }
 
+export interface ListRecordsResult {
+  records: Record<string, unknown>[];
+  meta: {
+    total?: number;
+    page?: number;
+    per_page?: number;
+    total_pages?: number;
+    next_cursor?: string | null;
+  };
+}
+
+export interface PaginationMetaOptions {
+  page: number;
+  perPage: number;
+  filter?: Record<string, unknown>;
+  sort?: string;
+}
+
 /**
  * List records from a collection with optional filtering and sorting.
  *
@@ -128,23 +206,71 @@ export function listRecords(
     direction?: "asc" | "desc";
     limit?: number;
     offset?: number;
+    page?: number;
+    perPage?: number;
+    cursor?: string;
     fields?: string[];
-  }
+  },
+  auth?: AuthContext
 ): Record<string, unknown>[] {
   getColumnNames(pool, collection);
   const db = pool.read();
 
-  let sql = `SELECT * FROM "${collection}"`;
+  // Normalize page/perPage to limit/offset
+  let limit = options?.limit;
+  let offset = options?.offset;
+  let page: number | undefined;
+  let perPage: number | undefined;
+  if (options?.page !== undefined && options?.perPage !== undefined) {
+    page = options.page;
+    perPage = options.perPage;
+    limit = perPage;
+    offset = (page - 1) * perPage;
+  }
+
+  if (limit !== undefined) {
+    limit = Math.max(1, Math.min(limit, MAX_LIMIT));
+  }
+  if (offset !== undefined) {
+    offset = Math.max(0, Math.min(offset, MAX_OFFSET));
+  }
+
+  const selectCols = options?.fields?.length
+    ? options.fields.map((f) => `"${f}"`).join(", ")
+    : "*";
+
+  let sql = `SELECT ${selectCols} FROM "${collection}"`;
   const params: unknown[] = [];
   const conditions: string[] = [];
+
+  // RLS read policy
+  const rlsCtx = auth ? toRLSContext(auth) : null;
+  const rls = rlsCtx ? applyRLS(pool, collection, "read", rlsCtx) : null;
+  if (rls?.whereClause) {
+    conditions.push(rls.whereClause);
+    params.push(...rls.params);
+  }
 
   // Build WHERE clause from filter
   if (options?.filter) {
     for (const [key, value] of Object.entries(options.filter)) {
+      if (value === null || value === undefined) continue;
+      if (typeof value === "object" && !Array.isArray(value)) {
+        throw Object.assign(new Error(`Filter value for "${key}" must be a scalar or array.`), { status: 400 });
+      }
       validateIdentifier(key, "filter field");
       conditions.push(`"${key}" = ?`);
       params.push(value);
     }
+  }
+
+  // Cursor-based pagination (keyset on sort field)
+  const sortField = options?.sort || "created_at";
+  validateIdentifier(sortField, "sort field");
+  if (options?.cursor) {
+    const op = options.direction === "asc" ? ">" : "<";
+    conditions.push(`"${sortField}" ${op} ?`);
+    params.push(options.cursor);
   }
 
   if (conditions.length > 0) {
@@ -152,22 +278,112 @@ export function listRecords(
   }
 
   // Sorting — validate sort field to prevent SQL injection
-  const sortField = options?.sort || "created_at";
-  validateIdentifier(sortField, "sort field");
   const direction = options?.direction === "asc" ? "ASC" : "DESC";
   sql += ` ORDER BY "${sortField}" ${direction}`;
 
   // Pagination
-  if (options?.limit !== undefined) {
+  if (limit !== undefined) {
     sql += ` LIMIT ?`;
-    params.push(options.limit);
+    params.push(limit);
   }
-  if (options?.offset !== undefined) {
+  if (offset !== undefined) {
     sql += ` OFFSET ?`;
-    params.push(options.offset);
+    params.push(offset);
   }
 
-  return db.query(sql).all(...toBindings(params)) as Record<string, unknown>[];
+  const records = db.query(sql).all(...toBindings(params)) as Record<string, unknown>[];
+  return records;
+}
+
+/**
+ * Build a safe SELECT query for listing records.
+ */
+export function buildListSql(
+  collection: string,
+  options?: {
+    filter?: Record<string, unknown>;
+    sort?: string;
+    direction?: "asc" | "desc";
+    limit?: number;
+    offset?: number;
+    cursor?: string;
+    fields?: string[];
+  }
+): { sql: string; params: unknown[] } {
+  validateIdentifier(collection, "collection name");
+  const selectCols = options?.fields?.length
+    ? options.fields.map((f) => `"${f}"`).join(", ")
+    : "*";
+  let sql = `SELECT ${selectCols} FROM "${collection}"`;
+  const params: unknown[] = [];
+  const conditions: string[] = [];
+
+  if (options?.filter) {
+    for (const [key, value] of Object.entries(options.filter)) {
+      if (value === null || value === undefined) continue;
+      if (typeof value === "object" && !Array.isArray(value)) {
+        throw Object.assign(new Error(`Filter value for "${key}" must be a scalar or array.`), { status: 400 });
+      }
+      validateIdentifier(key, "filter field");
+      conditions.push(`"${key}" = ?`);
+      params.push(value);
+    }
+  }
+
+  const sortField = options?.sort || "created_at";
+  validateIdentifier(sortField, "sort field");
+  if (options?.cursor) {
+    const op = options.direction === "asc" ? ">" : "<";
+    conditions.push(`"${sortField}" ${op} ?`);
+    params.push(options.cursor);
+  }
+
+  if (conditions.length > 0) {
+    sql += " WHERE " + conditions.join(" AND ");
+  }
+
+  const direction = options?.direction === "asc" ? "ASC" : "DESC";
+  sql += ` ORDER BY "${sortField}" ${direction}`;
+
+  let limit = options?.limit;
+  let offset = options?.offset;
+  if (limit !== undefined) {
+    limit = Math.max(1, Math.min(limit, MAX_LIMIT));
+    sql += ` LIMIT ?`;
+    params.push(limit);
+  }
+  if (offset !== undefined) {
+    offset = Math.max(0, Math.min(offset, MAX_OFFSET));
+    sql += ` OFFSET ?`;
+    params.push(offset);
+  }
+
+  return { sql, params };
+}
+
+/**
+ * Build pagination metadata for a list query.
+ * Used by HTTP routes to wrap `listRecords` results.
+ */
+export function buildPaginationMeta(
+  pool: DatabasePool,
+  collection: string,
+  options: PaginationMetaOptions,
+  auth?: AuthContext,
+  lastRecord?: Record<string, unknown>
+): ListRecordsResult["meta"] {
+  const total = countRecords(pool, collection, options.filter, auth);
+  const meta: ListRecordsResult["meta"] = {
+    total,
+    page: options.page,
+    per_page: options.perPage,
+    total_pages: Math.ceil(total / options.perPage),
+  };
+  if (lastRecord) {
+    const key = options.sort || "created_at";
+    meta.next_cursor = lastRecord[key] as string | null;
+  }
+  return meta;
 }
 
 /**
@@ -178,12 +394,23 @@ export function listRecords(
 export function getRecord(
   pool: DatabasePool,
   collection: string,
-  id: string
+  id: string,
+  auth?: AuthContext
 ): Record<string, unknown> {
   getColumnNames(pool, collection);
   const db = pool.read();
 
-  const row = db.query(`SELECT * FROM "${collection}" WHERE id=?`).get(id);
+  const rlsCtx = auth ? toRLSContext(auth) : null;
+  const rls = rlsCtx ? applyRLS(pool, collection, "read", rlsCtx) : null;
+
+  let sql = `SELECT * FROM "${collection}" WHERE id=?`;
+  const params: unknown[] = [id];
+  if (rls?.whereClause) {
+    sql += ` AND ${rls.whereClause}`;
+    params.push(...rls.params);
+  }
+
+  const row = db.query(sql).get(...toBindings(params));
   if (!row) {
     throw Object.assign(
       new Error(`Record "${id}" not found in collection "${collection}".`),
@@ -206,7 +433,8 @@ export function updateRecord(
   pool: DatabasePool,
   collection: string,
   id: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  auth?: AuthContext
 ): Record<string, unknown> {
   const columns = getColumnNames(pool, collection);
   const columnSet = new Set(columns);
@@ -227,20 +455,22 @@ export function updateRecord(
     );
   }
 
-  // Always bump updated_at (timestamp generated inside transaction so
-  // Bun.sleepSync ensures it differs from created_at in fast tests)
-  let updates: [string, unknown][];
+  const rlsCtx = auth ? toRLSContext(auth) : null;
+  const rls = rlsCtx ? applyRLS(pool, collection, "write", rlsCtx) : null;
 
   return pool.writeTransaction(() => {
     const db = pool.write();
-    // Small delay to ensure updated_at differs from created_at in fast tests
-    Bun.sleepSync(1);
-    updates = [...userUpdates, ["updated_at", now()]];
+    const nowValue = (db.query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now') as now").get() as { now: string }).now;
+    const updates: [string, unknown][] = [...userUpdates, ["updated_at", nowValue]];
 
-    // Verify record exists
-    const existing = db
-      .query(`SELECT 1 FROM "${collection}" WHERE id=?`)
-      .get(id);
+    // Verify record exists and is accessible
+    let selectSql = `SELECT 1 FROM "${collection}" WHERE id=?`;
+    const selectParams: unknown[] = [id];
+    if (rls?.whereClause) {
+      selectSql += ` AND ${rls.whereClause}`;
+      selectParams.push(...rls.params);
+    }
+    const existing = db.query(selectSql).get(...toBindings(selectParams));
     if (!existing) {
       throw Object.assign(
         new Error(`Record "${id}" not found in collection "${collection}".`),
@@ -251,9 +481,15 @@ export function updateRecord(
     const setClauses = updates.map(([k]) => `"${k}" = ?`).join(", ");
     const values = [...updates.map(([, v]) => v), id];
 
-    db.run(`UPDATE "${collection}" SET ${setClauses} WHERE id=?`, toBindings(values));
+    let updateSql = `UPDATE "${collection}" SET ${setClauses} WHERE id=?`;
+    if (rls?.whereClause) {
+      updateSql += ` AND ${rls.whereClause}`;
+      values.push(...rls.params);
+    }
 
-    // Return updated record
+    db.run(updateSql, toBindings(values));
+
+    // Return updated record read with a new query so it reflects committed timestamp.
     const row = db.query(`SELECT * FROM "${collection}" WHERE id=?`).get(id);
     return row as Record<string, unknown>;
   });
@@ -267,17 +503,25 @@ export function updateRecord(
 export function deleteRecord(
   pool: DatabasePool,
   collection: string,
-  id: string
+  id: string,
+  auth?: AuthContext
 ): void {
   getColumnNames(pool, collection);
+
+  const rlsCtx = auth ? toRLSContext(auth) : null;
+  const rls = rlsCtx ? applyRLS(pool, collection, "write", rlsCtx) : null;
 
   pool.writeTransaction(() => {
     const db = pool.write();
 
-    // Verify record exists
-    const existing = db
-      .query(`SELECT 1 FROM "${collection}" WHERE id=?`)
-      .get(id);
+    // Verify record exists and is accessible
+    let selectSql = `SELECT 1 FROM "${collection}" WHERE id=?`;
+    const selectParams: unknown[] = [id];
+    if (rls?.whereClause) {
+      selectSql += ` AND ${rls.whereClause}`;
+      selectParams.push(...rls.params);
+    }
+    const existing = db.query(selectSql).get(...toBindings(selectParams));
     if (!existing) {
       throw Object.assign(
         new Error(`Record "${id}" not found in collection "${collection}".`),
@@ -285,7 +529,14 @@ export function deleteRecord(
       );
     }
 
-    db.run(`DELETE FROM "${collection}" WHERE id=?`, [id]);
+    let deleteSql = `DELETE FROM "${collection}" WHERE id=?`;
+    const params: unknown[] = [id];
+    if (rls?.whereClause) {
+      deleteSql += ` AND ${rls.whereClause}`;
+      params.push(...rls.params);
+    }
+
+    db.run(deleteSql, toBindings(params));
   });
 }
 
@@ -297,19 +548,35 @@ export function deleteRecord(
 export function countRecords(
   pool: DatabasePool,
   collection: string,
-  filter?: Record<string, unknown>
+  filter?: Record<string, unknown>,
+  auth?: AuthContext
 ): number {
   getColumnNames(pool, collection);
   const db = pool.read();
 
   let sql = `SELECT COUNT(*) as cnt FROM "${collection}"`;
   const params: unknown[] = [];
+  const conditions: string[] = [];
+
+  const rlsCtx = auth ? toRLSContext(auth) : null;
+  const rls = rlsCtx ? applyRLS(pool, collection, "read", rlsCtx) : null;
+  if (rls?.whereClause) {
+    conditions.push(rls.whereClause);
+    params.push(...rls.params);
+  }
 
   if (filter && Object.keys(filter).length > 0) {
-    const conditions = Object.keys(filter).map((k) => {
-      params.push(filter[k]);
-      return `"${k}" = ?`;
-    });
+    for (const [k, v] of Object.entries(filter)) {
+      if (v === null || v === undefined) continue;
+      if (typeof v === "object" && !Array.isArray(v)) {
+        throw Object.assign(new Error(`Filter value for "${k}" must be a scalar or array.`), { status: 400 });
+      }
+      conditions.push(`"${k}" = ?`);
+      params.push(v);
+    }
+  }
+
+  if (conditions.length > 0) {
     sql += " WHERE " + conditions.join(" AND ");
   }
 
@@ -325,15 +592,25 @@ export function countRecords(
 export function distinctValues(
   pool: DatabasePool,
   collection: string,
-  field: string
+  field: string,
+  auth?: AuthContext
 ): unknown[] {
   validateIdentifier(field, "field name");
   getColumnNames(pool, collection);
   const db = pool.read();
 
-  const rows = db
-    .query(`SELECT DISTINCT "${field}" FROM "${collection}" ORDER BY "${field}"`)
-    .all() as Record<string, unknown>[];
+  const rlsCtx = auth ? toRLSContext(auth) : null;
+  const rls = rlsCtx ? applyRLS(pool, collection, "read", rlsCtx) : null;
+
+  let sql = `SELECT DISTINCT "${field}" FROM "${collection}"`;
+  const params: unknown[] = [];
+  if (rls?.whereClause) {
+    sql += ` WHERE ${rls.whereClause}`;
+    params.push(...rls.params);
+  }
+  sql += ` ORDER BY "${field}"`;
+
+  const rows = db.query(sql).all(...toBindings(params)) as Record<string, unknown>[];
 
   return rows.map((r) => r[field]);
 }
@@ -351,9 +628,20 @@ export function distinctValues(
 export function batchRecords(
   pool: DatabasePool,
   collection: string,
-  operations: { action: "create" | "update" | "delete"; id?: string; data?: Record<string, unknown> }[]
+  operations: { action: "create" | "update" | "delete"; id?: string; data?: Record<string, unknown> }[],
+  auth?: AuthContext
 ): { created: number; updated: number; deleted: number } {
   getColumnNames(pool, collection);
+
+  const rlsCtx = auth ? toRLSContext(auth) : null;
+  const rls = rlsCtx ? applyRLS(pool, collection, "write", rlsCtx) : null;
+
+  if (operations.length > 1000) {
+    throw Object.assign(
+      new Error("Batch operations limited to 1000 per request."),
+      { status: 400 }
+    );
+  }
 
   const result = { created: 0, updated: 0, deleted: 0 };
 
@@ -400,9 +688,13 @@ export function batchRecords(
               { status: 400 }
             );
           }
-          const existing = db
-            .query(`SELECT 1 FROM "${collection}" WHERE id=?`)
-            .get(op.id);
+          let selectSql = `SELECT 1 FROM "${collection}" WHERE id=?`;
+          const selectParams: unknown[] = [op.id];
+          if (rls?.whereClause) {
+            selectSql += ` AND ${rls.whereClause}`;
+            selectParams.push(...rls.params);
+          }
+          const existing = db.query(selectSql).get(...toBindings(selectParams));
           if (!existing) {
             throw Object.assign(
               new Error(`Record "${op.id}" not found in collection "${collection}".`),
@@ -419,7 +711,12 @@ export function batchRecords(
           const updates: [string, unknown][] = [...userUpdates, ["updated_at", timestamp]];
           const setClauses = updates.map(([k]) => `"${k}" = ?`).join(", ");
           const vals = [...updates.map(([, v]) => v), op.id];
-          db.run(`UPDATE "${collection}" SET ${setClauses} WHERE id=?`, toBindings(vals));
+          let updateSql = `UPDATE "${collection}" SET ${setClauses} WHERE id=?`;
+          if (rls?.whereClause) {
+            updateSql += ` AND ${rls.whereClause}`;
+            vals.push(...rls.params);
+          }
+          db.run(updateSql, toBindings(vals));
           result.updated++;
           break;
         }
@@ -431,16 +728,26 @@ export function batchRecords(
               { status: 400 }
             );
           }
-          const existing = db
-            .query(`SELECT 1 FROM "${collection}" WHERE id=?`)
-            .get(op.id);
+          let selectSql = `SELECT 1 FROM "${collection}" WHERE id=?`;
+          const selectParams: unknown[] = [op.id];
+          if (rls?.whereClause) {
+            selectSql += ` AND ${rls.whereClause}`;
+            selectParams.push(...rls.params);
+          }
+          const existing = db.query(selectSql).get(...toBindings(selectParams));
           if (!existing) {
             throw Object.assign(
               new Error(`Record "${op.id}" not found in collection "${collection}".`),
               { status: 404 }
             );
           }
-          db.run(`DELETE FROM "${collection}" WHERE id=?`, [op.id]);
+          let deleteSql = `DELETE FROM "${collection}" WHERE id=?`;
+          const params: unknown[] = [op.id];
+          if (rls?.whereClause) {
+            deleteSql += ` AND ${rls.whereClause}`;
+            params.push(...rls.params);
+          }
+          db.run(deleteSql, toBindings(params));
           result.deleted++;
           break;
         }
