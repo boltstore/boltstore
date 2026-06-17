@@ -1,6 +1,6 @@
 {
   "name": "boltstore",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": false,
   "description": "Boltstore server — lightweight backend with realtime sync",
   "main": "dist/index.js",
