@@ -88,6 +88,11 @@ export class DatabaseManager {
       );
     }
 
+    // The system meta database is always accessible
+    if (name === "_system") {
+      return this.metaPool;
+    }
+
     // Check if already loaded
     const cached = this.appPools.get(name);
     if (cached) return cached;
