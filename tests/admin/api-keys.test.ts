@@ -83,8 +83,8 @@ describe("createApiKey", () => {
   test("rejects invalid operation in permissions", async () => {
     try {
       await createApiKey(pool, "Bad Op", {
-        operations: ["read", "admin"],
-      } as unknown as { operations: string[] });
+        operations: ["read", "adminish"] as unknown as string[],
+      });
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as Error & { status?: number };

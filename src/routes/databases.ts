@@ -1,9 +1,21 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
-import { ApiResponse, jsonResponse, errorResponse } from "../server";
+import type { ApiResponse } from "../server";
+import { jsonResponse, errorResponse, auditFromRequest, logAuditEvent } from "../server";
+import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 
-export function registerDatabaseRoutes(router: Router, manager: DatabaseManager): void {
-  router.get("/api/admin/databases", () => {
+export function registerDatabaseRoutes(
+  router: Router,
+  manager: DatabaseManager,
+  authConfig: AuthConfig
+): void {
+  router.get("/api/admin/databases", async (req) => {
+    // Databases are global; authenticate against the system/meta database path.
+    const auth = await authenticateRequest(req, manager, "_system", authConfig);
+    if (auth instanceof Response) return auth;
+    const admin = requireAdmin(auth);
+    if (admin) return admin;
+
     try {
       const databases = manager.listDatabases();
       return jsonResponse({ data: databases });
@@ -14,21 +26,67 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
   });
 
   router.post("/api/admin/databases", async (req) => {
+    const auth = await authenticateRequest(req, manager, "_system", authConfig);
+    if (auth instanceof Response) return auth;
+    const admin = requireAdmin(auth);
+    if (admin) return admin;
+
     try {
       const { name } = await req.json();
       if (!name || typeof name !== "string") return errorResponse("VALIDATION", "Field 'name' is required.", 400);
-      return jsonResponse({ data: manager.createDatabase(name) }, 201);
+      const result = manager.createDatabase(name);
+      logAuditEvent(auditFromRequest(req, {
+        type: "database.create",
+        principalId: auth.principalId,
+        principalType: auth.isApiKey ? "api_key" : "user",
+        database: name,
+        action: "create",
+        target: name,
+        success: true,
+      }), manager.getMetaPool());
+      return jsonResponse({ data: result }, 201);
     } catch (err) {
+      logAuditEvent(auditFromRequest(req, {
+        type: "database.create",
+        principalId: auth.principalId,
+        principalType: auth.isApiKey ? "api_key" : "user",
+        action: "create",
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to create database",
+      }), manager.getMetaPool());
       const message = err instanceof Error ? err.message : "Failed to create database";
       return errorResponse("CREATE_DATABASE_ERROR", message, (err as { status?: number }).status || 500);
     }
   });
 
-  router.delete("/api/admin/databases/:database", (_req, params) => {
+  router.delete("/api/admin/databases/:database", async (req, params) => {
+    const auth = await authenticateRequest(req, manager, "_system", authConfig);
+    if (auth instanceof Response) return auth;
+    const admin = requireAdmin(auth);
+    if (admin) return admin;
+
     try {
       manager.deleteDatabase(params.database);
+      logAuditEvent(auditFromRequest(req, {
+        type: "database.delete",
+        principalId: auth.principalId,
+        principalType: auth.isApiKey ? "api_key" : "user",
+        database: params.database,
+        action: "delete",
+        target: params.database,
+        success: true,
+      }), manager.getMetaPool());
       return jsonResponse({ data: { deleted: true } });
     } catch (err) {
+      logAuditEvent(auditFromRequest(req, {
+        type: "database.delete",
+        principalId: auth.principalId,
+        principalType: auth.isApiKey ? "api_key" : "user",
+        database: params.database,
+        action: "delete",
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to delete database",
+      }), manager.getMetaPool());
       const message = err instanceof Error ? err.message : "Failed to delete database";
       return errorResponse("DELETE_DATABASE_ERROR", message, (err as { status?: number }).status || 500);
     }

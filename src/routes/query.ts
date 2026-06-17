@@ -2,9 +2,17 @@ import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { executeQuery, type QueryParams } from "../query";
 import { jsonResponse, errorResponse } from "../server";
+import { authenticateRequest, type AuthConfig } from "../middleware/auth";
 
-export function registerQueryRoutes(router: Router, manager: DatabaseManager): void {
+export function registerQueryRoutes(
+  router: Router,
+  manager: DatabaseManager,
+  authConfig: AuthConfig
+): void {
   router.post("/api/:database/query", async (req, params) => {
+    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    if (auth instanceof Response) return auth;
+
     try {
       const { collection, filter, sort, fields, limit, offset, search, aggregate, groupBy, having } = await req.json();
       if (!collection || typeof collection !== "string") return errorResponse("VALIDATION", "Field 'collection' is required.", 400);

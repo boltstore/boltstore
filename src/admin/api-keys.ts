@@ -12,19 +12,22 @@
 
 import { DatabasePool } from "../db/pool";
 import { hashPassword, verifyPassword } from "../auth";
+import { generateSecureId } from "@boltstore/utils";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/** Permissions scoped to a single API key. */
+/** Valid operations an API key can be scoped to. */
+export const API_KEY_OPERATIONS = ["read", "create", "update", "delete", "admin"] as const;
+export type ApiKeyOperation = (typeof API_KEY_OPERATIONS)[number];
+
+/** Permission set attached to an API key. */
 export interface ApiKeyPermissions {
-  /** Collections this key can access (empty = all). */
+  /** Allowed operations. An empty/missing list means no operations are allowed. */
+  operations?: ApiKeyOperation[];
+  /** Optional collection allow-list. If omitted, the key can access all collections. */
   collections?: string[];
-  /** Operations this key is allowed (e.g. ["read", "create", "update", "delete"]). */
-  operations?: string[];
-  /** Custom rate limit for this key (requests per minute). Overrides default. */
-  rateLimit?: number;
 }
 
 /** Internal representation of an API key row. */
@@ -53,6 +56,40 @@ export interface ApiKeyContext {
   keyId: string;
   name: string;
   permissions: ApiKeyPermissions;
+}
+
+/** Map an HTTP/CRUD intent to an API-key operation name. */
+export function operationForMethod(method: string): ApiKeyOperation {
+  switch (method) {
+    case "GET":
+    case "HEAD":
+      return "read";
+    case "POST":
+      return "create";
+    case "PATCH":
+    case "PUT":
+      return "update";
+    case "DELETE":
+      return "delete";
+    default:
+      return "read";
+  }
+}
+
+/** Check whether an API key context is allowed to perform an operation on a collection. */
+export function apiKeyAllows(
+  ctx: ApiKeyContext,
+  operation: ApiKeyOperation,
+  collection?: string
+): boolean {
+  const ops = ctx.permissions.operations ?? [];
+  if (ops.includes("admin")) return true;
+  if (!ops.includes(operation)) return false;
+  const cols = ctx.permissions.collections;
+  if (cols && cols.length > 0) {
+    if (!collection || !cols.includes(collection)) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,9 +130,7 @@ export function bootstrapApiKeyTables(pool: DatabasePool): void {
 
 /** Generate a unique API key ID. */
 function generateKeyId(): string {
-  const ts = Date.now().toString(36);
-  const rnd = Math.random().toString(36).slice(2, 10);
-  return `apk_${ts}_${rnd}`;
+  return generateSecureId("apk");
 }
 
 /** Generate a cryptographically random API key secret. */
@@ -146,14 +181,13 @@ export async function createApiKey(
   }
 
   if (permissions.operations) {
-    const validOps = ["read", "create", "update", "delete"];
     if (!Array.isArray(permissions.operations)) {
       throw Object.assign(new Error("permissions.operations must be an array."), { status: 400 });
     }
     for (const op of permissions.operations) {
-      if (!validOps.includes(op)) {
+      if (typeof op !== "string" || !API_KEY_OPERATIONS.includes(op as ApiKeyOperation)) {
         throw Object.assign(
-          new Error(`Invalid operation "${op}". Valid operations: ${validOps.join(", ")}.`),
+          new Error(`Invalid operation "${op}". Valid operations: ${API_KEY_OPERATIONS.join(", ")}.`),
           { status: 400 }
         );
       }

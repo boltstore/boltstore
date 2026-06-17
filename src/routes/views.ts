@@ -1,23 +1,58 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { createView, listViews, getView, queryView, dropView } from "../admin/views";
-import { jsonResponse, errorResponse } from "../server";
+import { jsonResponse, errorResponse, logAuditEvent, auditFromRequest } from "../server";
+import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 
-export function registerViewRoutes(router: Router, manager: DatabaseManager): void {
+export function registerViewRoutes(
+  router: Router,
+  manager: DatabaseManager,
+  authConfig: AuthConfig
+): void {
   router.post("/api/admin/:database/views", async (req, params) => {
+    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    if (auth instanceof Response) return auth;
+    const admin = requireAdmin(auth);
+    if (admin) return admin;
+
     try {
       const { name, sql } = await req.json();
       if (!name || typeof name !== "string") return errorResponse("VALIDATION", "Field 'name' is required.", 400);
       if (!sql || typeof sql !== "string") return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
       const pool = manager.get(params.database);
-      return jsonResponse({ data: createView(pool, name, sql) }, 201);
+      const result = createView(pool, name, sql);
+      logAuditEvent(auditFromRequest(req, {
+        type: "view.create",
+        principalId: auth.principalId,
+        principalType: auth.isApiKey ? "api_key" : "user",
+        database: params.database,
+        action: "create",
+        target: name,
+        success: true,
+        details: { sql: sql.slice(0, 200) },
+      }));
+      return jsonResponse({ data: result }, 201);
     } catch (err) {
+      logAuditEvent(auditFromRequest(req, {
+        type: "view.create",
+        principalId: auth.principalId,
+        principalType: auth.isApiKey ? "api_key" : "user",
+        database: params.database,
+        action: "create",
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to create view",
+      }));
       const message = err instanceof Error ? err.message : "Failed to create view";
       return errorResponse("CREATE_VIEW_ERROR", message, (err as { status?: number }).status || 500);
     }
   });
 
-  router.get("/api/admin/:database/views", (_req, params) => {
+  router.get("/api/admin/:database/views", async (req, params) => {
+    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    if (auth instanceof Response) return auth;
+    const admin = requireAdmin(auth);
+    if (admin) return admin;
+
     try {
       const pool = manager.get(params.database);
       return jsonResponse({ data: listViews(pool) });
@@ -27,7 +62,12 @@ export function registerViewRoutes(router: Router, manager: DatabaseManager): vo
     }
   });
 
-  router.get("/api/admin/:database/views/:name", (req, params) => {
+  router.get("/api/admin/:database/views/:name", async (req, params) => {
+    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    if (auth instanceof Response) return auth;
+    const admin = requireAdmin(auth);
+    if (admin) return admin;
+
     try {
       const url = new URL(req.url);
       const pool = manager.get(params.database);
@@ -51,12 +91,35 @@ export function registerViewRoutes(router: Router, manager: DatabaseManager): vo
     }
   });
 
-  router.delete("/api/admin/:database/views/:name", (_req, params) => {
+  router.delete("/api/admin/:database/views/:name", async (req, params) => {
+    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    if (auth instanceof Response) return auth;
+    const admin = requireAdmin(auth);
+    if (admin) return admin;
+
     try {
       const pool = manager.get(params.database);
       dropView(pool, params.name);
+      logAuditEvent(auditFromRequest(req, {
+        type: "view.drop",
+        principalId: auth.principalId,
+        principalType: auth.isApiKey ? "api_key" : "user",
+        database: params.database,
+        action: "drop",
+        target: params.name,
+        success: true,
+      }));
       return jsonResponse({ data: { deleted: true } });
     } catch (err) {
+      logAuditEvent(auditFromRequest(req, {
+        type: "view.drop",
+        principalId: auth.principalId,
+        principalType: auth.isApiKey ? "api_key" : "user",
+        database: params.database,
+        action: "drop",
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to drop view",
+      }));
       const message = err instanceof Error ? err.message : "Failed to drop view";
       return errorResponse("DROP_VIEW_ERROR", message, (err as { status?: number }).status || 500);
     }
