@@ -24,6 +24,9 @@ const LOG_LEVEL = (Bun.env.LOG_LEVEL || "info").toLowerCase() as LogLevel;
 /** Output destination: "stderr" | "stdout" | a file path. */
 const LOG_OUTPUT = Bun.env.LOG_OUTPUT || "stderr";
 
+/** Log format: "json" or "human". Defaults to human for terminal output. */
+const LOG_FORMAT = Bun.env.LOG_FORMAT || (LOG_OUTPUT === "stderr" || LOG_OUTPUT === "stdout" ? "human" : "json");
+
 /** Maximum number of entries to buffer before flushing. */
 const LOG_BUFFER_LIMIT = Math.max(1, Math.min(1000, parseInt(Bun.env.LOG_BUFFER_LIMIT || "100", 10) || 100));
 
@@ -76,9 +79,22 @@ function shouldDrop(level: LogLevel): boolean {
   return false;
 }
 
+function formatEntry(e: LogEntry): string {
+  if (LOG_FORMAT === "json") {
+    return JSON.stringify(e);
+  }
+  const ts = e.timestamp ? e.timestamp.slice(11, 19) : "";
+  const method = e.method ? ` ${e.method}` : "";
+  const path = e.path ? ` ${e.path}` : "";
+  const status = e.status !== undefined ? ` → ${e.status}` : "";
+  const dur = e.duration_ms !== undefined ? ` (${e.duration_ms}ms)` : "";
+  const err = e.error ? ` ERROR: ${e.error}` : "";
+  return `${ts} [${e.level.toUpperCase()}]${method}${path}${status}${dur}${err} — ${e.message}`;
+}
+
 function writeEntries(entries: LogEntry[]): void {
   if (entries.length === 0) return;
-  const chunk = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+  const chunk = entries.map((e) => formatEntry(e)).join("\n") + "\n";
   try {
     if (LOG_OUTPUT === "stdout") {
       process.stdout.write(chunk);
