@@ -11,7 +11,7 @@
  */
 
 import { DatabasePool } from "../db/pool";
-import { loginUser, type AuthConfig, type TokenPair, type User, bootstrapAuthTables, hashPassword } from "../auth";
+import { createTokenPairForUser, type AuthConfig, type TokenPair, type User, bootstrapAuthTables, generateRandomPassword, generateSecureId, hashPassword, updateProfile } from "../auth";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -332,8 +332,16 @@ export async function authenticateWithOAuth(
   // Find or create user
   const user = await findOrCreateOAuthUser(pool, profile);
 
+  // If the user was OAuth-only but had no explicit password set, require a forced password reset.
+  if (user.oauth_only === 1 && !user.password_set) {
+    throw Object.assign(
+      new Error("OAuth account requires a password reset before first login. Use PATCH /api/:database/auth/me to set a password."),
+      { status: 403, code: "OAUTH_PASSWORD_RESET_REQUIRED" }
+    );
+  }
+
   // Issue JWT tokens
-  return loginUser(pool, user.email, user.id, authConfig);
+  return createTokenPairForUser(pool, user, authConfig);
 }
 
 // ---------------------------------------------------------------------------
@@ -370,36 +378,50 @@ function getProviderEnvConfig(provider: string): OAuthProviderConfig {
 
 /**
  * Find an existing user by email, or create a new OAuth user.
- * OAuth users have a random auto-generated password (they can set one later).
+ * OAuth users have a random auto-generated password and a password_set flag of 0,
+ * forcing them to set a password before normal password login is allowed.
  */
 async function findOrCreateOAuthUser(
   pool: DatabasePool,
   profile: OAuthProfile
-): Promise<User> {
+): Promise<User & { oauth_only: number; password_set: number }> {
   bootstrapAuthTables(pool);
   const db = pool.read();
 
   // Check if user already exists by email
   const existing = db
-    .query("SELECT id, email, role, created_at, updated_at FROM _users WHERE email=?")
-    .get(profile.email) as User | null;
+    .query("SELECT id, email, role, oauth_only, password_set, created_at, updated_at FROM _users WHERE email=?")
+    .get(profile.email) as (User & { oauth_only?: number; password_set?: number }) | null;
 
   if (existing) {
-    return existing;
+    const passwordSet = existing.password_set ?? (existing.oauth_only === 1 ? 0 : 1);
+    if (existing.oauth_only === 1 && passwordSet === 0) {
+      return { ...existing, oauth_only: 1, password_set: 0 };
+    }
+    return { ...existing, oauth_only: existing.oauth_only ?? 0, password_set: passwordSet };
   }
 
-  // Create new user with auto-generated password
-  const id = `usr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  // Create new user with a strong random password and password_set=0
+  const id = generateSecureId("usr");
   const ts = new Date().toISOString();
-  const randomPassword = await hashPassword(id); // Use user ID as random password
+  const randomPassword = await generateRandomPassword();
 
   return pool.writeTransaction(() => {
     const writeDb = pool.write();
     writeDb.run(
-      "INSERT INTO _users (id, email, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-      [id, profile.email, randomPassword, "user", ts, ts]
+      "INSERT INTO _users (id, email, password_hash, role, oauth_only, password_set, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, profile.email, randomPassword, "user", 1, 0, ts, ts]
     );
 
-    return { id, email: profile.email, role: "user" as const, created_at: ts, updated_at: ts };
+    return { id, email: profile.email, role: "user" as const, oauth_only: 1, password_set: 0, created_at: ts, updated_at: ts };
   });
+}
+
+/**
+ * Mark an OAuth-only user as having set a password, allowing normal login.
+ * Called from updateProfile when a password is changed.
+ */
+export function markPasswordSet(pool: DatabasePool, userId: string): void {
+  bootstrapAuthTables(pool);
+  pool.write().run("UPDATE _users SET password_set=1, oauth_only=0 WHERE id=?", [userId]);
 }
