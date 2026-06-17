@@ -27,15 +27,10 @@ export function registerAdminQueryRoutes(
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    try {
-      const { sql, params: queryParams } = await req.json();
-      if (!sql || typeof sql !== "string") return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
-      const pool = manager.get(params.database);
-      return jsonResponse({ data: executeReadQuery(pool, sql, Array.isArray(queryParams) ? queryParams : []) });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to execute query";
-      return errorResponse("RAW_QUERY_ERROR", message, (err as { status?: number }).status || 500);
-    }
+    const { sql, params: queryParams } = await req.json();
+    if (!sql || typeof sql !== "string") return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
+    const pool = manager.get(params.database);
+    return jsonResponse({ data: executeReadQuery(pool, sql, Array.isArray(queryParams) ? queryParams : []) });
   });
 
   router.post("/api/admin/:database/query/write", async (req, params) => {
@@ -44,16 +39,11 @@ export function registerAdminQueryRoutes(
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    try {
-      const { sql, params: queryParams } = await req.json();
-      if (!sql || typeof sql !== "string") return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
-      const pool = manager.get(params.database);
-      const ctx = queryContext(req, params.database, auth);
-      return jsonResponse({ data: executeWriteQuery(pool, sql, Array.isArray(queryParams) ? queryParams : [], ctx) });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to execute write query";
-      return errorResponse("RAW_WRITE_ERROR", message, (err as { status?: number }).status || 500);
-    }
+    const { sql, params: queryParams } = await req.json();
+    if (!sql || typeof sql !== "string") return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
+    const pool = manager.get(params.database);
+    const ctx = queryContext(req, params.database, auth);
+    return jsonResponse({ data: executeWriteQuery(pool, sql, Array.isArray(queryParams) ? queryParams : [], ctx) });
   });
 
   router.post("/api/admin/:database/query/explain", async (req, params) => {
@@ -62,14 +52,9 @@ export function registerAdminQueryRoutes(
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    try {
-      const { sql, params: queryParams } = await req.json();
-      if (!sql || typeof sql !== "string") return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
-      const pool = manager.get(params.database);
-      return jsonResponse({ data: explainQuery(pool, sql, Array.isArray(queryParams) ? queryParams : []) });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to explain query";
-      return errorResponse("EXPLAIN_ERROR", message, (err as { status?: number }).status || 500);
-    }
+    const { sql, params: queryParams } = await req.json();
+    if (!sql || typeof sql !== "string") return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
+    const pool = manager.get(params.database);
+    return jsonResponse({ data: explainQuery(pool, sql, Array.isArray(queryParams) ? queryParams : []) });
   });
 }

@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { createBackup, listBackups, restoreBackup } from "../admin/backup";
-import { jsonResponse, errorResponse, logAuditEvent, auditFromRequest } from "../server";
+import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 
 export function registerBackupRoutes(
@@ -42,8 +42,7 @@ export function registerBackupRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to create backup",
       }));
-      const message = err instanceof Error ? err.message : "Failed to create backup";
-      return errorResponse("BACKUP_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 
@@ -53,13 +52,8 @@ export function registerBackupRoutes(
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    try {
-      const pool = manager.get(params.database);
-      return jsonResponse({ data: listBackups(pool) });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to list backups";
-      return errorResponse("LIST_BACKUPS_ERROR", message, (err as { status?: number }).status || 500);
-    }
+    const pool = manager.get(params.database);
+    return jsonResponse({ data: listBackups(pool) });
   });
 
   router.post("/api/admin/:database/restore/:backupId", async (req, params) => {
@@ -91,8 +85,7 @@ export function registerBackupRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to restore backup",
       }));
-      const message = err instanceof Error ? err.message : "Failed to restore backup";
-      return errorResponse("RESTORE_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 }

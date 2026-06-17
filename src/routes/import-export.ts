@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { importData, exportData } from "../admin/import-export";
-import { jsonResponse, errorResponse, logAuditEvent, auditFromRequest, MAX_RESPONSE_SIZE } from "../server";
+import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest, MAX_RESPONSE_SIZE } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 import { buildListSql } from "../records";
 
@@ -57,8 +57,7 @@ export function registerImportExportRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to import data",
       }));
-      const message = err instanceof Error ? err.message : "Failed to import data";
-      return errorResponse("IMPORT_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 
@@ -176,8 +175,7 @@ export function registerImportExportRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to export data",
       }));
-      const message = err instanceof Error ? err.message : "Failed to export data";
-      return errorResponse("EXPORT_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 }

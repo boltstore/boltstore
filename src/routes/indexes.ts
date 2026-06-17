@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { createIndex, listIndexes, dropIndex, type IndexDefinition } from "../indexes";
-import { jsonResponse, errorResponse, logAuditEvent, auditFromRequest } from "../server";
+import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 
 export function registerIndexRoutes(
@@ -44,8 +44,7 @@ export function registerIndexRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to create index",
       }));
-      const message = err instanceof Error ? err.message : "Failed to create index";
-      return errorResponse("CREATE_INDEX_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 
@@ -55,13 +54,8 @@ export function registerIndexRoutes(
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    try {
-      const pool = manager.get(params.database);
-      return jsonResponse({ data: listIndexes(pool, params.collection) });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to list indexes";
-      return errorResponse("LIST_INDEXES_ERROR", message, (err as { status?: number }).status || 500);
-    }
+    const pool = manager.get(params.database);
+    return jsonResponse({ data: listIndexes(pool, params.collection) });
   });
 
   router.delete("/api/admin/:database/collections/:collection/indexes/:name", async (req, params) => {
@@ -95,8 +89,7 @@ export function registerIndexRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to drop index",
       }));
-      const message = err instanceof Error ? err.message : "Failed to drop index";
-      return errorResponse("DROP_INDEX_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 }

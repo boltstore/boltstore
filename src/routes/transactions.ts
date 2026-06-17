@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { executeTransaction, type TransactionOperation } from "../admin/transaction";
-import { jsonResponse, errorResponse, logAuditEvent, auditFromRequest } from "../server";
+import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 
 export function registerTransactionRoutes(
@@ -40,8 +40,7 @@ export function registerTransactionRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Transaction failed",
       }));
-      const message = err instanceof Error ? err.message : "Transaction failed";
-      return errorResponse("TRANSACTION_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 }

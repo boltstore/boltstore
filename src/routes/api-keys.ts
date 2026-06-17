@@ -14,7 +14,7 @@ import {
   getApiKey,
   revokeApiKey,
 } from "../admin/api-keys";
-import { jsonResponse, errorResponse, logAuditEvent, auditFromRequest } from "../server";
+import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 
 export function registerApiKeyRoutes(
@@ -60,8 +60,7 @@ export function registerApiKeyRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to create API key",
       }));
-      const message = err instanceof Error ? err.message : "Failed to create API key";
-      return errorResponse("CREATE_API_KEY_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 
@@ -72,14 +71,9 @@ export function registerApiKeyRoutes(
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    try {
-      const pool = manager.get(params.database);
-      const keys = listApiKeys(pool);
-      return jsonResponse({ data: keys });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to list API keys";
-      return errorResponse("LIST_API_KEYS_ERROR", message, (err as { status?: number }).status || 500);
-    }
+    const pool = manager.get(params.database);
+    const keys = listApiKeys(pool);
+    return jsonResponse({ data: keys });
   });
 
   // GET /api/admin/:database/api-keys/:id — get a single API key
@@ -89,14 +83,9 @@ export function registerApiKeyRoutes(
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    try {
-      const pool = manager.get(params.database);
-      const key = getApiKey(pool, params.id);
-      return jsonResponse({ data: key });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to get API key";
-      return errorResponse("GET_API_KEY_ERROR", message, (err as { status?: number }).status || 500);
-    }
+    const pool = manager.get(params.database);
+    const key = getApiKey(pool, params.id);
+    return jsonResponse({ data: key });
   });
 
   // DELETE /api/admin/:database/api-keys/:id — revoke an API key
@@ -130,8 +119,7 @@ export function registerApiKeyRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to revoke API key",
       }));
-      const message = err instanceof Error ? err.message : "Failed to revoke API key";
-      return errorResponse("REVOKE_API_KEY_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 }

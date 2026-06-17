@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import type { ApiResponse } from "../server";
-import { jsonResponse, errorResponse, auditFromRequest, logAuditEvent } from "../server";
+import { jsonResponse, errorResponse, safeErrorResponse, auditFromRequest, logAuditEvent } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 
 export function registerDatabaseRoutes(
@@ -54,8 +54,7 @@ export function registerDatabaseRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to create database",
       }), manager.getMetaPool());
-      const message = err instanceof Error ? err.message : "Failed to create database";
-      return errorResponse("CREATE_DATABASE_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 
@@ -87,8 +86,7 @@ export function registerDatabaseRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to delete database",
       }), manager.getMetaPool());
-      const message = err instanceof Error ? err.message : "Failed to delete database";
-      return errorResponse("DELETE_DATABASE_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 }

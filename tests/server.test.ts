@@ -128,7 +128,7 @@ describe("POST /api/admin/databases", () => {
     });
     expect(response.status).toBe(409);
     const body = await response.json();
-    expect(body.error.code).toBe("CREATE_DATABASE_ERROR");
+    expect(body.error.code).toBe("REQUEST_ERROR");
 
     manager.deleteDatabase("dupe_test");
   });

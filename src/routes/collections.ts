@@ -2,7 +2,7 @@ import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { createCollection, listCollections, getCollection, updateCollection, deleteCollection } from "../collections";
 import { type ColumnDefinition } from "@boltstore/utils";
-import { jsonResponse, errorResponse, logAuditEvent, auditFromRequest } from "../server";
+import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 
 function auditCollectionEvent(
@@ -77,8 +77,7 @@ export function registerCollectionRoutes(
       return jsonResponse({ data: result }, 201);
     } catch (err) {
       auditCollectionEvent("collection.create", req, auth, params.database, "", false, err instanceof Error ? err.message : "Failed to create collection");
-      const message = err instanceof Error ? err.message : "Failed to create collection";
-      return errorResponse("CREATE_COLLECTION_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 
@@ -97,8 +96,7 @@ export function registerCollectionRoutes(
       return jsonResponse({ data: result });
     } catch (err) {
       auditCollectionEvent("collection.update", req, auth, params.database, params.collection, false, err instanceof Error ? err.message : "Failed to update collection");
-      const message = err instanceof Error ? err.message : "Failed to update collection";
-      return errorResponse("UPDATE_COLLECTION_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 
@@ -115,8 +113,7 @@ export function registerCollectionRoutes(
       return jsonResponse({ data: { deleted: true } });
     } catch (err) {
       auditCollectionEvent("collection.delete", req, auth, params.database, params.collection, false, err instanceof Error ? err.message : "Failed to delete collection");
-      const message = err instanceof Error ? err.message : "Failed to delete collection";
-      return errorResponse("DELETE_COLLECTION_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 }

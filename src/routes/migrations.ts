@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { listMigrations, applyMigrations, rollbackLastMigration } from "../migrations";
-import { jsonResponse, errorResponse, logAuditEvent, auditFromRequest } from "../server";
+import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 
 export function registerMigrationRoutes(
@@ -15,13 +15,8 @@ export function registerMigrationRoutes(
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    try {
-      const pool = manager.get(params.database);
-      return jsonResponse({ data: listMigrations(pool) });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to list migrations";
-      return errorResponse("MIGRATIONS_ERROR", message, (err as { status?: number }).status || 500);
-    }
+    const pool = manager.get(params.database);
+    return jsonResponse({ data: listMigrations(pool) });
   });
 
   router.post("/api/admin/:database/migrations/up", async (req, params) => {
@@ -55,8 +50,7 @@ export function registerMigrationRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to apply migrations",
       }));
-      const message = err instanceof Error ? err.message : "Failed to apply migrations";
-      return errorResponse("APPLY_MIGRATIONS_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 
@@ -89,8 +83,7 @@ export function registerMigrationRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to rollback migration",
       }));
-      const message = err instanceof Error ? err.message : "Failed to rollback migration";
-      return errorResponse("ROLLBACK_MIGRATION_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 }

@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { createView, listViews, getView, queryView, dropView } from "../admin/views";
-import { jsonResponse, errorResponse, logAuditEvent, auditFromRequest } from "../server";
+import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 
 export function registerViewRoutes(
@@ -42,8 +42,7 @@ export function registerViewRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to create view",
       }));
-      const message = err instanceof Error ? err.message : "Failed to create view";
-      return errorResponse("CREATE_VIEW_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 
@@ -53,13 +52,8 @@ export function registerViewRoutes(
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    try {
-      const pool = manager.get(params.database);
-      return jsonResponse({ data: listViews(pool) });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to list views";
-      return errorResponse("LIST_VIEWS_ERROR", message, (err as { status?: number }).status || 500);
-    }
+    const pool = manager.get(params.database);
+    return jsonResponse({ data: listViews(pool) });
   });
 
   router.get("/api/admin/:database/views/:name", async (req, params) => {
@@ -68,27 +62,22 @@ export function registerViewRoutes(
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    try {
-      const url = new URL(req.url);
-      const pool = manager.get(params.database);
-      const isQuery = url.searchParams.get("query") === "true";
-      if (isQuery) {
-        const options: { filter?: Record<string,unknown>; sort?: string; direction?: "asc"|"desc"; limit?: number; offset?: number } = {};
-        for (const [key, value] of url.searchParams.entries()) {
-          if (key === "query") continue;
-          if (key === "sort") options.sort = value;
-          else if (key === "direction") options.direction = value as "asc"|"desc";
-          else if (key === "limit") options.limit = parseInt(value, 10);
-          else if (key === "offset") options.offset = parseInt(value, 10);
-          else { if (!options.filter) options.filter = {}; options.filter[key] = value; }
-        }
-        return jsonResponse({ data: queryView(pool, params.name, options) });
+    const url = new URL(req.url);
+    const pool = manager.get(params.database);
+    const isQuery = url.searchParams.get("query") === "true";
+    if (isQuery) {
+      const options: { filter?: Record<string,unknown>; sort?: string; direction?: "asc"|"desc"; limit?: number; offset?: number } = {};
+      for (const [key, value] of url.searchParams.entries()) {
+        if (key === "query") continue;
+        if (key === "sort") options.sort = value;
+        else if (key === "direction") options.direction = value as "asc"|"desc";
+        else if (key === "limit") options.limit = parseInt(value, 10);
+        else if (key === "offset") options.offset = parseInt(value, 10);
+        else { if (!options.filter) options.filter = {}; options.filter[key] = value; }
       }
-      return jsonResponse({ data: getView(pool, params.name) });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to get view";
-      return errorResponse("GET_VIEW_ERROR", message, (err as { status?: number }).status || 500);
+      return jsonResponse({ data: queryView(pool, params.name, options) });
     }
+    return jsonResponse({ data: getView(pool, params.name) });
   });
 
   router.delete("/api/admin/:database/views/:name", async (req, params) => {
@@ -120,8 +109,7 @@ export function registerViewRoutes(
         success: false,
         error: err instanceof Error ? err.message : "Failed to drop view",
       }));
-      const message = err instanceof Error ? err.message : "Failed to drop view";
-      return errorResponse("DROP_VIEW_ERROR", message, (err as { status?: number }).status || 500);
+      return safeErrorResponse(err);
     }
   });
 }
