@@ -54,7 +54,7 @@ export async function authenticateRequest(
         principalId: ctx.keyId,
         apiKey: ctx,
         isApiKey: true,
-        isAdmin: true,
+        isAdmin: (ctx.permissions.operations ?? []).includes("admin"),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Invalid API key";

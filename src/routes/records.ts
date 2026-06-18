@@ -176,11 +176,25 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
     const body = await req.json();
     if (!Array.isArray(body)) return errorResponse("VALIDATION", "Request body must be an array of operations.", 400);
     const pool = manager.get(params.database);
+
+    // Pre-fetch full records for delete operations so notifications carry complete data
+    const deleteRecords: Map<string, Record<string, unknown>> = new Map();
+    for (const op of body) {
+      if (op.action === "delete" && op.id) {
+        try {
+          deleteRecords.set(op.id, getRecord(pool, params.collection, op.id, auth));
+        } catch {
+          // Record does not exist; batchRecords will handle the error
+        }
+      }
+    }
+
     const result = batchRecords(pool, params.collection, body, auth);
 
     for (const op of body) {
       if (op.action === "delete" && op.id) {
-        notifyRecordChange("delete", params.database, params.collection, { id: op.id }, undefined, pool, principalId(auth));
+        const deleted = deleteRecords.get(op.id) || { id: op.id };
+        notifyRecordChange("delete", params.database, params.collection, deleted, undefined, pool, principalId(auth));
       } else if (op.action === "create") {
         notifyRecordChange("create", params.database, params.collection, { id: "batch" }, undefined, pool, principalId(auth));
       }

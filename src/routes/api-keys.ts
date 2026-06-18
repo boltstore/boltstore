@@ -23,14 +23,15 @@ export function registerApiKeyRoutes(
   authConfig: AuthConfig
 ): void {
   // POST /api/admin/:database/api-keys — create a new API key
+  // Authenticate against _system because API keys are system-level credentials.
   router.post("/api/admin/:database/api-keys", async (req, params) => {
-    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    const auth = await authenticateRequest(req, manager, "_system", authConfig);
     if (auth instanceof Response) return auth;
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
     try {
-      const pool = manager.get(params.database);
+      const metaPool = manager.getMetaPool();
       const body = await req.json();
       const { name, permissions } = body || {};
 
@@ -38,7 +39,7 @@ export function registerApiKeyRoutes(
         return errorResponse("VALIDATION", "Field 'name' is required.", 400);
       }
 
-      const apiKey = await createApiKey(pool, name, permissions || {});
+      const apiKey = await createApiKey(metaPool, name, permissions || {});
       logAuditEvent(auditFromRequest(req, {
         type: "api_key.create",
         principalId: auth.principalId,
@@ -66,38 +67,38 @@ export function registerApiKeyRoutes(
 
   // GET /api/admin/:database/api-keys — list all API keys (no secrets)
   router.get("/api/admin/:database/api-keys", async (req, params) => {
-    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    const auth = await authenticateRequest(req, manager, "_system", authConfig);
     if (auth instanceof Response) return auth;
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    const pool = manager.get(params.database);
-    const keys = listApiKeys(pool);
+    const metaPool = manager.getMetaPool();
+    const keys = listApiKeys(metaPool);
     return jsonResponse({ data: keys });
   });
 
   // GET /api/admin/:database/api-keys/:id — get a single API key
   router.get("/api/admin/:database/api-keys/:id", async (req, params) => {
-    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    const auth = await authenticateRequest(req, manager, "_system", authConfig);
     if (auth instanceof Response) return auth;
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
-    const pool = manager.get(params.database);
-    const key = getApiKey(pool, params.id);
+    const metaPool = manager.getMetaPool();
+    const key = getApiKey(metaPool, params.id);
     return jsonResponse({ data: key });
   });
 
   // DELETE /api/admin/:database/api-keys/:id — revoke an API key
   router.delete("/api/admin/:database/api-keys/:id", async (req, params) => {
-    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    const auth = await authenticateRequest(req, manager, "_system", authConfig);
     if (auth instanceof Response) return auth;
     const admin = requireAdmin(auth);
     if (admin) return admin;
 
     try {
-      const pool = manager.get(params.database);
-      revokeApiKey(pool, params.id);
+      const metaPool = manager.getMetaPool();
+      revokeApiKey(metaPool, params.id);
       logAuditEvent(auditFromRequest(req, {
         type: "api_key.revoke",
         principalId: auth.principalId,
