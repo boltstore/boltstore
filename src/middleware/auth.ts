@@ -1,7 +1,7 @@
 import { DatabaseManager } from "../db/manager";
 import { verifyAccessToken, type AuthConfig } from "../auth";
 export type { AuthConfig } from "../auth";
-import { verifyApiKey, type ApiKeyContext } from "../admin/api-keys";
+import { verifyApiKey, apiKeyAllows, type ApiKeyContext, type ApiKeyOperation } from "../admin/api-keys";
 
 export interface AuthContext {
   principalId: string;
@@ -48,13 +48,27 @@ export async function authenticateRequest(
 
   if (apiKey) {
     try {
-      // Admin API keys are always stored in the system meta database
+      // All API keys are stored in the system meta database
       const ctx = await verifyApiKey(manager.getMetaPool(), apiKey);
+
+      // For scoped keys, verify the target database is in the allowed list
+      if (ctx.permissions.role !== "admin") {
+        const allowedDbs = ctx.permissions.allowedDatabases ?? [];
+        if (allowedDbs.length > 0 && !allowedDbs.includes("*") && !allowedDbs.includes(database)) {
+          return new Response(
+            JSON.stringify({
+              error: { code: "FORBIDDEN", message: `API key does not have access to database "${database}".` },
+            }),
+            { status: 403, headers: { "Content-Type": "application/json" } }
+          );
+        }
+      }
+
       return {
         principalId: ctx.keyId,
         apiKey: ctx,
         isApiKey: true,
-        isAdmin: (ctx.permissions.operations ?? []).includes("admin"),
+        isAdmin: ctx.permissions.role === "admin",
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Invalid API key";
@@ -96,10 +110,9 @@ export async function authenticateRequest(
 }
 
 export function requireAdmin(auth: AuthContext): Response | null {
-  // API keys with admin scope
+  // API keys with admin role
   if (auth.isApiKey) {
-    const ops = auth.apiKey?.permissions.operations ?? [];
-    if (!ops.includes("admin")) {
+    if (auth.apiKey?.permissions.role !== "admin") {
       return new Response(
         JSON.stringify({ error: { code: "FORBIDDEN", message: "Admin access required." } }),
         { status: 403, headers: { "Content-Type": "application/json" } }

@@ -21,13 +21,14 @@ function isSystemCollection(name: string): boolean {
   return name.startsWith("_");
 }
 
-function connectionCanReadCollection(connectionId: string, collection: string): boolean {
+function connectionCanReadCollection(connectionId: string, database: string, collection: string): boolean {
   const conn = getConnectionById(connectionId);
   if (!conn) return false;
   if (isSystemCollection(collection) && !conn.isAdmin) return false;
   if (conn.apiKey) {
     return apiKeyAllows(
       { keyId: conn.apiKey.keyId, name: "", permissions: conn.apiKey.permissions },
+      database,
       "read",
       collection,
     );
@@ -92,7 +93,7 @@ export function broadcastEvent(event: RecordEvent, pool?: DatabasePool): void {
     if (sent.has(sub.connectionId)) continue;
     sent.add(sub.connectionId);
 
-    if (!connectionCanReadCollection(sub.connectionId, collection)) continue;
+    if (!connectionCanReadCollection(sub.connectionId, database, collection)) continue;
 
     if (sub.filter && !matchesFilter(record, sub.filter)) continue;
 

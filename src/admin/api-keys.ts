@@ -5,6 +5,10 @@
  * access. Keys are hashed before storage (bcrypt via Bun.password);
  * the raw key is returned only once at creation time.
  *
+ * Two roles exist:
+ *   - "admin" — global access to all databases and operations
+ *   - "scoped" — restricted to specific databases, operations, and collections
+ *
  * Routes live under `/api/admin/api-keys` — admin only.
  *
  * @module boltstore/admin/api-keys
@@ -19,13 +23,21 @@ import { generateSecureId } from "@boltstore/utils";
 // ---------------------------------------------------------------------------
 
 /** Valid operations an API key can be scoped to. */
-export const API_KEY_OPERATIONS = ["read", "create", "update", "delete", "admin"] as const;
+export const API_KEY_OPERATIONS = ["read", "create", "update", "delete"] as const;
 export type ApiKeyOperation = (typeof API_KEY_OPERATIONS)[number];
+
+/** Valid roles for an API key. */
+export const API_KEY_ROLES = ["admin", "scoped"] as const;
+export type ApiKeyRole = (typeof API_KEY_ROLES)[number];
 
 /** Permission set attached to an API key. */
 export interface ApiKeyPermissions {
+  /** Key role: "admin" (global) or "scoped" (restricted). */
+  role: ApiKeyRole;
+  /** Allowed databases (for scoped keys). Ignored for admin keys. */
+  allowedDatabases?: string[];
   /** Allowed operations. An empty/missing list means no operations are allowed. */
-  operations?: ApiKeyOperation[];
+  allowedOperations?: ApiKeyOperation[];
   /** Optional collection allow-list. If omitted, the key can access all collections. */
   collections?: string[];
 }
@@ -76,19 +88,32 @@ export function operationForMethod(method: string): ApiKeyOperation {
   }
 }
 
-/** Check whether an API key context is allowed to perform an operation on a collection. */
+/** Check whether an API key context is allowed to perform an operation on a database/collection. */
 export function apiKeyAllows(
   ctx: ApiKeyContext,
+  database: string,
   operation: ApiKeyOperation,
   collection?: string
 ): boolean {
-  const ops = ctx.permissions.operations ?? [];
-  if (ops.includes("admin")) return true;
+  const perms = ctx.permissions;
+
+  // Admin keys can do everything
+  if (perms.role === "admin") return true;
+
+  // Scoped keys must have the database in their allowed list
+  const dbs = perms.allowedDatabases ?? [];
+  if (dbs.length > 0 && !dbs.includes("*") && !dbs.includes(database)) return false;
+
+  // Check operation
+  const ops = perms.allowedOperations ?? [];
   if (!ops.includes(operation)) return false;
-  const cols = ctx.permissions.collections;
+
+  // Check collection allow-list
+  const cols = perms.collections;
   if (cols && cols.length > 0) {
     if (!collection || !cols.includes(collection)) return false;
   }
+
   return true;
 }
 
@@ -110,9 +135,12 @@ export function bootstrapApiKeyTables(pool: DatabasePool): void {
     CREATE TABLE IF NOT EXISTS _api_keys (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'scoped',
       key_hash TEXT NOT NULL UNIQUE,
       prefix TEXT NOT NULL,
-      permissions_json TEXT NOT NULL DEFAULT '{}',
+      allowed_databases TEXT NOT NULL DEFAULT '[]',
+      allowed_operations TEXT NOT NULL DEFAULT '[]',
+      collections TEXT,
       revoked INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       last_used_at TEXT
@@ -159,7 +187,7 @@ function now(): string {
 export async function createApiKey(
   pool: DatabasePool,
   name: string,
-  permissions: ApiKeyPermissions = {}
+  permissions: ApiKeyPermissions = { role: "scoped" }
 ): Promise<ApiKeyWithSecret> {
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     throw Object.assign(new Error("API key name is required."), { status: 400 });
@@ -168,28 +196,56 @@ export async function createApiKey(
     throw Object.assign(new Error("API key name must be 128 characters or fewer."), { status: 400 });
   }
 
-  // Validate permissions
-  if (permissions.collections) {
-    if (!Array.isArray(permissions.collections)) {
-      throw Object.assign(new Error("permissions.collections must be an array."), { status: 400 });
+  // Validate role
+  const role = permissions.role ?? "scoped";
+  if (!API_KEY_ROLES.includes(role)) {
+    throw Object.assign(
+      new Error(`Invalid role "${role}". Valid roles: ${API_KEY_ROLES.join(", ")}.`),
+      { status: 400 }
+    );
+  }
+
+  // Validate allowed_databases (for scoped keys) — must be dbs_ IDs or "*"
+  if (permissions.allowedDatabases) {
+    if (!Array.isArray(permissions.allowedDatabases)) {
+      throw Object.assign(new Error("allowedDatabases must be an array."), { status: 400 });
     }
-    for (const c of permissions.collections) {
-      if (typeof c !== "string") {
-        throw Object.assign(new Error("permissions.collections entries must be strings."), { status: 400 });
+    for (const db of permissions.allowedDatabases) {
+      if (typeof db !== "string") {
+        throw Object.assign(new Error("allowedDatabases entries must be strings."), { status: 400 });
+      }
+      if (db !== "*" && !db.startsWith("dbs_")) {
+        throw Object.assign(
+          new Error(`Invalid database identifier "${db}". Use database IDs (dbs_ prefix) or "*" for all.`),
+          { status: 400 }
+        );
       }
     }
   }
 
-  if (permissions.operations) {
-    if (!Array.isArray(permissions.operations)) {
-      throw Object.assign(new Error("permissions.operations must be an array."), { status: 400 });
+  // Validate allowed_operations
+  if (permissions.allowedOperations) {
+    if (!Array.isArray(permissions.allowedOperations)) {
+      throw Object.assign(new Error("allowedOperations must be an array."), { status: 400 });
     }
-    for (const op of permissions.operations) {
+    for (const op of permissions.allowedOperations) {
       if (typeof op !== "string" || !API_KEY_OPERATIONS.includes(op as ApiKeyOperation)) {
         throw Object.assign(
           new Error(`Invalid operation "${op}". Valid operations: ${API_KEY_OPERATIONS.join(", ")}.`),
           { status: 400 }
         );
+      }
+    }
+  }
+
+  // Validate collections
+  if (permissions.collections) {
+    if (!Array.isArray(permissions.collections)) {
+      throw Object.assign(new Error("collections must be an array."), { status: 400 });
+    }
+    for (const c of permissions.collections) {
+      if (typeof c !== "string") {
+        throw Object.assign(new Error("collections entries must be strings."), { status: 400 });
       }
     }
   }
@@ -204,9 +260,19 @@ export async function createApiKey(
 
   const db = pool.write();
   db.run(
-    `INSERT INTO _api_keys (id, name, key_hash, prefix, permissions_json, revoked, created_at, last_used_at)
-     VALUES (?, ?, ?, ?, ?, 0, ?, NULL)`,
-    [id, name.trim(), keyHash, prefix, JSON.stringify(permissions), ts]
+    `INSERT INTO _api_keys (id, name, role, key_hash, prefix, allowed_databases, allowed_operations, collections, revoked, created_at, last_used_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL)`,
+    [
+      id,
+      name.trim(),
+      role,
+      keyHash,
+      prefix,
+      JSON.stringify(permissions.allowedDatabases ?? []),
+      JSON.stringify(permissions.allowedOperations ?? []),
+      permissions.collections ? JSON.stringify(permissions.collections) : null,
+      ts,
+    ]
   );
 
   return {
@@ -214,7 +280,12 @@ export async function createApiKey(
     name: name.trim(),
     prefix,
     secret,
-    permissions,
+    permissions: {
+      role,
+      allowedDatabases: permissions.allowedDatabases ?? [],
+      allowedOperations: permissions.allowedOperations ?? [],
+      collections: permissions.collections,
+    },
     revoked: false,
     created_at: ts,
     last_used_at: null,
@@ -231,12 +302,15 @@ export function listApiKeys(pool: DatabasePool): ApiKey[] {
 
   const db = pool.read();
   const rows = db
-    .query("SELECT id, name, prefix, permissions_json, revoked, created_at, last_used_at FROM _api_keys ORDER BY created_at DESC")
+    .query("SELECT id, name, role, prefix, allowed_databases, allowed_operations, collections, revoked, created_at, last_used_at FROM _api_keys ORDER BY created_at DESC")
     .all() as {
       id: string;
       name: string;
+      role: string;
       prefix: string;
-      permissions_json: string;
+      allowed_databases: string;
+      allowed_operations: string;
+      collections: string | null;
       revoked: number;
       created_at: string;
       last_used_at: string | null;
@@ -246,7 +320,12 @@ export function listApiKeys(pool: DatabasePool): ApiKey[] {
     id: row.id,
     name: row.name,
     prefix: row.prefix,
-    permissions: safeParseJson(row.permissions_json),
+    permissions: {
+      role: row.role as ApiKeyRole,
+      allowedDatabases: safeParseJsonArray(row.allowed_databases),
+      allowedOperations: safeParseJsonArray(row.allowed_operations) as ApiKeyOperation[],
+      collections: row.collections ? safeParseJsonArray(row.collections) : undefined,
+    },
     revoked: row.revoked === 1,
     created_at: row.created_at,
     last_used_at: row.last_used_at,
@@ -263,12 +342,15 @@ export function getApiKey(pool: DatabasePool, id: string): ApiKey {
 
   const db = pool.read();
   const row = db
-    .query("SELECT id, name, prefix, permissions_json, revoked, created_at, last_used_at FROM _api_keys WHERE id=?")
+    .query("SELECT id, name, role, prefix, allowed_databases, allowed_operations, collections, revoked, created_at, last_used_at FROM _api_keys WHERE id=?")
     .get(id) as {
       id: string;
       name: string;
+      role: string;
       prefix: string;
-      permissions_json: string;
+      allowed_databases: string;
+      allowed_operations: string;
+      collections: string | null;
       revoked: number;
       created_at: string;
       last_used_at: string | null;
@@ -282,7 +364,12 @@ export function getApiKey(pool: DatabasePool, id: string): ApiKey {
     id: row.id,
     name: row.name,
     prefix: row.prefix,
-    permissions: safeParseJson(row.permissions_json),
+    permissions: {
+      role: row.role as ApiKeyRole,
+      allowedDatabases: safeParseJsonArray(row.allowed_databases),
+      allowedOperations: safeParseJsonArray(row.allowed_operations) as ApiKeyOperation[],
+      collections: row.collections ? safeParseJsonArray(row.collections) : undefined,
+    },
     revoked: row.revoked === 1,
     created_at: row.created_at,
     last_used_at: row.last_used_at,
@@ -338,13 +425,16 @@ export async function verifyApiKey(
 
   const candidates = db
     .query(
-      "SELECT id, name, key_hash, permissions_json, revoked FROM _api_keys WHERE prefix=? AND revoked=0"
+      "SELECT id, name, role, key_hash, allowed_databases, allowed_operations, collections, revoked FROM _api_keys WHERE prefix=? AND revoked=0"
     )
     .all(prefix) as {
       id: string;
       name: string;
+      role: string;
       key_hash: string;
-      permissions_json: string;
+      allowed_databases: string;
+      allowed_operations: string;
+      collections: string | null;
       revoked: number;
     }[];
 
@@ -364,7 +454,12 @@ export async function verifyApiKey(
       return {
         keyId: candidate.id,
         name: candidate.name,
-        permissions: safeParseJson(candidate.permissions_json),
+        permissions: {
+          role: candidate.role as ApiKeyRole,
+          allowedDatabases: safeParseJsonArray(candidate.allowed_databases),
+          allowedOperations: safeParseJsonArray(candidate.allowed_operations) as ApiKeyOperation[],
+          collections: candidate.collections ? safeParseJsonArray(candidate.collections) : undefined,
+        },
       };
     }
   }
@@ -380,6 +475,15 @@ function safeParseJson(json: string): ApiKeyPermissions {
   try {
     return JSON.parse(json) as ApiKeyPermissions;
   } catch {
-    return {};
+    return { role: "scoped" };
+  }
+}
+
+function safeParseJsonArray(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }

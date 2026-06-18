@@ -18,12 +18,13 @@ function isSystemCollection(name?: string): boolean {
   return !!name && name.startsWith("_");
 }
 
-function canSubscribe(data: WsUpgradeData, collection?: string): boolean {
+function canSubscribe(data: WsUpgradeData, database: string, collection?: string): boolean {
   if (!collection) return true;
   if (isSystemCollection(collection) && !data.isAdmin) return false;
   if (data.apiKey) {
     return apiKeyAllows(
       { keyId: data.apiKey.keyId, name: "", permissions: data.apiKey.permissions },
+      database,
       "read",
       collection,
     );
@@ -85,7 +86,7 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
           ws.send(JSON.stringify({ type: "error", code: "NO_DATABASE", message: "No database associated with this connection. Reconnect with ?database=." }));
           break;
         }
-        if (!canSubscribe(data!, subMsg.collection)) {
+        if (!canSubscribe(data!, database, subMsg.collection)) {
           ws.send(JSON.stringify({
             type: "error",
             code: "FORBIDDEN",

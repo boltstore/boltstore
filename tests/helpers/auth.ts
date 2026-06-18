@@ -55,19 +55,29 @@ export async function createUserAndToken(
 
 /** Create a user-scoped API key for record-level routes. */
 export async function createUserApiKey(pool: DatabasePool, collections?: string[]): Promise<string> {
-  const key = await createApiKey(pool, "test-key", { operations: ["read", "create", "update", "delete"], collections });
+  const key = await createApiKey(pool, "test-key", {
+    role: "scoped",
+    allowedDatabases: ["*"],
+    allowedOperations: ["read", "create", "update", "delete"],
+    collections,
+  });
   return key.secret;
 }
 
 /** Create a read-only API key scoped to specific collections. */
 export async function createReadOnlyApiKey(pool: DatabasePool, collections?: string[]): Promise<string> {
-  const key = await createApiKey(pool, "test-readonly-key", { operations: ["read"], collections });
+  const key = await createApiKey(pool, "test-readonly-key", {
+    role: "scoped",
+    allowedDatabases: ["*"],
+    allowedOperations: ["read"],
+    collections,
+  });
   return key.secret;
 }
 
 /** Create an admin API key for global admin routes. */
 export async function createAdminApiKey(pool: DatabasePool): Promise<string> {
-  const key = await createApiKey(pool, "test-admin-key", { operations: ["admin"] });
+  const key = await createApiKey(pool, "test-admin-key", { role: "admin" });
   return key.secret;
 }
 

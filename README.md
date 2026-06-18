@@ -81,12 +81,149 @@ PORT=3000 boltstore serve
 
 ## Authentication
 
-Boltstore supports two authentication methods:
+Boltstore has two credential systems that serve different purposes:
 
-- **JWT tokens** — Issued via `POST /api/:database/auth/login`. Scoped to a single application database. Users created in one app database cannot access another.
-- **API keys** — System-level credentials stored in the meta database (`_boltstore.db`). Created and managed via `/api/admin/:database/api-keys`. API keys are **global credentials** — an admin API key can manage any application database. They are not scoped to a single app database.
+| Feature | JWT Tokens (User Auth) | API Keys (Machine Auth) |
+|---|---|---|
+| **Who uses it** | End users (login via email/password or OAuth) | Services, scripts, CLI tools |
+| **Where stored** | Application database (`_users`, `_tokens` tables) | System meta database (`_api_keys` table) |
+| **Scope** | Scoped to one application database | Global — can access any application database |
+| **Lifetime** | Short-lived access token (15 min) + refresh token (7 days) | Permanent until revoked |
+| **Rotation** | Auto-refreshed by the SDK | Manual — create a new key, revoke the old one |
+| **Rate limiting** | Per-IP, same bucket as unauthenticated | Per-IP (same as other callers) |
+| **RLS bypass** | No — RLS policies apply to all JWT-authenticated requests | Yes — API keys bypass RLS (collection scopes are the enforcement) |
+| **Admin access** | Only if the user exists in the system database | Only if the key has `operations: ["admin"]` |
 
-> **Important:** API keys are system-level credentials. An API key created inside an application database (via the SDK or direct DB access) is not recognized by the system and will be rejected with 401. Always create API keys through the admin API routes, which authenticate against the system database.
+### JWT Tokens (User Authentication)
+
+JWT tokens are issued per application database. A user registered in one app database cannot access another. Each login produces two tokens:
+
+- **Access token** — Short-lived (default 15 minutes). Sent as `Authorization: Bearer <token>` with every request. Contains the user ID, email, and a unique token ID (`jti`) that is tracked in the `_tokens` table for revocation.
+- **Refresh token** — Longer-lived (default 7 days). Used to obtain a new access token without re-entering credentials. Rotated on each use (the old refresh token is revoked).
+
+Both tokens are tracked in the `_tokens` table of the application database. Expired and revoked tokens are cleaned up every 5 minutes by a background task.
+
+Users can update their own profile (email, password) via `PATCH /api/:database/auth/me`. The `_users` table is a system table and is not directly accessible through the records API.
+
+### API Keys (Machine Authentication)
+
+API keys are system-level credentials stored in the system meta database (`_boltstore.db`). They are created and managed via `/api/admin/:database/api-keys`. All API keys live in the `_api_keys` table in the system database, but they come in two distinct roles:
+
+| Role | Access Scope | Use Case |
+|------|-------------|----------|
+| **`admin`** | Global — any database, any operation | Infrastructure automation, CI/CD, cross-app admin tasks |
+| **`scoped`** | Per-database, per-operation | Service-to-service auth for a specific application |
+
+#### Admin Keys
+
+Admin keys have `role: "admin"` and bypass all permission checks. They can access any database and perform any operation (including schema changes, raw SQL, user management, etc.). These should be few in number and tightly controlled — treat them like root credentials.
+
+- `allowed_databases` is ignored (implicitly all databases)
+- `allowed_operations` is ignored (implicitly all operations)
+- Passes `requireAdmin()` checks
+- Bypasses RLS and collection-level scoping
+
+#### Scoped Keys
+
+Scoped keys have `role: "scoped"` and must explicitly declare which databases (by `dbs_` ID) and which operations they are allowed to perform. They are the recommended choice for service-to-service communication within a specific application.
+
+- **`allowed_databases`** — JSON array of database IDs (`dbs_` prefix) the key can access. Example: `["dbs_a1b2c3d4", "dbs_e5f6g7h8"]`. Use `"*"` to allow all databases. If empty, the key cannot access any database.
+- **`allowed_operations`** — JSON array of operations the key can perform. Valid values: `"read"`, `"create"`, `"update"`, `"delete"`. If empty, no operations are allowed.
+- **`collections`** (optional) — JSON array of collection names to further restrict access. If omitted, all collections in the allowed databases are accessible. If present, only the listed collections are accessible.
+- **No RLS** — Scoped keys bypass Row-Level Security. Access is controlled entirely by the database scopes, operations, and collection allow-lists configured on the key.
+
+#### `_api_keys` Table Schema
+
+```sql
+CREATE TABLE IF NOT EXISTS _api_keys (
+  id              TEXT PRIMARY KEY,          -- e.g. "apk_a1b2c3d4"
+  name            TEXT NOT NULL,             -- Human-readable label
+  role            TEXT NOT NULL DEFAULT 'scoped',  -- "admin" | "scoped"
+  key_hash        TEXT NOT NULL UNIQUE,      -- bcrypt hash of the raw secret
+  prefix          TEXT NOT NULL,             -- First 8 chars (e.g. "blt_aBcD")
+  allowed_databases TEXT NOT NULL DEFAULT '[]',  -- JSON array of database IDs (dbs_ prefix)
+  allowed_operations TEXT NOT NULL DEFAULT '[]', -- JSON array of operations
+  collections     TEXT,                      -- Optional JSON array of collection names
+  revoked         INTEGER NOT NULL DEFAULT 0,    -- 0 = active, 1 = revoked
+  created_at      TEXT NOT NULL,             -- ISO-8601
+  last_used_at    TEXT                        -- ISO-8601, updated on each use
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON _api_keys(prefix);
+```
+
+#### Key Properties
+
+- **Prefix-based lookup** — The first 8 characters of the key (`blt_` + 4 random chars) are used as an index prefix for efficient lookup. The full key is hashed with bcrypt before storage.
+- **Secret shown once** — The raw key is returned only at creation time. After that, only the prefix is visible via the API.
+- **Revocable** — Keys can be revoked at any time via `DELETE /api/admin/:database/api-keys/:id`. Revoked keys are immediately rejected.
+- **Permanent** — API keys do not expire. Rotate manually by creating a new key and revoking the old one.
+- **No RLS** — API keys bypass Row-Level Security. Access is controlled entirely by the role, database scopes, and operations configured on the key.
+
+#### Creating an API Key
+
+```bash
+# Create an admin key (global access)
+curl -X POST /api/admin/_system/api-keys \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "CI/CD Deploy Key",
+    "role": "admin"
+  }'
+
+# Create a scoped key (read-only on "dbs_a1b2c3d4" database)
+curl -X POST /api/admin/_system/api-keys \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "MyApp Reader",
+    "role": "scoped",
+    "allowed_databases": ["dbs_a1b2c3d4"],
+    "allowed_operations": ["read"]
+  }'
+
+# Create a scoped key with collection restrictions
+curl -X POST /api/admin/_system/api-keys \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "MyApp Posts Writer",
+    "role": "scoped",
+    "allowed_databases": ["dbs_a1b2c3d4"],
+    "allowed_operations": ["read", "create", "update"],
+    "collections": ["posts"]
+  }'
+```
+
+#### Using an API Key
+
+```bash
+# Via Authorization header (Bearer with blt_ prefix)
+curl -H "Authorization: Bearer blt_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" \
+  /api/myapp/collections/posts/records
+
+# Via X-API-Key header
+curl -H "X-API-Key: blt_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" \
+  /api/myapp/collections/posts/records
+```
+
+> **Important:** API keys are system-level credentials stored in the system meta database (`_boltstore.db`). The `:database` parameter in the admin API key routes is accepted for route consistency but **ignored** — keys are always stored in and verified against the system database. This means a scoped key with `allowed_databases: ["dbs_a1b2c3d4"]` can only access that specific database, but the key itself lives in the system database. Database identifiers must use the `dbs_` prefix (the internal database ID), not the application name.
+
+### Why Tokens Are in Both Databases
+
+The system meta database (`_boltstore.db`) stores:
+- `_databases` — registry of all application databases
+- `_api_keys` — API keys (global credentials)
+
+Each application database stores its own:
+- `_users` — user accounts for that application
+- `_tokens` — JWT token records for session tracking and revocation
+
+This separation means:
+- A user in app A cannot access app B's data, even with a valid JWT
+- API keys are global because they are stored in the system database, not tied to any single app
+- Deleting an application database removes all its users and tokens without affecting other apps or API keys
 
 ## System Tables
 

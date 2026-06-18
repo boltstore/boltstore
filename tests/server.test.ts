@@ -223,7 +223,7 @@ describe("API-key admin auth — system-level enforcement", () => {
     appUserToken = user.token;
     // Create an admin API key inside the app DB (not the system DB)
     const { createApiKey } = await import("../src/admin/api-keys");
-    const appKey = await createApiKey(pool, "app-admin-key", { operations: ["admin"] });
+    const appKey = await createApiKey(pool, "app-admin-key", { role: "admin" });
     appAdminKey = appKey.secret;
   });
 
@@ -231,7 +231,7 @@ describe("API-key admin auth — system-level enforcement", () => {
     const res = await fetch(`http://localhost:${TEST_PORT}/api/admin/apikey_auth_test/api-keys`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${appAdminKey}` },
-      body: JSON.stringify({ name: "should-fail", permissions: {} }),
+      body: JSON.stringify({ name: "should-fail" }),
     });
     // App-level keys are not found in the system meta pool → 401
     expect(res.status).toBe(401);

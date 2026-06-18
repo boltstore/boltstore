@@ -29,12 +29,11 @@ export function registerQueryRoutes(
     // Enforce API-key collection scopes
     if (auth.isApiKey) {
       if (isSystemCollection(collection)) {
-        const ops = auth.apiKey?.permissions.operations ?? [];
-        if (!ops.includes("admin")) {
+        if (auth.apiKey?.permissions.role !== "admin") {
           return errorResponse("FORBIDDEN", "API key cannot query system collections.", 403);
         }
       }
-      if (!apiKeyAllows(auth.apiKey!, "read", collection)) {
+      if (!apiKeyAllows(auth.apiKey!, params.database, "read", collection)) {
         return errorResponse("FORBIDDEN", "API key lacks permission for this collection.", 403);
       }
     }

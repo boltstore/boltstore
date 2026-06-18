@@ -33,13 +33,18 @@ export function registerApiKeyRoutes(
     try {
       const metaPool = manager.getMetaPool();
       const body = await req.json();
-      const { name, permissions } = body || {};
+      const { name, role, allowed_databases, allowed_operations, collections } = body || {};
 
       if (!name || typeof name !== "string") {
         return errorResponse("VALIDATION", "Field 'name' is required.", 400);
       }
 
-      const apiKey = await createApiKey(metaPool, name, permissions || {});
+      const apiKey = await createApiKey(metaPool, name, {
+        role: role || "scoped",
+        allowedDatabases: allowed_databases,
+        allowedOperations: allowed_operations,
+        collections,
+      });
       logAuditEvent(auditFromRequest(req, {
         type: "api_key.create",
         principalId: auth.principalId,
@@ -48,7 +53,7 @@ export function registerApiKeyRoutes(
         action: "create",
         target: apiKey.id,
         success: true,
-        details: { name, permissions: permissions || {} },
+        details: { name, role, allowed_databases, allowed_operations, collections },
       }));
       return jsonResponse({ data: apiKey }, 201);
     } catch (err) {

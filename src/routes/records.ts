@@ -15,7 +15,7 @@ function isSystemCollection(name: string): boolean {
   return name.startsWith("_");
 }
 
-function requireApiKeyCollectionPermission(auth: Awaited<ReturnType<typeof authenticateRequest>>, collection: string, method: string) {
+function requireApiKeyCollectionPermission(auth: Awaited<ReturnType<typeof authenticateRequest>>, database: string, collection: string, method: string) {
   if (auth instanceof Response) return auth;
   // System collections (_users, _tokens, etc.) are only accessible by admins
   if (isSystemCollection(collection)) {
@@ -29,7 +29,7 @@ function requireApiKeyCollectionPermission(auth: Awaited<ReturnType<typeof authe
   }
   if (auth.isApiKey) {
     const op = operationForMethod(method);
-    if (!apiKeyAllows(auth.apiKey!, op, collection)) {
+    if (!apiKeyAllows(auth.apiKey!, database, op, collection)) {
       return new Response(
         JSON.stringify({ error: { code: "FORBIDDEN", message: "API key lacks permission for this collection/operation." } }),
         { status: 403, headers: { "Content-Type": "application/json" } }
@@ -57,7 +57,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
   router.post("/api/:database/collections/:collection/records", async (req, params) => {
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
-    const perm = requireApiKeyCollectionPermission(auth, params.collection, req.method);
+    const perm = requireApiKeyCollectionPermission(auth, params.database, params.collection, req.method);
     if (perm instanceof Response) return perm;
 
     const body = await req.json();
@@ -71,7 +71,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
   router.get("/api/:database/collections/:collection/records", async (req, params) => {
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
-    const perm = requireApiKeyCollectionPermission(auth, params.collection, req.method);
+    const perm = requireApiKeyCollectionPermission(auth, params.database, params.collection, req.method);
     if (perm instanceof Response) return perm;
 
     const url = new URL(req.url);
@@ -107,7 +107,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
   router.get("/api/:database/collections/:collection/records/count", async (req, params) => {
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
-    const perm = requireApiKeyCollectionPermission(auth, params.collection, req.method);
+    const perm = requireApiKeyCollectionPermission(auth, params.database, params.collection, req.method);
     if (perm instanceof Response) return perm;
 
     const url = new URL(req.url);
@@ -125,7 +125,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
   router.get("/api/:database/collections/:collection/records/distinct", async (req, params) => {
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
-    const perm = requireApiKeyCollectionPermission(auth, params.collection, req.method);
+    const perm = requireApiKeyCollectionPermission(auth, params.database, params.collection, req.method);
     if (perm instanceof Response) return perm;
 
     const url = new URL(req.url);
@@ -138,7 +138,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
   router.get("/api/:database/collections/:collection/records/:id", async (req, params) => {
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
-    const perm = requireApiKeyCollectionPermission(auth, params.collection, req.method);
+    const perm = requireApiKeyCollectionPermission(auth, params.database, params.collection, req.method);
     if (perm instanceof Response) return perm;
 
     const pool = manager.get(params.database);
@@ -148,7 +148,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
   router.patch("/api/:database/collections/:collection/records/:id", async (req, params) => {
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
-    const perm = requireApiKeyCollectionPermission(auth, params.collection, req.method);
+    const perm = requireApiKeyCollectionPermission(auth, params.database, params.collection, req.method);
     if (perm instanceof Response) return perm;
 
     const body = await req.json();
@@ -163,7 +163,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
   router.delete("/api/:database/collections/:collection/records/:id", async (req, params) => {
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
-    const perm = requireApiKeyCollectionPermission(auth, params.collection, req.method);
+    const perm = requireApiKeyCollectionPermission(auth, params.database, params.collection, req.method);
     if (perm instanceof Response) return perm;
 
     const url = new URL(req.url);
@@ -184,7 +184,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
   router.post("/api/:database/collections/:collection/records/batch", async (req, params) => {
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
-    const perm = requireApiKeyCollectionPermission(auth, params.collection, req.method);
+    const perm = requireApiKeyCollectionPermission(auth, params.database, params.collection, req.method);
     if (perm instanceof Response) return perm;
 
     const body = await req.json();

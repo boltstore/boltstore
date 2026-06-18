@@ -53,7 +53,7 @@ export async function authenticateWsUpgrade(
       const ctx = await verifyApiKey(manager.getMetaPool(), token);
       return {
         userId: ctx.keyId,
-        isAdmin: (ctx.permissions.operations ?? []).includes("admin"),
+        isAdmin: ctx.permissions.role === "admin",
         database,
         apiKey: buildApiKeyConnectionContext(ctx),
       };

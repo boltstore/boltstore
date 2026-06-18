@@ -32,8 +32,10 @@ beforeEach(() => {
 describe("createApiKey", () => {
   test("creates an API key with full metadata", async () => {
     const key = await createApiKey(pool, "My Service Key", {
+      role: "scoped",
+      allowedDatabases: ["dbs_abc123"],
+      allowedOperations: ["read", "create"],
       collections: ["posts", "comments"],
-      operations: ["read", "create"],
     });
 
     expect(key.id).toStartWith("apk_");
@@ -41,16 +43,25 @@ describe("createApiKey", () => {
     expect(key.prefix).toHaveLength(8);
     expect(key.secret).toStartWith("blt_");
     expect(key.secret.length).toBeGreaterThan(40);
+    expect(key.permissions.role).toBe("scoped");
+    expect(key.permissions.allowedDatabases).toEqual(["dbs_abc123"]);
+    expect(key.permissions.allowedOperations).toEqual(["read", "create"]);
     expect(key.permissions.collections).toEqual(["posts", "comments"]);
-    expect(key.permissions.operations).toEqual(["read", "create"]);
     expect(key.revoked).toBe(false);
     expect(key.created_at).toBeTruthy();
     expect(key.last_used_at).toBeNull();
   });
 
-  test("creates a key with default empty permissions", async () => {
+  test("creates a key with default scoped role and empty permissions", async () => {
     const key = await createApiKey(pool, "Default Key");
-    expect(key.permissions).toEqual({});
+    expect(key.permissions.role).toBe("scoped");
+    expect(key.permissions.allowedDatabases).toEqual([]);
+    expect(key.permissions.allowedOperations).toEqual([]);
+  });
+
+  test("creates an admin key", async () => {
+    const key = await createApiKey(pool, "Admin Key", { role: "admin" });
+    expect(key.permissions.role).toBe("admin");
   });
 
   test("trims whitespace from name", async () => {
@@ -80,10 +91,11 @@ describe("createApiKey", () => {
     }
   });
 
-  test("rejects invalid operation in permissions", async () => {
+  test("rejects invalid operation in allowedOperations", async () => {
     try {
       await createApiKey(pool, "Bad Op", {
-        operations: ["read", "adminish"] as unknown as string[],
+        role: "scoped",
+        allowedOperations: ["read", "adminish"] as unknown as string[],
       });
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
@@ -93,9 +105,60 @@ describe("createApiKey", () => {
     }
   });
 
+  test("rejects invalid role", async () => {
+    try {
+      await createApiKey(pool, "Bad Role", {
+        role: "superadmin" as unknown as string,
+      });
+      expect.unreachable("Should have thrown");
+    } catch (err: unknown) {
+      const e = err as Error & { status?: number };
+      expect(e.message).toContain("Invalid role");
+      expect(e.status).toBe(400);
+    }
+  });
+
+  test("rejects non-array allowedDatabases", async () => {
+    try {
+      await createApiKey(pool, "Bad DBs", {
+        role: "scoped",
+        allowedDatabases: "myapp" as unknown as string[],
+      });
+      expect.unreachable("Should have thrown");
+    } catch (err: unknown) {
+      const e = err as Error & { status?: number };
+      expect(e.message).toContain("must be an array");
+      expect(e.status).toBe(400);
+    }
+  });
+
+  test("rejects non-dbs_ ID in allowedDatabases", async () => {
+    try {
+      await createApiKey(pool, "Bad DB ID", {
+        role: "scoped",
+        allowedDatabases: ["myapp"],
+      });
+      expect.unreachable("Should have thrown");
+    } catch (err: unknown) {
+      const e = err as Error & { status?: number };
+      expect(e.message).toContain("Invalid database identifier");
+      expect(e.status).toBe(400);
+    }
+  });
+
+  test("accepts wildcard in allowedDatabases", async () => {
+    const key = await createApiKey(pool, "Wildcard DB", {
+      role: "scoped",
+      allowedDatabases: ["*"],
+      allowedOperations: ["read"],
+    });
+    expect(key.permissions.allowedDatabases).toEqual(["*"]);
+  });
+
   test("rejects non-array collections", async () => {
     try {
       await createApiKey(pool, "Bad Collections", {
+        role: "scoped",
         collections: "posts" as unknown as string[],
       });
       expect.unreachable("Should have thrown");
@@ -216,22 +279,28 @@ describe("revokeApiKey", () => {
 describe("verifyApiKey", () => {
   test("returns context for valid key", async () => {
     const key = await createApiKey(pool, "Verify Key", {
+      role: "scoped",
+      allowedDatabases: ["dbs_abc123"],
+      allowedOperations: ["read"],
       collections: ["posts"],
-      operations: ["read"],
     });
 
     const ctx = await verifyApiKey(pool, key.secret);
     expect(ctx.keyId).toBe(key.id);
     expect(ctx.name).toBe("Verify Key");
+    expect(ctx.permissions.role).toBe("scoped");
+    expect(ctx.permissions.allowedDatabases).toEqual(["dbs_abc123"]);
+    expect(ctx.permissions.allowedOperations).toEqual(["read"]);
     expect(ctx.permissions.collections).toEqual(["posts"]);
-    expect(ctx.permissions.operations).toEqual(["read"]);
   });
 
   test("returns context for key with no permissions", async () => {
     const key = await createApiKey(pool, "No Perms");
     const ctx = await verifyApiKey(pool, key.secret);
     expect(ctx.keyId).toBe(key.id);
-    expect(ctx.permissions).toEqual({});
+    expect(ctx.permissions.role).toBe("scoped");
+    expect(ctx.permissions.allowedDatabases).toEqual([]);
+    expect(ctx.permissions.allowedOperations).toEqual([]);
   });
 
   test("rejects invalid secret", async () => {
