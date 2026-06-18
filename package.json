@@ -22,7 +22,7 @@
     "prepublish": "bun run build"
   },
   "dependencies": {
-    "@boltstore/utils": "^0.6.0"
+    "@boltstore/utils": "^0.6.1"
   },
   "license": "MIT",
   "repository": {
