@@ -272,13 +272,6 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           }
         }
 
-        // --- Request timeout ---
-        const timeoutPromise = requestTimeoutMs > 0
-          ? new Promise<Response>((_, reject) =>
-              setTimeout(() => reject(new Error("Request timeout")), requestTimeoutMs)
-            )
-          : null;
-
         // --- CORS preflight ---
         if (method === "OPTIONS") {
           const origin = request.headers.get("Origin");
@@ -293,6 +286,13 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           if (wsResult) return wsResult;
           return undefined as unknown as Response;
         }
+
+        // --- Request timeout ---
+        const timeoutPromise = requestTimeoutMs > 0
+          ? new Promise<Response>((_, reject) =>
+              setTimeout(() => reject(new Error("Request timeout")), requestTimeoutMs)
+            )
+          : null;
 
         // --- Route matching ---
         let response: Response;

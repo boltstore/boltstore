@@ -177,7 +177,15 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
     if (!Array.isArray(body)) return errorResponse("VALIDATION", "Request body must be an array of operations.", 400);
     const pool = manager.get(params.database);
     const result = batchRecords(pool, params.collection, body, auth);
-    notifyRecordChange("create", params.database, params.collection, { id: "batch" }, undefined, pool, principalId(auth));
+
+    for (const op of body) {
+      if (op.action === "delete" && op.id) {
+        notifyRecordChange("delete", params.database, params.collection, { id: op.id }, undefined, pool, principalId(auth));
+      } else if (op.action === "create") {
+        notifyRecordChange("create", params.database, params.collection, { id: "batch" }, undefined, pool, principalId(auth));
+      }
+    }
+
     return jsonResponse({ data: result });
   });
 }

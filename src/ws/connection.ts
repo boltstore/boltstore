@@ -15,6 +15,7 @@ export function registerConnection(ws: WebSocket, data: WsUpgradeData): Connecti
     email: data.email,
     database: data.database,
     isAdmin: data.isAdmin,
+    apiKey: data.apiKey,
     connectedAt: Date.now(),
     remoteAddress: data.remoteAddress,
   };

@@ -1,16 +1,34 @@
 import type { Server, ServerWebSocket } from "bun";
 import type { WsUpgradeData, WsMessage, SubscribeMessage, UnsubscribeMessage } from "./types";
-import { createConnectionId, registerConnection, unregisterConnection } from "./connection";
+import { createConnectionId, registerConnection, unregisterConnection, getConnectionById } from "./connection";
 import { addSubscription, removeSubscription, removeAllSubscriptions } from "./subscription";
 import { registerWsForBroadcast, unregisterWsForBroadcast } from "./broadcast";
 import { authenticateWsUpgrade } from "./auth";
 import { DatabaseManager } from "../db/manager";
 import type { AuthConfig } from "../auth";
+import { apiKeyAllows } from "../admin/api-keys";
 import { logger } from "../logger";
 
 export interface WsHandlerConfig {
   manager?: DatabaseManager;
   auth?: AuthConfig;
+}
+
+function isSystemCollection(name?: string): boolean {
+  return !!name && name.startsWith("_");
+}
+
+function canSubscribe(data: WsUpgradeData, collection?: string): boolean {
+  if (!collection) return true;
+  if (isSystemCollection(collection) && !data.isAdmin) return false;
+  if (data.apiKey) {
+    return apiKeyAllows(
+      { keyId: data.apiKey.keyId, name: "", permissions: data.apiKey.permissions },
+      "read",
+      collection,
+    );
+  }
+  return true;
 }
 
 export function createWebSocketHandler(config: WsHandlerConfig) {
@@ -65,6 +83,14 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
         const subMsg = msg as unknown as SubscribeMessage;
         if (!database) {
           ws.send(JSON.stringify({ type: "error", code: "NO_DATABASE", message: "No database associated with this connection. Reconnect with ?database=." }));
+          break;
+        }
+        if (!canSubscribe(data!, subMsg.collection)) {
+          ws.send(JSON.stringify({
+            type: "error",
+            code: "FORBIDDEN",
+            message: `Not allowed to subscribe to collection "${subMsg.collection ?? ""}".`,
+          }));
           break;
         }
         const sub = addSubscription(data!.connectionId, database, subMsg);
@@ -148,6 +174,7 @@ export async function handleWsUpgrade(
       email: authResult.email,
       database: authResult.database,
       isAdmin: authResult.isAdmin,
+      apiKey: authResult.apiKey,
       remoteAddress,
     } satisfies WsUpgradeData,
   });

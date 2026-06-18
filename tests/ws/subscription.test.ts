@@ -2,7 +2,7 @@ import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { createServer } from "../../src/server";
 import { DatabaseManager } from "../../src/db/manager";
 import { mkdirSync, rmSync } from "node:fs";
-import { createUserAndToken, createAdminApiKey, testAuthConfig } from "../helpers/auth";
+import { createUserAndToken, createAdminApiKey, createReadOnlyApiKey, testAuthConfig } from "../helpers/auth";
 
 const TEST_PORT = 9889;
 const TEST_DATA_DIR = "/tmp/boltstore_test_ws_sub";
@@ -94,6 +94,58 @@ function makeMessagingWs(token: string, database?: string): { ws: WebSocket; nex
   return { ws, nextMessage, waitForConnected, close };
 }
 
+describe("WebSocket subscribe authorization", () => {
+  test("non-admin user cannot subscribe to system collection", async () => {
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    await waitForConnected();
+
+    ws.send(JSON.stringify({ type: "subscribe", collection: "_users" }));
+    const msg = await nextMessage() as Record<string, unknown>;
+    expect(msg.type).toBe("error");
+    expect(msg.code).toBe("FORBIDDEN");
+
+    close();
+  });
+
+  test("admin user can subscribe to system collection", async () => {
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(adminApiKey, "sub_test");
+    await waitForConnected();
+
+    ws.send(JSON.stringify({ type: "subscribe", collection: "_users" }));
+    const msg = await nextMessage() as Record<string, unknown>;
+    expect(msg.type).toBe("subscribed");
+    expect(typeof msg.subscriptionId).toBe("string");
+
+    close();
+  });
+
+  test("API key scoped to one collection cannot subscribe to another", async () => {
+    const scopedKey = await createReadOnlyApiKey(manager.getMetaPool(), ["events_test"]);
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(scopedKey, "sub_test");
+    await waitForConnected();
+
+    ws.send(JSON.stringify({ type: "subscribe", collection: "other_collection" }));
+    const msg = await nextMessage() as Record<string, unknown>;
+    expect(msg.type).toBe("error");
+    expect(msg.code).toBe("FORBIDDEN");
+
+    close();
+  });
+
+  test("API key scoped to a collection can subscribe to it", async () => {
+    const scopedKey = await createReadOnlyApiKey(manager.getMetaPool(), ["events_test"]);
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(scopedKey, "sub_test");
+    await waitForConnected();
+
+    ws.send(JSON.stringify({ type: "subscribe", collection: "events_test" }));
+    const msg = await nextMessage() as Record<string, unknown>;
+    expect(msg.type).toBe("subscribed");
+    expect(typeof msg.subscriptionId).toBe("string");
+
+    close();
+  });
+});
+
 describe("WebSocket subscribe/unsubscribe", () => {
   test("subscribe to collection returns subscriptionId", async () => {
     const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
@@ -155,6 +207,69 @@ describe("WebSocket subscribe/unsubscribe", () => {
     const msg = await nextMessage() as Record<string, unknown>;
     expect(msg.type).toBe("subscribed");
     expect(typeof msg.subscriptionId).toBe("string");
+
+    close();
+  });
+});
+
+describe("Realtime event authorization", () => {
+  test("API key does not receive events from unsubscribed collection", async () => {
+    const scopedKey = await createReadOnlyApiKey(manager.getMetaPool(), ["other_collection"]);
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(scopedKey, "sub_test");
+    await waitForConnected();
+
+    ws.send(JSON.stringify({ type: "subscribe", collection: "events_test" }));
+    const subMsg = await nextMessage() as Record<string, unknown>;
+    expect(subMsg.type).toBe("error");
+    expect(subMsg.code).toBe("FORBIDDEN");
+
+    close();
+  });
+
+  test("user does not receive delete event from RLS-protected collection", async () => {
+    // Create a second user
+    const otherUser = await createUserAndToken(manager.get("sub_test"), "other@sub.local");
+
+    // Create a collection with a read RLS rule so users only see their own rows
+    const rlsCreateRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/sub_test/collections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
+      body: JSON.stringify({
+        name: "private_items",
+        columns: [{ name: "title", type: "TEXT" }, { name: "owner_id", type: "TEXT" }],
+        rls: { read: "owner_id = $userId" },
+      }),
+    });
+    expect(rlsCreateRes.status).toBe(201);
+
+    // Listener is user A
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    await waitForConnected();
+    ws.send(JSON.stringify({ type: "subscribe", collection: "private_items" }));
+    await nextMessage();
+
+    // User B creates a record
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/sub_test/collections/private_items/records`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${otherUser.token}` },
+      body: JSON.stringify({ title: "secret", owner_id: otherUser.userId }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+
+    // User B deletes the record
+    const deleteRes = await fetch(`http://localhost:${TEST_PORT}/api/sub_test/collections/private_items/records/${created.data.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${otherUser.token}` },
+    });
+    expect(deleteRes.status).toBe(200);
+
+    // User A should not receive the create or delete event
+    const gotEvent = await Promise.race([
+      nextMessage().then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+    ]);
+    expect(gotEvent).toBe(false);
 
     close();
   });

@@ -8,12 +8,20 @@ export type {
   RecordEvent,
 } from "@boltstore/utils";
 
+import type { ApiKeyPermissions } from "../admin/api-keys";
+
+export interface ApiKeyConnectionContext {
+  keyId: string;
+  permissions: ApiKeyPermissions;
+}
+
 export interface ConnectionInfo {
   connectionId: string;
   userId?: string;
   email?: string;
   database?: string;
   isAdmin: boolean;
+  apiKey?: ApiKeyConnectionContext;
   connectedAt: number;
   remoteAddress?: string;
 }
@@ -24,6 +32,7 @@ export interface WsUpgradeData {
   email?: string;
   database?: string;
   isAdmin: boolean;
+  apiKey?: ApiKeyConnectionContext;
   remoteAddress?: string;
 }
 

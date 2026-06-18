@@ -1,12 +1,21 @@
 import { DatabaseManager } from "../db/manager";
 import { verifyAccessToken, type AuthConfig } from "../auth";
-import { verifyApiKey } from "../admin/api-keys";
+import { verifyApiKey, type ApiKeyContext } from "../admin/api-keys";
+import type { ApiKeyConnectionContext } from "./types";
 
 export interface WsAuthResult {
   userId?: string;
   email?: string;
   isAdmin: boolean;
   database?: string;
+  apiKey?: ApiKeyConnectionContext;
+}
+
+function buildApiKeyConnectionContext(ctx: ApiKeyContext): ApiKeyConnectionContext {
+  return {
+    keyId: ctx.keyId,
+    permissions: ctx.permissions,
+  };
 }
 
 export async function authenticateWsUpgrade(
@@ -35,6 +44,7 @@ export async function authenticateWsUpgrade(
         userId: ctx.keyId,
         isAdmin: (ctx.permissions.operations ?? []).includes("admin"),
         database,
+        apiKey: buildApiKeyConnectionContext(ctx),
       };
     } catch {
       return new Response(

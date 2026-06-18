@@ -54,8 +54,14 @@ export async function createUserAndToken(
 }
 
 /** Create a user-scoped API key for record-level routes. */
-export async function createUserApiKey(pool: DatabasePool): Promise<string> {
-  const key = await createApiKey(pool, "test-key", { operations: ["read", "create", "update", "delete"] });
+export async function createUserApiKey(pool: DatabasePool, collections?: string[]): Promise<string> {
+  const key = await createApiKey(pool, "test-key", { operations: ["read", "create", "update", "delete"], collections });
+  return key.secret;
+}
+
+/** Create a read-only API key scoped to specific collections. */
+export async function createReadOnlyApiKey(pool: DatabasePool, collections?: string[]): Promise<string> {
+  const key = await createApiKey(pool, "test-readonly-key", { operations: ["read"], collections });
   return key.secret;
 }
 
