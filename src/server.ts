@@ -26,6 +26,7 @@ import { registerImportExportRoutes } from "./routes/import-export";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerOAuthRoutes } from "./routes/oauth";
 import { registerApiKeyRoutes } from "./routes/api-keys";
+import { registerEventRoutes } from "./routes/events";
 import { startTokenCleanup, stopTokenCleanup, type AuthConfig } from "./auth";
 import { resolveClientIp } from "./middleware/proxy";
 import { logAuditEvent, type AuditEvent } from "./audit";
@@ -196,6 +197,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
     registerAuthRoutes(router, manager, authCfg);
     registerOAuthRoutes(router, manager, authCfg);
     registerApiKeyRoutes(router, manager, authCfg);
+    registerEventRoutes(router, manager, authCfg);
   }
 
   // --- WebSocket handler ---

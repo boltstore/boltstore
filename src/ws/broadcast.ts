@@ -1,6 +1,7 @@
 import type { RecordEvent, Subscription } from "./types";
 import { getSubscriptionsForCollection, getSubscriptionsForRecord } from "./subscription";
 import { getConnectionById } from "./connection";
+import { broadcastSseEvent } from "./sse";
 
 const wsByConnectionId = new Map<string, WebSocket>();
 
@@ -36,6 +37,8 @@ export function broadcastEvent(event: RecordEvent): void {
       // Send failure — skip
     }
   }
+
+  broadcastSseEvent(event);
 }
 
 function matchesFilter(record: Record<string, unknown>, filter: Record<string, unknown>): boolean {
