@@ -50,6 +50,66 @@ export interface RLSResult {
 const ALLOWED_TOKENS = new Set(["$userId", "$email"]);
 
 // ---------------------------------------------------------------------------
+// In-memory policy cache
+// ---------------------------------------------------------------------------
+
+interface PolicyCacheEntry {
+  read_rule: string | null;
+  write_rule: string | null;
+  fetchedAt: number;
+}
+
+const POLICY_CACHE_TTL_MS = 30_000;
+const policyCache = new WeakMap<DatabasePool, Map<string, PolicyCacheEntry>>();
+
+function getPolicyCache(pool: DatabasePool): Map<string, PolicyCacheEntry> {
+  let cache = policyCache.get(pool);
+  if (!cache) {
+    cache = new Map();
+    policyCache.set(pool, cache);
+  }
+  return cache;
+}
+
+function fetchPolicyRules(pool: DatabasePool, collection: string): PolicyCacheEntry {
+  const db = pool.read();
+  const row = db
+    .query("SELECT read_rule, write_rule FROM _collections WHERE name=?")
+    .get(collection) as { read_rule: string | null; write_rule: string | null } | null;
+
+  if (!row) {
+    return { read_rule: null, write_rule: null, fetchedAt: Date.now() };
+  }
+  return {
+    read_rule: row.read_rule,
+    write_rule: row.write_rule,
+    fetchedAt: Date.now(),
+  };
+}
+
+function getCachedPolicyRules(pool: DatabasePool, collection: string): PolicyCacheEntry {
+  const cache = getPolicyCache(pool);
+  const entry = cache.get(collection);
+  if (entry && Date.now() - entry.fetchedAt < POLICY_CACHE_TTL_MS) {
+    return entry;
+  }
+  const fresh = fetchPolicyRules(pool, collection);
+  cache.set(collection, fresh);
+  return fresh;
+}
+
+/** Invalidate the cached policy for a collection. Called by setRLS(). */
+export function invalidateRLSCache(pool: DatabasePool, collection?: string): void {
+  const cache = policyCache.get(pool);
+  if (!cache) return;
+  if (collection) {
+    cache.delete(collection);
+  } else {
+    cache.clear();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -108,22 +168,10 @@ export function applyRLS(
   operation: "read" | "write",
   context: RLSContext
 ): RLSResult | null {
-  const db = pool.read();
+  const cached = getCachedPolicyRules(pool, collection);
+  const rule = operation === "read" ? cached.read_rule : cached.write_rule;
 
-  // Read the policy rule from _collections metadata
-  const column = operation === "read" ? "read_rule" : "write_rule";
-  const row = db
-    .query(`SELECT ${column} FROM _collections WHERE name=?`)
-    .get(collection) as Record<string, string | null> | null;
-
-  if (!row) {
-    // Collection doesn't exist or isn't in _collections — no RLS
-    return null;
-  }
-
-  const rule = row[column];
   if (!rule || rule.trim() === "") {
-    // No policy configured — open to all
     return null;
   }
 
@@ -173,6 +221,8 @@ export function setRLS(
 
   params.push(collection);
   db.run(`UPDATE _collections SET ${updates.join(", ")} WHERE name=?`, toBindings(params));
+
+  invalidateRLSCache(pool, collection);
 }
 
 /**

@@ -19,6 +19,9 @@ function createRecord(
   const columns = getColumnNames(pool, collection);
   const systemCols = new Set(["id", "created_at", "updated_at"]);
 
+  const rlsCtx = auth ? toRLSContext(auth) : null;
+  const rls = rlsCtx ? applyRLS(pool, collection, "write", rlsCtx) : null;
+
   const id = (data.id as string) || generateId();
   const timestamp = now();
 
@@ -41,8 +44,24 @@ function createRecord(
   return pool.writeTransaction(() => {
     const db = pool.write();
 
+    if (data.id) {
+      let checkSql = `SELECT 1 FROM "${collection}" WHERE id=?`;
+      const checkParams: unknown[] = [data.id];
+      if (rls?.whereClause) {
+        checkSql += ` AND ${rls.whereClause}`;
+        checkParams.push(...rls.params);
+      }
+      const existing = db.query(checkSql).get(...toBindings(checkParams));
+      if (existing) {
+        throw Object.assign(
+          new Error(`Record "${data.id}" already exists in collection "${collection}".`),
+          { status: 409 }
+        );
+      }
+    }
+
     db.run(
-      `INSERT OR REPLACE INTO "${collection}" (${quotedKeys}) VALUES (${placeholders})`,
+      `INSERT INTO "${collection}" (${quotedKeys}) VALUES (${placeholders})`,
       toBindings(values)
     );
 

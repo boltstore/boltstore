@@ -3,6 +3,7 @@ import { DatabaseManager } from "../db/manager";
 import { executeQuery, type QueryParams } from "../query";
 import { jsonResponse, errorResponse } from "../server";
 import { authenticateRequest, type AuthConfig } from "../middleware/auth";
+import { applyRLS, toRLSContext } from "../rls";
 
 export function registerQueryRoutes(
   router: Router,
@@ -26,7 +27,11 @@ export function registerQueryRoutes(
     if (groupBy) queryParams.groupBy = groupBy;
     if (having) queryParams.having = having;
     const pool = manager.get(params.database);
-    const result = executeQuery(pool.read(), collection, queryParams);
+
+    const rlsCtx = toRLSContext(auth);
+    const rls = rlsCtx ? applyRLS(pool, collection, "read", rlsCtx) : null;
+
+    const result = executeQuery(pool.read(), collection, queryParams, undefined, undefined, rls);
     return jsonResponse({ data: result.data, meta: result.meta });
   });
 }

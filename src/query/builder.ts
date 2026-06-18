@@ -4,11 +4,13 @@ import { buildSearchClause } from "./search";
 import { buildFilterExpression } from "./filter-builder";
 import { validateIdentifier } from "@boltstore/utils";
 import { validateAndQuote } from "./filter-builder";
+import type { RLSResult } from "../rls";
 
 export function buildQuery(
   collection: string,
   params: QueryParams,
-  db?: import("bun:sqlite").Database
+  db?: import("bun:sqlite").Database,
+  rls?: RLSResult | null
 ): { sql: string; bindings: unknown[] } {
   validateIdentifier(collection, "collection name");
 
@@ -46,21 +48,38 @@ export function buildQuery(
 
   sql += ` FROM "${collection}"`;
 
-  // --- Full-text search ---
+  // --- WHERE clause ---
+
+  const conditions: string[] = [];
+
+  if (rls?.whereClause) {
+    conditions.push(rls.whereClause);
+    bindings.push(...rls.params);
+  }
 
   if (params.search) {
     const ftsFragment = buildSearchClause(collection, params.search, params.searchFields, db);
     if (ftsFragment.sql) {
-      sql += ` WHERE ${ftsFragment.sql}`;
+      conditions.push(ftsFragment.sql);
       bindings.push(...ftsFragment.params);
     }
   } else if (params.filter) {
-    // --- WHERE clause ---
     const where = buildWhere(params.filter);
     if (where.sql) {
-      sql += ` WHERE ${where.sql}`;
+      conditions.push(where.sql);
       bindings.push(...where.params);
     }
+  }
+
+  if (!isAggregate && params.cursor) {
+    const cursorSortField = params.sort && params.sort.length > 0 ? params.sort[0].split(":")[0] : "created_at";
+    validateIdentifier(cursorSortField, "cursor sort field");
+    conditions.push(`"${cursorSortField}" > ?`);
+    bindings.push(params.cursor);
+  }
+
+  if (conditions.length > 0) {
+    sql += " WHERE " + conditions.join(" AND ");
   }
 
   // --- GROUP BY ---
@@ -92,14 +111,6 @@ export function buildQuery(
   // --- PAGINATION ---
 
   if (!isAggregate) {
-    if (params.cursor) {
-      const cursorSortField = params.sort && params.sort.length > 0 ? params.sort[0].split(":")[0] : "created_at";
-      validateIdentifier(cursorSortField, "cursor sort field");
-      sql += sql.includes(" WHERE ")
-        ? ` AND "${cursorSortField}" > ?`
-        : ` WHERE "${cursorSortField}" > ?`;
-      bindings.push(params.cursor);
-    }
     if (params.limit !== undefined) {
       sql += ` LIMIT ?`;
       bindings.push(params.limit);

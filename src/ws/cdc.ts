@@ -21,7 +21,7 @@ export function notifyRecordChange(
     previous,
   };
 
-  broadcastEvent(recordEvent);
+  broadcastEvent(recordEvent, pool);
 
   if (pool) {
     persistChange(pool, event, collection, record, previous, principalId);

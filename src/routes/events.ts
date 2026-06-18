@@ -25,7 +25,12 @@ export function registerEventRoutes(router: Router, manager: DatabaseManager, au
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
 
-    const { response, id } = createSseResponse();
+    const { response, id } = createSseResponse(
+      params.database,
+      auth.principalId,
+      auth.email,
+      auth.isAdmin
+    );
     return response;
   });
 }

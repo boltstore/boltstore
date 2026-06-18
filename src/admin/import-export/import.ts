@@ -269,7 +269,7 @@ export function importData(
     const colPlaceholders = insertColumns.map(() => "?").join(", ");
     const colNames = insertColumns.map((k) => `"${k}"`).join(", ");
     const insertStmt = writeDb.query(
-      `INSERT OR REPLACE INTO "${collection}" (${colNames}) VALUES (${colPlaceholders})`
+      `INSERT INTO "${collection}" (${colNames}) VALUES (${colPlaceholders})`
     );
 
     for (const record of validRecords) {

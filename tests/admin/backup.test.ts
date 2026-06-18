@@ -9,7 +9,7 @@ import { Database as SQLiteDatabase } from "bun:sqlite";
 import { DatabaseManager } from "../../src/db/manager";
 import { createBackup, listBackups, getBackup, restoreBackup, restoreFromFile } from "../../src/admin/backup";
 import { createCollection } from "../../src/collections";
-import { createRecord, listRecords } from "../../src/records";
+import { createRecord, updateRecord, listRecords } from "../../src/records";
 import { statSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
@@ -210,7 +210,7 @@ describe("restoreBackup", () => {
     const idB = records.find((r) => r.title === "Task B")!.id as string;
 
     createRecord(pool, "entries", { title: "Task C", status: "new" });
-    createRecord(pool, "entries", { id: idA, title: "Task A Modified", status: "done" });
+    updateRecord(pool, "entries", idA, { title: "Task A Modified", status: "done" });
     // Delete one indirectly by verifying we have 3 now
     const beforeRecords = listRecords(pool, "entries");
     expect(beforeRecords).toHaveLength(3);
@@ -331,12 +331,12 @@ describe("Edge Cases", () => {
 
     // Change to version 2
     const recs = listRecords(pool, "cycle_test");
-    createRecord(pool, "cycle_test", { id: recs[0].id, version: 2 });
+    updateRecord(pool, "cycle_test", recs[0].id as string, { version: 2 });
     const bk2 = createBackup(pool, TEST_APP, TEST_DATA_DIR);
 
     // Change to version 3
     const recs2 = listRecords(pool, "cycle_test");
-    createRecord(pool, "cycle_test", { id: recs2[0].id, version: 3 });
+    updateRecord(pool, "cycle_test", recs2[0].id as string, { version: 3 });
 
     // Restore to backup 1
     restoreBackup(manager, TEST_APP, bk1.id);

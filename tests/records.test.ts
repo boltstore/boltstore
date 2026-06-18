@@ -102,19 +102,16 @@ describe("createRecord", () => {
     expect(result.title).toBe("Custom ID task");
   });
 
-  test("upsert — same id overwrites existing record", () => {
+  test("rejects duplicate id on create", () => {
     const first = createRecord(pool, "todos", {
       id: "upsert-1",
       title: "Original title",
     });
 
-    const second = createRecord(pool, "todos", {
+    expect(() => createRecord(pool, "todos", {
       id: "upsert-1",
       title: "Updated title",
-    });
-
-    expect(second.id).toBe("upsert-1");
-    expect(second.title).toBe("Updated title");
+    })).toThrow();
 
     // Verify only one record exists with this id
     const count = countRecords(pool, "todos");

@@ -45,6 +45,21 @@ function batchRecords(
           }
           const data = op.data;
           const id = (data.id as string) || generateId();
+          if (data.id) {
+            let checkSql = `SELECT 1 FROM "${collection}" WHERE id=?`;
+            const checkParams: unknown[] = [data.id];
+            if (rls?.whereClause) {
+              checkSql += ` AND ${rls.whereClause}`;
+              checkParams.push(...rls.params);
+            }
+            const existing = db.query(checkSql).get(...toBindings(checkParams));
+            if (existing) {
+              throw Object.assign(
+                new Error(`Record "${data.id}" already exists in collection "${collection}".`),
+                { status: 409 }
+              );
+            }
+          }
           const record: Record<string, unknown> = {
             id,
             created_at: (data.created_at as string) || timestamp,
@@ -59,7 +74,7 @@ function batchRecords(
           const quotedKeys = keys.map((k) => `"${k}"`).join(", ");
           const values = keys.map((k) => record[k]);
           db.run(
-            `INSERT OR REPLACE INTO "${collection}" (${quotedKeys}) VALUES (${placeholders})`,
+            `INSERT INTO "${collection}" (${quotedKeys}) VALUES (${placeholders})`,
             toBindings(values)
           );
           result.created++;
