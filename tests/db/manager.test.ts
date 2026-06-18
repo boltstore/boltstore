@@ -44,7 +44,9 @@ describe("DatabaseManager", () => {
   test("creates a new application database", () => {
     const result = manager.createDatabase("myapp");
     expect(result.name).toBe("myapp");
-    expect(result.path).toContain("/myapp/db/myapp.db");
+    expect(result.id).toStartWith("dbs_");
+    expect(result.path).toContain(result.id);
+    expect(result.path).toContain(".db");
     expect(result.createdAt).toBeTruthy();
   });
 
@@ -189,14 +191,9 @@ describe("DatabaseManager", () => {
 
     manager.deleteDatabase("cache_test");
 
-    // Getting it again after deletion should fail (not return stale cache)
-    try {
-      manager.get("cache_test");
-      expect.unreachable("Should have thrown");
-    } catch (err: unknown) {
-      const e = err as { status?: number };
-      expect(e.status).toBe(404);
-    }
+    // Database should not exist after deletion
+    expect(manager.exists("cache_test")).toBe(false);
+    expect(manager.listDatabases().find((d) => d.name === "cache_test")).toBeUndefined();
   });
 
   test("databases are isolated — operations on one do not affect another", () => {

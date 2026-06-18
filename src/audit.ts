@@ -10,6 +10,7 @@
 
 import { DatabasePool } from "./db/pool";
 import logger from "./logger";
+import { generateSecureId, ID_PREFIXES } from "@boltstore/utils";
 
 /** Categories of audit events. */
 export type AuditEventType =
@@ -63,6 +64,7 @@ export function bootstrapAuditTables(pool: DatabasePool): void {
   db.run(`
     CREATE TABLE IF NOT EXISTS _audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      log_id TEXT,
       type TEXT NOT NULL,
       principal_id TEXT,
       principal_type TEXT,
@@ -78,6 +80,7 @@ export function bootstrapAuditTables(pool: DatabasePool): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+  try { db.run("ALTER TABLE _audit_log ADD COLUMN log_id TEXT"); } catch {}
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON _audit_log(created_at)
   `);
@@ -112,11 +115,13 @@ export function logAuditEvent(event: AuditEvent, pool?: DatabasePool): void {
     try {
       bootstrapAuditTables(pool);
       const db = pool.write();
+      const logId = generateSecureId(ID_PREFIXES.auditLog);
       db.run(
         `INSERT INTO _audit_log
-         (type, principal_id, principal_type, database, collection, action, target, ip, user_agent, success, details_json, error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (log_id, type, principal_id, principal_type, database, collection, action, target, ip, user_agent, success, details_json, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
+          logId,
           event.type,
           event.principalId ?? null,
           event.principalType ?? null,

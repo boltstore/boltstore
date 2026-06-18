@@ -86,7 +86,7 @@ export function verifyJwt(token: string, secret: string, audience?: string): Jwt
 }
 
 export function generateJti(): string {
-  return generateSecureId("jti");
+  return generateSecureId("tok");
 }
 
 export function unixNow(): number {

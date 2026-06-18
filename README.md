@@ -113,9 +113,8 @@ Without a command argument, the server starts on port 8080. With a command argum
 ### CLI commands
 
 ```bash
-# Start the server
+# Start the server (auto-generates boltstore.yaml if missing)
 bun run boltstore serve
-# or: bun run bolt serve
 
 # Generate a config file (YAML by default)
 bun run boltstore init
@@ -124,7 +123,19 @@ bun run boltstore init
 bun run boltstore init --json
 
 # Create an admin account (CLI-only, interactive prompt)
-bun run boltstore admin init
+bun run boltstore admin
+
+# List applications with their database IDs and paths
+bun run boltstore applications
+
+# Create a new application
+bun run boltstore applications --create myapp
+
+# Rename an application
+bun run boltstore applications --rename myapp "new-name"
+
+# Delete an application (irreversible — requires confirmation)
+bun run boltstore applications --delete myapp
 
 # Run pending migrations
 bun run boltstore migrate --db myapp --dir ./migrations
@@ -133,19 +144,19 @@ bun run boltstore migrate --db myapp --dir ./migrations
 bun run boltstore migrate:rollback --db myapp
 
 # List migration status
-bun run boltstore migrations --db myapp
+bun run boltstore migrate:list --db myapp
 
 # Import data
-bun run boltstore import todos mydata.csv --db myapp --format csv
+bun run boltstore db:import todos mydata.csv --db myapp --format csv
 
 # Export data (prints to stdout)
-bun run boltstore export todos --db myapp --format json
+bun run boltstore db:export todos --db myapp --format json
 
 # Create a backup
-bun run boltstore backup --db myapp --label "pre-deploy"
+bun run boltstore db:backup --db myapp --label "pre-deploy"
 
 # Restore from a backup file
-bun run boltstore restore ./data/backups/myapp-20260101.db --db myapp
+bun run boltstore db:restore ./data/backups/myapp-20260101.db --db myapp
 
 # Check server status
 bun run boltstore status
