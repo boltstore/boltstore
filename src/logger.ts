@@ -119,12 +119,12 @@ async function flushLogs(): Promise<void> {
   logBuffer = [];
   if (batch.length === 0) return;
   flushPromise = new Promise<void>((resolve) => {
-    // Defer actual I/O to next tick to avoid blocking the event loop.
-    setTimeout(() => {
+    // Defer actual I/O to next microtask to avoid blocking the event loop.
+    queueMicrotask(() => {
       writeEntries(batch);
       flushPromise = null;
       resolve();
-    }, 0);
+    });
   });
   return flushPromise;
 }

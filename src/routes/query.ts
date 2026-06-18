@@ -21,6 +21,10 @@ export function registerQueryRoutes(
 
     const { collection, filter, sort, fields, limit, offset, search, aggregate, groupBy, having } = await req.json();
     if (!collection || typeof collection !== "string") return errorResponse("VALIDATION", "Field 'collection' is required.", 400);
+    if (search !== undefined && typeof search !== "string") return errorResponse("VALIDATION", "Field 'search' must be a string.", 400);
+    if (aggregate !== undefined && (typeof aggregate !== "object" || Array.isArray(aggregate))) return errorResponse("VALIDATION", "Field 'aggregate' must be an object with 'function', 'field', and optional 'alias'.", 400);
+    if (aggregate && typeof aggregate.function !== "string") return errorResponse("VALIDATION", "Field 'aggregate.function' is required and must be a string.", 400);
+    if (groupBy !== undefined && typeof groupBy !== "string") return errorResponse("VALIDATION", "Field 'groupBy' must be a string.", 400);
 
     // Enforce API-key collection scopes
     if (auth.isApiKey) {
