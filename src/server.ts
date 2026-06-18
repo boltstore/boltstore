@@ -289,7 +289,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         if (upgradeHeader?.toLowerCase() === "websocket") {
           const wsResult = await handleWsUpgrade(request, server, manager, config.auth || {});
           if (wsResult) return wsResult;
-          return;
+          return undefined as unknown as Response;
         }
 
         // --- Route matching ---

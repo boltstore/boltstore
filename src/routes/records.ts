@@ -5,6 +5,7 @@ import { expandRecords, cascadeDelete } from "../relations";
 import { jsonResponse, errorResponse } from "../server";
 import { authenticateRequest, type AuthConfig } from "../middleware/auth";
 import { apiKeyAllows, operationForMethod } from "../admin/api-keys";
+import { notifyRecordChange } from "../ws/cdc";
 
 function requireApiKeyCollectionPermission(auth: Awaited<ReturnType<typeof authenticateRequest>>, collection: string, method: string) {
   if (auth instanceof Response) return auth;
@@ -44,7 +45,9 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
     const body = await req.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) return errorResponse("VALIDATION", "Request body must be a JSON object.", 400);
     const pool = manager.get(params.database);
-    return jsonResponse({ data: createRecord(pool, params.collection, body, auth) }, 201);
+    const record = createRecord(pool, params.collection, body, auth);
+    notifyRecordChange("create", params.database, params.collection, record);
+    return jsonResponse({ data: record }, 201);
   });
 
   router.get("/api/:database/collections/:collection/records", async (req, params) => {
@@ -133,7 +136,10 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
     const body = await req.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) return errorResponse("VALIDATION", "Request body must be a JSON object.", 400);
     const pool = manager.get(params.database);
-    return jsonResponse({ data: updateRecord(pool, params.collection, params.id, body, auth) });
+    const previous = getRecord(pool, params.collection, params.id, auth);
+    const record = updateRecord(pool, params.collection, params.id, body, auth);
+    notifyRecordChange("update", params.database, params.collection, record, previous);
+    return jsonResponse({ data: record });
   });
 
   router.delete("/api/:database/collections/:collection/records/:id", async (req, params) => {
@@ -145,12 +151,15 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
     const url = new URL(req.url);
     const shouldCascade = url.searchParams.get("cascade") === "true";
     const pool = manager.get(params.database);
+    const record = getRecord(pool, params.collection, params.id, auth);
     if (shouldCascade) {
       const cascadeResult = cascadeDelete(pool, params.collection, params.id, auth);
       deleteRecord(pool, params.collection, params.id, auth);
+      notifyRecordChange("delete", params.database, params.collection, record);
       return jsonResponse({ data: { deleted: true, cascade: cascadeResult.deleted, cascaded: true } });
     }
     deleteRecord(pool, params.collection, params.id, auth);
+    notifyRecordChange("delete", params.database, params.collection, record);
     return jsonResponse({ data: { deleted: true } });
   });
 
@@ -163,6 +172,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
     const body = await req.json();
     if (!Array.isArray(body)) return errorResponse("VALIDATION", "Request body must be an array of operations.", 400);
     const pool = manager.get(params.database);
-    return jsonResponse({ data: batchRecords(pool, params.collection, body, auth) });
+    const result = batchRecords(pool, params.collection, body, auth);
+    notifyRecordChange("create", params.database, params.collection, { id: "batch" });
+    return jsonResponse({ data: result });
   });
 }

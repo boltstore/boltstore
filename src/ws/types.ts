@@ -2,7 +2,10 @@ export type WsMessageType =
   | "ping"
   | "pong"
   | "error"
-  | "connected";
+  | "connected"
+  | "subscribe"
+  | "unsubscribe"
+  | "event";
 
 export interface WsMessage {
   type: WsMessageType;
@@ -16,6 +19,27 @@ export interface WsErrorPayload {
 
 export interface WsConnectedPayload {
   connectionId: string;
+}
+
+export interface SubscribeMessage {
+  type: "subscribe";
+  collection?: string;
+  recordId?: string;
+  filter?: Record<string, unknown>;
+}
+
+export interface UnsubscribeMessage {
+  type: "unsubscribe";
+  subscriptionId: string;
+}
+
+export interface RecordEvent {
+  type: "event";
+  event: "create" | "update" | "delete";
+  collection: string;
+  database: string;
+  record: Record<string, unknown>;
+  previous?: Record<string, unknown>;
 }
 
 export interface ConnectionInfo {
@@ -35,4 +59,14 @@ export interface WsUpgradeData {
   database?: string;
   isAdmin: boolean;
   remoteAddress?: string;
+}
+
+export interface Subscription {
+  id: string;
+  connectionId: string;
+  database: string;
+  collection?: string;
+  recordId?: string;
+  filter?: Record<string, unknown>;
+  createdAt: number;
 }

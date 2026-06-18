@@ -1,13 +1,12 @@
 import type { Server, ServerWebSocket } from "bun";
-import type { WsUpgradeData, WsMessage } from "./types";
-import { createConnectionId, registerConnection, unregisterConnection, getConnection } from "./connection";
+import type { WsUpgradeData, WsMessage, SubscribeMessage, UnsubscribeMessage } from "./types";
+import { createConnectionId, registerConnection, unregisterConnection } from "./connection";
+import { addSubscription, removeSubscription, removeAllSubscriptions } from "./subscription";
+import { registerWsForBroadcast, unregisterWsForBroadcast } from "./broadcast";
 import { authenticateWsUpgrade } from "./auth";
 import { DatabaseManager } from "../db/manager";
 import type { AuthConfig } from "../auth";
 import { logger } from "../logger";
-
-const PING_INTERVAL_MS = 30_000;
-const PONG_TIMEOUT_MS = 10_000;
 
 export interface WsHandlerConfig {
   manager?: DatabaseManager;
@@ -26,6 +25,7 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
       }
 
       registerConnection(ws as unknown as WebSocket, data);
+      registerWsForBroadcast(data.connectionId, ws as unknown as WebSocket);
 
       logger.info(`WebSocket connected: ${data.connectionId}`, {
         request_id: "ws",
@@ -53,10 +53,36 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
         return;
       }
 
+      const data = ws.data;
+      const database = data?.database;
+
       switch (msg.type) {
       case "ping":
         ws.send(JSON.stringify({ type: "pong" }));
         break;
+
+      case "subscribe": {
+        const subMsg = msg as unknown as SubscribeMessage;
+        if (!database) {
+          ws.send(JSON.stringify({ type: "error", code: "NO_DATABASE", message: "No database associated with this connection. Reconnect with ?database=." }));
+          break;
+        }
+        const sub = addSubscription(data!.connectionId, database, subMsg);
+        ws.send(JSON.stringify({ type: "subscribed", subscriptionId: sub.id }));
+        break;
+      }
+
+      case "unsubscribe": {
+        const unsubMsg = msg as unknown as UnsubscribeMessage;
+        const removed = removeSubscription(unsubMsg.subscriptionId);
+        if (removed) {
+          ws.send(JSON.stringify({ type: "unsubscribed", subscriptionId: unsubMsg.subscriptionId }));
+        } else {
+          ws.send(JSON.stringify({ type: "error", code: "SUBSCRIPTION_NOT_FOUND", message: `Subscription "${unsubMsg.subscriptionId}" not found.` }));
+        }
+        break;
+      }
+
       default:
         ws.send(JSON.stringify({ type: "error", code: "UNKNOWN_TYPE", message: `Unknown message type: ${msg.type}` }));
         break;
@@ -67,6 +93,10 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
       const data = ws.data;
       const connectionId = data?.connectionId;
 
+      if (connectionId) {
+        removeAllSubscriptions(connectionId);
+        unregisterWsForBroadcast(connectionId);
+      }
       unregisterConnection(ws as unknown as WebSocket);
 
       logger.info(`WebSocket disconnected: ${connectionId || "unknown"} (code=${code})`, {
