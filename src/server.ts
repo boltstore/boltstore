@@ -30,6 +30,7 @@ import { startTokenCleanup, stopTokenCleanup, type AuthConfig } from "./auth";
 import { resolveClientIp } from "./middleware/proxy";
 import { logAuditEvent, type AuditEvent } from "./audit";
 export { logAuditEvent, type AuditEvent };
+import { createWebSocketHandler, handleWsUpgrade } from "./ws";
 
 export interface ServerConfig {
   port: number;
@@ -197,10 +198,21 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
     registerApiKeyRoutes(router, manager, authCfg);
   }
 
+  // --- WebSocket handler ---
+  const wsHandler = createWebSocketHandler({ manager, auth: config.auth });
+
   // --- Server creation ---
 
-  const server = Bun.serve({
+  const server = Bun.serve<import("./ws/types").WsUpgradeData>({
     port: config.port,
+
+    websocket: {
+      open: wsHandler.open,
+      message: wsHandler.message,
+      close: wsHandler.close,
+      drain: wsHandler.drain,
+    },
+
     async fetch(request: Request): Promise<Response> {
       const requestId = generateRequestId();
       const startTime = performance.now();
@@ -270,6 +282,14 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           const origin = request.headers.get("Origin");
           logger.debug("CORS preflight", logMeta);
           return handlePreflight(origin, corsConfig);
+        }
+
+        // --- WebSocket upgrade ---
+        const upgradeHeader = request.headers.get("Upgrade");
+        if (upgradeHeader?.toLowerCase() === "websocket") {
+          const wsResult = await handleWsUpgrade(request, server, manager, config.auth || {});
+          if (wsResult) return wsResult;
+          return;
         }
 
         // --- Route matching ---
