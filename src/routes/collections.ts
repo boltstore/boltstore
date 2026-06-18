@@ -74,7 +74,11 @@ export function registerCollectionRoutes(
       const pool = manager.get(params.database);
       const result = createCollection(pool, name, columns as ColumnDefinition[], { relations, rls });
       auditCollectionEvent("collection.create", req, auth, params.database, name, true, undefined, { columns });
-      return jsonResponse({ data: result }, 201);
+      const responseData: Record<string, unknown> = { ...result };
+      if (!rls) {
+        responseData.warning = "No Row-Level Security (RLS) rules configured. All authenticated users can read and write every record in this collection. To add RLS, send a PATCH request with an 'rls' field: { \"rls\": { \"read\": \"owner_id = $userId\", \"write\": \"owner_id = $userId\" } }";
+      }
+      return jsonResponse({ data: responseData }, 201);
     } catch (err) {
       auditCollectionEvent("collection.create", req, auth, params.database, "", false, err instanceof Error ? err.message : "Failed to create collection");
       return safeErrorResponse(err);
