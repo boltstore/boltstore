@@ -120,6 +120,13 @@ export class Router {
     return null;
   }
 
+  /**
+   * List all registered routes with their HTTP methods and patterns.
+   */
+  listRoutes(): { method: string; pattern: string }[] {
+    return this.routes.map((r) => ({ method: r.method, pattern: r.pattern }));
+  }
+
   private addRoute(method: string, pattern: string, handler: RouteHandler): void {
     const paramNames: string[] = [];
     const regexStr = pattern.replace(/:([a-zA-Z_]+)/g, (_, name) => {

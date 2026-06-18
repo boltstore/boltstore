@@ -8,18 +8,24 @@ export const HELP = `
  Commands:
    serve                   Start the HTTP server
    init [--json]           Generate a config file (boltstore.yaml by default)
+
    admin                   Create an admin account interactively
+
    applications            List applications with their databases and file paths
    applications --create <name>            Create a new application with database
    applications --rename <database-id> <new-name>  Rename an application
    applications --delete <database-id>    Delete an application (irreversible!)
+
    migrate --db <database-id>             Run pending migrations
    migrate:rollback --db <database-id>    Rollback last migration
    migrate:list --db <database-id>        List migration status
+
    db:import <col> <file> --db <database-id>  Import data into a collection
    db:export <col> --db <database-id>     Export data from a collection (stdout)
    db:backup --db <database-id>           Create a backup snapshot
    db:restore <file> --db <database-id>   Restore from a backup file
+   
+   routes                  List all API routes grouped by access tier
    status                  Display server health and stats
 
  Options:

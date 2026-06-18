@@ -8,6 +8,7 @@ import { migrateCommand, migrateRollbackCommand, migrateListCommand } from "./cl
 import { importCommand, exportCommand } from "./cli/import-export";
 import { backupCommand, restoreCommand } from "./cli/backup";
 import { statusCommand } from "./cli/status";
+import { routesCommand } from "./cli/routes";
 
 const NO_CONFIG_COMMANDS = new Set(["init", "admin", "help", "--help", "-h"]);
 
@@ -74,6 +75,10 @@ export async function runCli(args: string[]): Promise<void> {
 
     case "db:restore":
       await restoreCommand(args);
+      break;
+
+    case "routes":
+      await routesCommand();
       break;
 
     case "status":

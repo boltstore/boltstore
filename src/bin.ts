@@ -22,10 +22,10 @@ import { info, success, error } from "./cli-style";
 const command = process.argv[2];
 
 const CLI_COMMANDS = new Set([
-  "serve", "init", "admin", "applications", "status", "help", "--help", "-h",
-  "migrate", "migrate:rollback", "migrate:list", "migrations",
-  "import", "export", "db:import", "db:export",
-  "backup", "restore", "db:backup", "db:restore",
+  "serve", "init", "admin", "applications", "status", "routes", "help", "--help", "-h",
+  "migrate", "migrate:rollback", "migrate:list",
+  "db:import", "db:export",
+  "db:backup", "db:restore",
 ]);
 
 try {

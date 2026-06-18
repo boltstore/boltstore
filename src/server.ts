@@ -164,10 +164,40 @@ function getRateLimitTier(pathname: string): "admin" | "auth" | "public" {
 }
 
 /**
+ * Create a router with all routes registered. Exported so the CLI can
+ * list routes without starting the server.
+ */
+export function createRouter(config: { manager?: DatabaseManager; auth?: AuthConfig; maxImportRows?: number }): Router {
+  const router = new Router();
+  const manager = config.manager;
+  const authCfg = config.auth || {};
+
+  registerHealthRoutes(router, manager);
+  if (manager) {
+    registerDatabaseRoutes(router, manager, authCfg);
+    registerCollectionRoutes(router, manager, authCfg);
+    registerRecordRoutes(router, manager, authCfg);
+    registerQueryRoutes(router, manager, authCfg);
+    registerAdminQueryRoutes(router, manager, authCfg);
+    registerIndexRoutes(router, manager, authCfg);
+    registerTransactionRoutes(router, manager, authCfg);
+    registerMigrationRoutes(router, manager, authCfg);
+    registerViewRoutes(router, manager, authCfg);
+    registerBackupRoutes(router, manager, authCfg);
+    registerImportExportRoutes(router, manager, authCfg, { maxImportRows: config.maxImportRows ?? 100000 });
+    registerAuthRoutes(router, manager, authCfg);
+    registerOAuthRoutes(router, manager, authCfg);
+    registerApiKeyRoutes(router, manager, authCfg);
+    registerEventRoutes(router, manager, authCfg);
+  }
+  return router;
+}
+
+/**
  * Create and start the Boltstore HTTP server.
  */
 export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve> {
-  const router = new Router();
+  const router = createRouter(config);
   const corsConfig = config.cors || defaultCorsConfig;
   const manager = config.manager;
   const rateLimit = config.rateLimit;
@@ -185,27 +215,6 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
   // Start token cleanup on the meta pool if a manager is present
   if (manager) {
     startTokenCleanup(manager.getMetaPool());
-  }
-
-  // Register all route groups
-  registerHealthRoutes(router, manager);
-  if (manager) {
-    const authCfg = config.auth || {};
-    registerDatabaseRoutes(router, manager, authCfg);
-    registerCollectionRoutes(router, manager, authCfg);
-    registerRecordRoutes(router, manager, authCfg);
-    registerQueryRoutes(router, manager, authCfg);
-    registerAdminQueryRoutes(router, manager, authCfg);
-    registerIndexRoutes(router, manager, authCfg);
-    registerTransactionRoutes(router, manager, authCfg);
-    registerMigrationRoutes(router, manager, authCfg);
-    registerViewRoutes(router, manager, authCfg);
-    registerBackupRoutes(router, manager, authCfg);
-    registerImportExportRoutes(router, manager, authCfg, { maxImportRows });
-    registerAuthRoutes(router, manager, authCfg);
-    registerOAuthRoutes(router, manager, authCfg);
-    registerApiKeyRoutes(router, manager, authCfg);
-    registerEventRoutes(router, manager, authCfg);
   }
 
   // --- WebSocket handler ---
