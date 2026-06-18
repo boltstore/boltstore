@@ -259,13 +259,18 @@ export function getBackup(pool: DatabasePool, backupId: string): BackupInfo {
  */
 export function restoreBackup(
   manager: DatabaseManager,
-  databaseName: string,
+  databaseId: string,
   backupId: string
 ): RestoreResult {
-  validateIdentifier(databaseName, "database name");
+  if (!databaseId.startsWith("dbs_")) {
+    throw Object.assign(
+      new Error(`Database identifier must start with "dbs_". Use the database ID, not the name.`),
+      { status: 400 }
+    );
+  }
 
   // First, get the backup info by reading the live database
-  const pool = manager.get(databaseName);
+  const pool = manager.get(databaseId);
   const backup = getBackup(pool, backupId);
 
   // Verify the backup file exists on disk
@@ -278,22 +283,22 @@ export function restoreBackup(
   }
 
   // Get the database path before closing
-  const dbInfo = manager.listDatabases().find((d) => d.name === databaseName);
+  const dbInfo = manager.listDatabases().find((d) => d.id === databaseId);
   if (!dbInfo) {
-    throw Object.assign(new Error(`Database "${databaseName}" not found.`), { status: 404 });
+    throw Object.assign(new Error(`Database "${databaseId}" not found.`), { status: 404 });
   }
 
   const safeDbPath = safeResolvePath(manager.getDataDir(), dbInfo.path);
 
   // Close the existing pool (drops all connections)
-  manager.closePool(databaseName);
+  manager.closePool(databaseId);
 
   // Copy backup file over the live database file
   try {
     swapDatabaseFile(safeBackupPath, safeDbPath);
   } catch (err) {
     // Try to reopen the original pool on failure
-    manager.get(databaseName);
+    manager.get(databaseId);
     throw Object.assign(
       new Error(`Failed to restore from backup: ${(err as Error).message}`),
       { status: (err as { status?: number }).status || 500 }
@@ -301,10 +306,10 @@ export function restoreBackup(
   }
 
   // Reopen the pool (this will create a fresh DatabasePool at the existing path)
-  manager.get(databaseName);
+  manager.get(databaseId);
 
   return {
-    database: databaseName,
+    database: databaseId,
     backupPath: backup.path,
     restoredAt: new Date().toISOString(),
   };
@@ -318,10 +323,15 @@ export function restoreBackup(
  */
 export function restoreFromFile(
   manager: DatabaseManager,
-  databaseName: string,
+  databaseId: string,
   backupFilePath: string
 ): RestoreResult {
-  validateIdentifier(databaseName, "database name");
+  if (!databaseId.startsWith("dbs_")) {
+    throw Object.assign(
+      new Error(`Database identifier must start with "dbs_". Use the database ID, not the name.`),
+      { status: 400 }
+    );
+  }
 
   // Verify the backup file exists and is inside the data directory
   const safeBackupPath = safeResolvePath(manager.getDataDir(), backupFilePath);
@@ -343,20 +353,20 @@ export function restoreFromFile(
   }
 
   // Get the database path
-  const dbInfo = manager.listDatabases().find((d) => d.name === databaseName);
+  const dbInfo = manager.listDatabases().find((d) => d.id === databaseId);
   if (!dbInfo) {
-    throw Object.assign(new Error(`Database "${databaseName}" not found.`), { status: 404 });
+    throw Object.assign(new Error(`Database "${databaseId}" not found.`), { status: 404 });
   }
   const safeDbPath = safeResolvePath(manager.getDataDir(), dbInfo.path);
 
   // Close the existing pool
-  manager.closePool(databaseName);
+  manager.closePool(databaseId);
 
   // Copy backup file over the live database file
   try {
     swapDatabaseFile(safeBackupPath, safeDbPath);
   } catch (err) {
-    manager.get(databaseName);
+    manager.get(databaseId);
     throw Object.assign(
       new Error(`Failed to restore from file: ${(err as Error).message}`),
       { status: (err as { status?: number }).status || 500 }
@@ -364,10 +374,10 @@ export function restoreFromFile(
   }
 
   // Reopen
-  manager.get(databaseName);
+  manager.get(databaseId);
 
   return {
-    database: databaseName,
+    database: databaseId,
     backupPath: backupFilePath,
     restoredAt: new Date().toISOString(),
   };

@@ -34,17 +34,22 @@ export async function applicationsCommand(args: string[]): Promise<void> {
 
     const renameIdx = args.indexOf("--rename");
     if (renameIdx >= 0) {
-      const appRef = args[renameIdx + 1];
+      const appId = args[renameIdx + 1];
       const newName = args[renameIdx + 2];
-      if (!appRef || !newName) {
-        cliError("Usage: boltstore applications --rename <app-id-or-name> <new-name>");
+      if (!appId || !newName) {
+        cliError("Usage: boltstore applications --rename <database-id> <new-name>");
+        return;
+      }
+
+      if (!appId.startsWith("dbs_")) {
+        cliError("Database identifier must start with 'dbs_'. Use the database ID, not the name.");
         return;
       }
 
       const dbList = manager.listDatabases();
-      const db = dbList.find((d) => d.id === appRef || d.name === appRef);
+      const db = dbList.find((d) => d.id === appId);
       if (!db) {
-        cliError(`Application "${appRef}" not found.`);
+        cliError(`Application "${appId}" not found.`);
         return;
       }
 
@@ -56,16 +61,21 @@ export async function applicationsCommand(args: string[]): Promise<void> {
 
     const deleteIdx = args.indexOf("--delete");
     if (deleteIdx >= 0) {
-      const appRef = args[deleteIdx + 1];
-      if (!appRef) {
-        cliError("Usage: boltstore applications --delete <app-id-or-name>");
+      const appId = args[deleteIdx + 1];
+      if (!appId) {
+        cliError("Usage: boltstore applications --delete <database-id>");
+        return;
+      }
+
+      if (!appId.startsWith("dbs_")) {
+        cliError("Database identifier must start with 'dbs_'. Use the database ID, not the name.");
         return;
       }
 
       const dbList = manager.listDatabases();
-      const db = dbList.find((d) => d.id === appRef || d.name === appRef);
+      const db = dbList.find((d) => d.id === appId);
       if (!db) {
-        cliError(`Application "${appRef}" not found.`);
+        cliError(`Application "${appId}" not found.`);
         return;
       }
 
@@ -86,7 +96,7 @@ export async function applicationsCommand(args: string[]): Promise<void> {
         return;
       }
 
-      manager.deleteDatabase(db.name);
+      manager.deleteDatabase(db.id);
       success(`Application "${db.name}" has been permanently deleted.`);
       return;
     }

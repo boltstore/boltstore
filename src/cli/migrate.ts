@@ -2,21 +2,25 @@ import { DatabaseManager } from "../db/manager";
 import { loadConfig } from "../config";
 import { listMigrations, applyMigrations, rollbackLastMigration } from "../migrations";
 import { info, success, error as cliError, out } from "../cli-style";
-import { deprecateCommand } from "./help";
 
 export async function migrateCommand(args: string[]): Promise<void> {
   const config = await loadConfig();
-  const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+  const dbId = args.includes("--db") ? args[args.indexOf("--db") + 1] : undefined;
+  if (!dbId) {
+    cliError("Usage: boltstore migrate --db <database-id> [--dir <migrations-dir>]");
+    return;
+  }
   const migrationDir = args.includes("--dir") ? args[args.indexOf("--dir") + 1] : "./migrations";
 
   const manager = new DatabaseManager({ dataDir: config.databasePath });
 
   try {
-    if (!manager.exists(dbName)) {
-      manager.createDatabase(dbName);
+    if (!manager.exists(dbId)) {
+      cliError(`Database "${dbId}" not found. Create it via the admin API first.`);
+      return;
     }
 
-    const pool = manager.get(dbName);
+    const pool = manager.get(dbId);
     const result = await applyMigrations(pool, migrationDir);
 
     if (result.applied.length === 0) {
@@ -34,17 +38,21 @@ export async function migrateCommand(args: string[]): Promise<void> {
 
 export async function migrateRollbackCommand(args: string[]): Promise<void> {
   const config = await loadConfig();
-  const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+  const dbId = args.includes("--db") ? args[args.indexOf("--db") + 1] : undefined;
+  if (!dbId) {
+    cliError("Usage: boltstore migrate:rollback --db <database-id>");
+    return;
+  }
 
   const manager = new DatabaseManager({ dataDir: config.databasePath });
 
   try {
-    if (!manager.exists(dbName)) {
-      cliError(`Database "${dbName}" not found.`);
+    if (!manager.exists(dbId)) {
+      cliError(`Database "${dbId}" not found.`);
       return;
     }
 
-    const pool = manager.get(dbName);
+    const pool = manager.get(dbId);
     const result = rollbackLastMigration(pool);
 
     if (result.rolledBack) {
@@ -59,17 +67,21 @@ export async function migrateRollbackCommand(args: string[]): Promise<void> {
 
 export async function migrateListCommand(args: string[]): Promise<void> {
   const config = await loadConfig();
-  const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+  const dbId = args.includes("--db") ? args[args.indexOf("--db") + 1] : undefined;
+  if (!dbId) {
+    cliError("Usage: boltstore migrate:list --db <database-id>");
+    return;
+  }
 
   const manager = new DatabaseManager({ dataDir: config.databasePath });
 
   try {
-    if (!manager.exists(dbName)) {
-      cliError(`Database "${dbName}" not found.`);
+    if (!manager.exists(dbId)) {
+      cliError(`Database "${dbId}" not found.`);
       return;
     }
 
-    const pool = manager.get(dbName);
+    const pool = manager.get(dbId);
     const migrations = listMigrations(pool);
 
     if (migrations.length === 0) {

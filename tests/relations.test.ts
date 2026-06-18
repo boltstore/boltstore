@@ -15,6 +15,7 @@ const TEST_APP = "relapp";
 
 let manager: DatabaseManager;
 let pool: ReturnType<typeof manager.get>;
+let dbId: string;
 
 function cleanup() {
   try { if (manager) manager.close(); } catch {}
@@ -25,8 +26,9 @@ beforeAll(() => {
   cleanup();
   Bun.spawnSync(["mkdir", "-p", TEST_DATA_DIR]);
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
-  manager.createDatabase(TEST_APP);
-  pool = manager.get(TEST_APP);
+  const result = manager.createDatabase(TEST_APP);
+  dbId = result.id;
+  pool = manager.get(dbId);
 
   // Create a parent collection (authors)
   createCollection(pool, "authors", [
@@ -132,7 +134,7 @@ describe("expandRecords", () => {
     // With explicit relation metadata pointing to "users"
     // Need a fresh pool after setRelations modifies metadata in a transaction.
     setRelations(pool, "articles", { owner: { field: "owner", foreignCollection: "users" } });
-    pool = manager.get(TEST_APP);
+    pool = manager.get(dbId);
     const withMeta = expandRecords(pool, "articles", listRecords(pool, "articles"), ["owner"]);
     expect((withMeta[0].owner_expanded as Record<string, unknown>).name).toBe("Carol");
 

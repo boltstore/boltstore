@@ -18,6 +18,7 @@ const TEST_APP = "backuptestapp";
 
 let manager: DatabaseManager;
 let pool: ReturnType<typeof manager.get>;
+let dbId: string;
 
 function cleanup() {
   try { if (manager) manager.close(); } catch {}
@@ -28,15 +29,16 @@ beforeAll(() => {
   cleanup();
   mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
-  manager.createDatabase(TEST_APP);
-  pool = manager.get(TEST_APP);
+  const result = manager.createDatabase(TEST_APP);
+  dbId = result.id;
+  pool = manager.get(dbId);
 });
 
 afterAll(() => cleanup());
 
 beforeEach(() => {
   // After restore tests, the pool may have been closed. Re-get it.
-  pool = manager.get(TEST_APP);
+  pool = manager.get(dbId);
 
   // Clean up backup files from previous tests
   const backupsDir = `${TEST_DATA_DIR}/backuptestapp/backups`;
@@ -221,14 +223,14 @@ describe("restoreBackup", () => {
     expect(beforeRecords).toHaveLength(3);
 
     // Restore from backup
-    const restoreResult = restoreBackup(manager, TEST_APP, backup.id);
+    const restoreResult = restoreBackup(manager, dbId, backup.id);
 
-    expect(restoreResult.database).toBe(TEST_APP);
+    expect(restoreResult.database).toBe(dbId);
     expect(restoreResult.backupPath).toBe(backup.path);
     expect(restoreResult.restoredAt).toBeTruthy();
 
     // Verify data was restored: only original 2 records
-    const pool2 = manager.get(TEST_APP);
+    const pool2 = manager.get(dbId);
     const afterRecords = listRecords(pool2, "entries");
     expect(afterRecords).toHaveLength(2);
     const titles = afterRecords.map((r) => r.title);
@@ -240,7 +242,7 @@ describe("restoreBackup", () => {
 
   test("returns 404 for non-existent backup ID", () => {
     try {
-      restoreBackup(manager, TEST_APP, "bkp_fake");
+      restoreBackup(manager, dbId, "bkp_fake");
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as { status?: number };
@@ -253,7 +255,7 @@ describe("restoreBackup", () => {
     const backups = listBackups(pool);
 
     try {
-      restoreBackup(manager, "ghost_db", backups[0].id);
+      restoreBackup(manager, "dbs_ghost", backups[0].id);
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as { status?: number };
@@ -281,12 +283,12 @@ describe("restoreFromFile", () => {
     createRecord(pool, "docs", { content: "New content" });
 
     // Restore from file path
-    const result = restoreFromFile(manager, TEST_APP, backup.path);
+    const result = restoreFromFile(manager, dbId, backup.path);
 
-    expect(result.database).toBe(TEST_APP);
+    expect(result.database).toBe(dbId);
 
     // Verify only original content
-    const pool2 = manager.get(TEST_APP);
+    const pool2 = manager.get(dbId);
     const afterRecords = listRecords(pool2, "docs");
     expect(afterRecords).toHaveLength(1);
     expect(afterRecords[0].content).toBe("Original content");
@@ -294,7 +296,7 @@ describe("restoreFromFile", () => {
 
   test("returns 404 for non-existent file inside data directory", () => {
     try {
-      restoreFromFile(manager, TEST_APP, `${TEST_DATA_DIR}/nonexistent_backup_12345.db`);
+      restoreFromFile(manager, dbId, `${TEST_DATA_DIR}/nonexistent_backup_12345.db`);
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as { status?: number };
@@ -308,7 +310,7 @@ describe("restoreFromFile", () => {
     Bun.write(fakePath, "not a sqlite database file");
 
     try {
-      restoreFromFile(manager, TEST_APP, fakePath);
+      restoreFromFile(manager, dbId, fakePath);
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as { status?: number };
@@ -344,14 +346,14 @@ describe("Edge Cases", () => {
     updateRecord(pool, "cycle_test", recs2[0].id as string, { version: 3 });
 
     // Restore to backup 1
-    restoreBackup(manager, TEST_APP, bk1.id);
-    const pool1 = manager.get(TEST_APP);
+    restoreBackup(manager, dbId, bk1.id);
+    const pool1 = manager.get(dbId);
     const after1 = listRecords(pool1, "cycle_test");
     expect(after1[0].version).toBe(1);
 
     // Restore to backup 2 using file path (metadata records were lost during first restore)
-    restoreFromFile(manager, TEST_APP, bk2.path);
-    const pool2 = manager.get(TEST_APP);
+    restoreFromFile(manager, dbId, bk2.path);
+    const pool2 = manager.get(dbId);
     const after2 = listRecords(pool2, "cycle_test");
     expect(after2[0].version).toBe(2);
   });
@@ -419,10 +421,10 @@ describe("Cross-platform paths", () => {
 
     // Convert to platform-specific separators and backslashes to test normalization
     const mixedPath = backup.path.replace(/\//g, "\\").replace(/\\/g, "/");
-    const result = restoreFromFile(manager, TEST_APP, mixedPath);
+    const result = restoreFromFile(manager, dbId, mixedPath);
 
-    expect(result.database).toBe(TEST_APP);
-    const restored = manager.get(TEST_APP);
+    expect(result.database).toBe(dbId);
+    const restored = manager.get(dbId);
     const records = listRecords(restored, "mixed_sep_2");
     expect(records).toHaveLength(1);
     expect(records[0].x).toBe("original");
@@ -435,7 +437,7 @@ describe("Cross-platform paths", () => {
     const backup = createBackup(pool, TEST_APP, TEST_DATA_DIR);
     createRecord(pool, "pre_restore_2", { x: "after" });
 
-    restoreBackup(manager, TEST_APP, backup.id);
+    restoreBackup(manager, dbId, backup.id);
 
     const dbInfo = manager.listDatabases().find((d) => d.name === TEST_APP);
     expect(dbInfo).toBeDefined();
@@ -453,8 +455,8 @@ describe("DatabaseManager integration", () => {
     createRecord(pool, "close_test", { x: "persists" });
 
     // Close and reopen
-    manager.closePool(TEST_APP);
-    const reopened = manager.get(TEST_APP);
+    manager.closePool(dbId);
+    const reopened = manager.get(dbId);
 
     // Data should still be there
     const records = listRecords(reopened, "close_test");
@@ -464,8 +466,8 @@ describe("DatabaseManager integration", () => {
 
   test("restore does not affect other databases' connections", () => {
     // Create a second database
-    manager.createDatabase(TEST_APP + "_other");
-    const otherPool = manager.get(TEST_APP + "_other");
+    const { id: otherDbId } = manager.createDatabase(TEST_APP + "_other");
+    const otherPool = manager.get(otherDbId);
 
     // Insert data in both databases
     createCollection(pool, "table_a", [{ name: "val", type: "TEXT" }]);
@@ -476,7 +478,7 @@ describe("DatabaseManager integration", () => {
 
     // Backup and restore the first database
     const bk = createBackup(pool, TEST_APP, TEST_DATA_DIR);
-    restoreBackup(manager, TEST_APP, bk.id);
+    restoreBackup(manager, dbId, bk.id);
 
     // The other database should still have its connection and data
     const otherRecords = listRecords(otherPool, "table_b");
@@ -484,7 +486,7 @@ describe("DatabaseManager integration", () => {
     expect(otherRecords[0].val).toBe("app_b");
 
     // Cleanup second database
-    manager.deleteDatabase(TEST_APP + "_other");
+    manager.deleteDatabase(otherDbId);
   });
 
   test("closePool is idempotent", () => {
@@ -492,11 +494,11 @@ describe("DatabaseManager integration", () => {
     manager.closePool("not_loaded_db");
 
     // Should not throw if called twice
-    manager.closePool(TEST_APP);
-    manager.closePool(TEST_APP);
+    manager.closePool(dbId);
+    manager.closePool(dbId);
 
     // Re-get should work after close
-    const reopened = manager.get(TEST_APP);
+    const reopened = manager.get(dbId);
     expect(reopened).toBeTruthy();
   });
 });

@@ -24,8 +24,8 @@ beforeAll(() => {
   cleanup();
   mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
-  manager.createDatabase(TEST_APP);
-  pool = manager.get(TEST_APP);
+  const { id: dbId } = manager.createDatabase(TEST_APP);
+  pool = manager.get(dbId);
 });
 
 afterAll(() => cleanup());

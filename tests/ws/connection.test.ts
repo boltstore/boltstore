@@ -10,6 +10,7 @@ let server: ReturnType<typeof Bun.serve>;
 let manager: DatabaseManager;
 let userToken: string;
 let adminApiKey: string;
+let wsTestId: string;
 
 function cleanup() {
   try { if (manager) manager.close(); } catch {}
@@ -20,8 +21,9 @@ beforeAll(async () => {
   cleanup();
   mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
-  manager.createDatabase("ws_test");
-  const pool = manager.get("ws_test");
+  const result = manager.createDatabase("ws_test");
+  wsTestId = result.id;
+  const pool = manager.get(wsTestId);
   const user = await createUserAndToken(pool, "wsuser@test.local");
   userToken = user.token;
   adminApiKey = await createAdminApiKey(manager.getMetaPool());
@@ -51,7 +53,7 @@ describe("WebSocket connection lifecycle", () => {
   });
 
   test("accepts connection with valid JWT token", async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=ws_test`);
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=${wsTestId}`);
     const connected = new Promise<void>((resolve, reject) => {
       ws.onopen = () => resolve();
       ws.onerror = () => reject(new Error("Connection failed"));
@@ -73,7 +75,7 @@ describe("WebSocket connection lifecycle", () => {
   });
 
   test("receives connected message on open", async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=ws_test`);
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=${wsTestId}`);
     const msg = await new Promise<string>((resolve, reject) => {
       ws.onmessage = (e) => resolve(e.data as string);
       ws.onerror = () => reject(new Error("Connection failed"));
@@ -89,7 +91,7 @@ describe("WebSocket connection lifecycle", () => {
 
 describe("WebSocket ping/pong", () => {
   test("responds to ping with pong", async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=ws_test`);
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=${wsTestId}`);
 
     // Wait for connected message first
     await new Promise<void>((resolve, reject) => {
@@ -110,7 +112,7 @@ describe("WebSocket ping/pong", () => {
   });
 
   test("rejects unknown message type", async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=ws_test`);
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=${wsTestId}`);
 
     await new Promise<void>((resolve, reject) => {
       ws.onmessage = () => resolve();
@@ -131,7 +133,7 @@ describe("WebSocket ping/pong", () => {
   });
 
   test("rejects invalid JSON message", async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=ws_test`);
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=${wsTestId}`);
 
     await new Promise<void>((resolve, reject) => {
       ws.onmessage = () => resolve();

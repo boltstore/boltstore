@@ -89,7 +89,7 @@ describe("GET /api/admin/databases", () => {
   });
 
   test("returns created databases", async () => {
-    manager.createDatabase("servertest");
+    const { id: serverTestId } = manager.createDatabase("servertest");
 
     const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`, {
       headers: authHeaders,
@@ -99,7 +99,7 @@ describe("GET /api/admin/databases", () => {
     expect(body.data.length).toBe(1);
     expect(body.data[0].name).toBe("servertest");
 
-    manager.deleteDatabase("servertest");
+    manager.deleteDatabase(serverTestId);
   });
 });
 
@@ -115,11 +115,11 @@ describe("POST /api/admin/databases", () => {
     expect(body.data.name).toBe("integration_test");
     expect(body.data.createdAt).toBeTruthy();
 
-    manager.deleteDatabase("integration_test");
+    manager.deleteDatabase(body.data.id);
   });
 
   test("rejects duplicate with 409", async () => {
-    manager.createDatabase("dupe_test");
+    const { id: dupeTestId } = manager.createDatabase("dupe_test");
 
     const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases`, {
       method: "POST",
@@ -130,7 +130,7 @@ describe("POST /api/admin/databases", () => {
     const body = await response.json();
     expect(body.error.code).toBe("REQUEST_ERROR");
 
-    manager.deleteDatabase("dupe_test");
+    manager.deleteDatabase(dupeTestId);
   });
 
   test("rejects missing name with 400", async () => {
@@ -145,9 +145,9 @@ describe("POST /api/admin/databases", () => {
 
 describe("DELETE /api/admin/databases/:database", () => {
   test("deletes an existing database", async () => {
-    manager.createDatabase("delete_me");
+    const { id: deleteMeId } = manager.createDatabase("delete_me");
 
-    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases/delete_me`, {
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases/${deleteMeId}`, {
       method: "DELETE",
       headers: authHeaders,
     });
@@ -155,11 +155,11 @@ describe("DELETE /api/admin/databases/:database", () => {
     const body = await response.json();
     expect(body.data.deleted).toBe(true);
 
-    expect(manager.exists("delete_me")).toBe(false);
+    expect(manager.exists(deleteMeId)).toBe(false);
   });
 
   test("returns 404 for non-existent database", async () => {
-    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases/ghost`, {
+    const response = await fetch(`http://localhost:${TEST_PORT}/api/admin/databases/dbs_ghost`, {
       method: "DELETE",
       headers: authHeaders,
     });
@@ -217,8 +217,8 @@ describe("API-key admin auth — system-level enforcement", () => {
 
   beforeAll(async () => {
     // Create a second app database and a user in it
-    manager.createDatabase("apikey_auth_test");
-    const pool = manager.get("apikey_auth_test");
+    const { id: apiKeyAuthTestId } = manager.createDatabase("apikey_auth_test");
+    const pool = manager.get(apiKeyAuthTestId);
     const user = await createUserAndToken(pool, "appuser@test.local");
     appUserToken = user.token;
     // Create an admin API key inside the app DB (not the system DB)

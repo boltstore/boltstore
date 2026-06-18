@@ -42,8 +42,8 @@ beforeAll(() => {
   mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
   // Create a test application database
-  manager.createDatabase(TEST_APP);
-  pool = manager.get(TEST_APP);
+  const { id: dbId } = manager.createDatabase(TEST_APP);
+  pool = manager.get(dbId);
 });
 
 afterAll(() => {
@@ -549,8 +549,8 @@ describe("Collection lifecycle", () => {
 describe("Multi-database isolation", () => {
   test("collections in one database do not appear in another", () => {
     // Create a second application
-    manager.createDatabase("secondapp");
-    const pool2 = manager.get("secondapp");
+    const { id: secondDbId } = manager.createDatabase("secondapp");
+    const pool2 = manager.get(secondDbId);
 
     // Create collection in first app
     createCollection(pool, "only_in_testapp", [{ name: "x", type: "TEXT" }]);
@@ -571,6 +571,6 @@ describe("Multi-database isolation", () => {
     }
 
     // Cleanup
-    manager.deleteDatabase("secondapp");
+    manager.deleteDatabase(secondDbId);
   });
 });

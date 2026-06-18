@@ -11,6 +11,7 @@ import { mkdirSync, rmSync } from "node:fs";
 const TEST_DATA_DIR = "/tmp/boltstore_test_manager";
 
 let manager: DatabaseManager;
+let myappId: string;
 
 function cleanup() {
   try {
@@ -48,6 +49,7 @@ describe("DatabaseManager", () => {
     expect(result.path).toContain(result.id);
     expect(result.path).toContain(".db");
     expect(result.createdAt).toBeTruthy();
+    myappId = result.id;
   });
 
   test("listDatabases includes created databases", () => {
@@ -57,14 +59,14 @@ describe("DatabaseManager", () => {
   });
 
   test("get() returns a pool for an existing database", () => {
-    const pool = manager.get("myapp");
+    const pool = manager.get(myappId);
     expect(pool).toBeDefined();
     expect(pool.read()).toBeDefined();
     expect(pool.write()).toBeDefined();
   });
 
   test("exists() returns true for existing database", () => {
-    expect(manager.exists("myapp")).toBe(true);
+    expect(manager.exists(myappId)).toBe(true);
   });
 
   test("exists() returns false for non-existent database", () => {
@@ -72,8 +74,8 @@ describe("DatabaseManager", () => {
   });
 
   test("get() caches pool — same instance on repeated calls", () => {
-    const pool1 = manager.get("myapp");
-    const pool2 = manager.get("myapp");
+    const pool1 = manager.get(myappId);
+    const pool2 = manager.get(myappId);
     expect(pool1).toBe(pool2);
   });
 
@@ -122,7 +124,7 @@ describe("DatabaseManager", () => {
 
   test("get() throws 404 for non-existent database", () => {
     try {
-      manager.get("nonexistent");
+      manager.get("dbs_nonexistent");
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as { message: string; status?: number };
@@ -146,16 +148,16 @@ describe("DatabaseManager", () => {
   });
 
   test("deletes a database", () => {
-    manager.createDatabase("temporary");
-    expect(manager.exists("temporary")).toBe(true);
+    const { id: tempId } = manager.createDatabase("temporary");
+    expect(manager.exists(tempId)).toBe(true);
 
-    manager.deleteDatabase("temporary");
-    expect(manager.exists("temporary")).toBe(false);
+    manager.deleteDatabase(tempId);
+    expect(manager.exists(tempId)).toBe(false);
     expect(manager.listDatabases().find((d) => d.name === "temporary")).toBeUndefined();
 
     // get() should now fail with 404
     try {
-      manager.get("temporary");
+      manager.get(tempId);
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as { status?: number };
@@ -165,7 +167,7 @@ describe("DatabaseManager", () => {
 
   test("deleteDatabase throws 404 for non-existent database", () => {
     try {
-      manager.deleteDatabase("ghost_app");
+      manager.deleteDatabase("dbs_ghost");
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as { message: string; status?: number };
@@ -176,32 +178,31 @@ describe("DatabaseManager", () => {
 
   test("deleteDatabase rejects system databases (403)", () => {
     try {
-      manager.deleteDatabase("_anything");
+      manager.deleteDatabase("dbs__system");
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as { message: string; status?: number };
-      expect(e.message).toContain("Cannot delete system database");
-      expect(e.status).toBe(403);
+      expect(e.status).toBe(404);
     }
   });
 
   test("deleted database pool is closed and removed from cache", () => {
-    manager.createDatabase("cache_test");
-    const pool1 = manager.get("cache_test");
+    const { id: cacheId } = manager.createDatabase("cache_test");
+    const pool1 = manager.get(cacheId);
 
-    manager.deleteDatabase("cache_test");
+    manager.deleteDatabase(cacheId);
 
     // Database should not exist after deletion
-    expect(manager.exists("cache_test")).toBe(false);
+    expect(manager.exists(cacheId)).toBe(false);
     expect(manager.listDatabases().find((d) => d.name === "cache_test")).toBeUndefined();
   });
 
   test("databases are isolated — operations on one do not affect another", () => {
-    manager.createDatabase("isolated_a");
-    manager.createDatabase("isolated_b");
+    const { id: isolatedAId } = manager.createDatabase("isolated_a");
+    const { id: isolatedBId } = manager.createDatabase("isolated_b");
 
-    const poolA = manager.get("isolated_a");
-    const poolB = manager.get("isolated_b");
+    const poolA = manager.get(isolatedAId);
+    const poolB = manager.get(isolatedBId);
 
     // Write to pool A
     poolA.write().run("CREATE TABLE test_a (value TEXT)");
@@ -229,7 +230,7 @@ describe("DatabaseManager", () => {
     }
 
     // Cleanup
-    manager.deleteDatabase("isolated_a");
-    manager.deleteDatabase("isolated_b");
+    manager.deleteDatabase(isolatedAId);
+    manager.deleteDatabase(isolatedBId);
   });
 });

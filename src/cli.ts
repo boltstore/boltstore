@@ -1,5 +1,5 @@
 import { error as cliError, out } from "./cli-style";
-import { HELP, deprecateCommand } from "./cli/help";
+import { HELP } from "./cli/help";
 import { serveCommand } from "./cli/serve";
 import { initCommand } from "./cli/init";
 import { applicationsCommand } from "./cli/applications";
@@ -60,17 +60,7 @@ export async function runCli(args: string[]): Promise<void> {
       await migrateListCommand(args);
       break;
 
-    case "migrations":
-      deprecateCommand("migrations", "migrate:list");
-      await migrateListCommand(args);
-      break;
-
     case "db:import":
-      await importCommand(args);
-      break;
-
-    case "import":
-      deprecateCommand("import", "db:import");
       await importCommand(args);
       break;
 
@@ -78,26 +68,11 @@ export async function runCli(args: string[]): Promise<void> {
       await exportCommand(args);
       break;
 
-    case "export":
-      deprecateCommand("export", "db:export");
-      await exportCommand(args);
-      break;
-
     case "db:backup":
       await backupCommand(args);
       break;
 
-    case "backup":
-      deprecateCommand("backup", "db:backup");
-      await backupCommand(args);
-      break;
-
     case "db:restore":
-      await restoreCommand(args);
-      break;
-
-    case "restore":
-      deprecateCommand("restore", "db:restore");
       await restoreCommand(args);
       break;
 

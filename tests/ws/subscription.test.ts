@@ -10,6 +10,7 @@ let server: ReturnType<typeof Bun.serve>;
 let manager: DatabaseManager;
 let userToken: string;
 let adminApiKey: string;
+let subTestId: string;
 
 function cleanup() {
   try { if (manager) manager.close(); } catch {}
@@ -20,15 +21,16 @@ beforeAll(async () => {
   cleanup();
   mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
-  manager.createDatabase("sub_test");
-  const pool = manager.get("sub_test");
+  const result = manager.createDatabase("sub_test");
+  subTestId = result.id;
+  const pool = manager.get(subTestId);
   const user = await createUserAndToken(pool, "subuser@test.local");
   userToken = user.token;
   adminApiKey = await createAdminApiKey(manager.getMetaPool());
   server = createServer({ port: TEST_PORT, manager, auth: testAuthConfig() });
 
   // Create a test collection for event broadcasting tests
-  const createColRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/sub_test/collections`, {
+  const createColRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/${subTestId}/collections`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
     body: JSON.stringify({ name: "events_test", columns: [{ name: "title", type: "TEXT" }] }),
@@ -96,7 +98,7 @@ function makeMessagingWs(token: string, database?: string): { ws: WebSocket; nex
 
 describe("WebSocket subscribe authorization", () => {
   test("non-admin user cannot subscribe to system collection", async () => {
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "subscribe", collection: "_users" }));
@@ -108,7 +110,7 @@ describe("WebSocket subscribe authorization", () => {
   });
 
   test("admin user can subscribe to system collection", async () => {
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(adminApiKey, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(adminApiKey, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "subscribe", collection: "_users" }));
@@ -121,7 +123,7 @@ describe("WebSocket subscribe authorization", () => {
 
   test("API key scoped to one collection cannot subscribe to another", async () => {
     const scopedKey = await createReadOnlyApiKey(manager.getMetaPool(), ["events_test"]);
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(scopedKey, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(scopedKey, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "subscribe", collection: "other_collection" }));
@@ -134,7 +136,7 @@ describe("WebSocket subscribe authorization", () => {
 
   test("API key scoped to a collection can subscribe to it", async () => {
     const scopedKey = await createReadOnlyApiKey(manager.getMetaPool(), ["events_test"]);
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(scopedKey, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(scopedKey, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "subscribe", collection: "events_test" }));
@@ -148,7 +150,7 @@ describe("WebSocket subscribe authorization", () => {
 
 describe("WebSocket subscribe/unsubscribe", () => {
   test("subscribe to collection returns subscriptionId", async () => {
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "subscribe", collection: "items" }));
@@ -172,7 +174,7 @@ describe("WebSocket subscribe/unsubscribe", () => {
   });
 
   test("unsubscribe removes subscription", async () => {
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "subscribe", collection: "items" }));
@@ -188,7 +190,7 @@ describe("WebSocket subscribe/unsubscribe", () => {
   });
 
   test("unsubscribe with invalid id returns error", async () => {
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "unsubscribe", subscriptionId: "nonexistent" }));
@@ -200,7 +202,7 @@ describe("WebSocket subscribe/unsubscribe", () => {
   });
 
   test("subscribe to specific record", async () => {
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "subscribe", collection: "items", recordId: "rec_123" }));
@@ -215,7 +217,7 @@ describe("WebSocket subscribe/unsubscribe", () => {
 describe("Realtime event authorization", () => {
   test("API key does not receive events from unsubscribed collection", async () => {
     const scopedKey = await createReadOnlyApiKey(manager.getMetaPool(), ["other_collection"]);
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(scopedKey, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(scopedKey, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "subscribe", collection: "events_test" }));
@@ -228,10 +230,10 @@ describe("Realtime event authorization", () => {
 
   test("user does not receive delete event from RLS-protected collection", async () => {
     // Create a second user
-    const otherUser = await createUserAndToken(manager.get("sub_test"), "other@sub.local");
+    const otherUser = await createUserAndToken(manager.get(subTestId), "other@sub.local");
 
     // Create a collection with a read RLS rule so users only see their own rows
-    const rlsCreateRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/sub_test/collections`, {
+    const rlsCreateRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/${subTestId}/collections`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
       body: JSON.stringify({
@@ -243,13 +245,13 @@ describe("Realtime event authorization", () => {
     expect(rlsCreateRes.status).toBe(201);
 
     // Listener is user A
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, subTestId);
     await waitForConnected();
     ws.send(JSON.stringify({ type: "subscribe", collection: "private_items" }));
     await nextMessage();
 
     // User B creates a record
-    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/sub_test/collections/private_items/records`, {
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/${subTestId}/collections/private_items/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${otherUser.token}` },
       body: JSON.stringify({ title: "secret", owner_id: otherUser.userId }),
@@ -258,7 +260,7 @@ describe("Realtime event authorization", () => {
     const created = await createRes.json();
 
     // User B deletes the record
-    const deleteRes = await fetch(`http://localhost:${TEST_PORT}/api/sub_test/collections/private_items/records/${created.data.id}`, {
+    const deleteRes = await fetch(`http://localhost:${TEST_PORT}/api/${subTestId}/collections/private_items/records/${created.data.id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${otherUser.token}` },
     });
@@ -277,7 +279,7 @@ describe("Realtime event authorization", () => {
 
 describe("Realtime event broadcasting", () => {
   test("receives event after record create via REST API", async () => {
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, subTestId);
     await waitForConnected();
 
     // Subscribe to the collection
@@ -285,7 +287,7 @@ describe("Realtime event broadcasting", () => {
     await nextMessage();
 
     // Create a record via REST
-    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/sub_test/collections/events_test/records`, {
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/${subTestId}/collections/events_test/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
       body: JSON.stringify({ title: "hello" }),
@@ -296,21 +298,21 @@ describe("Realtime event broadcasting", () => {
     expect(event.type).toBe("event");
     expect(event.event).toBe("create");
     expect(event.collection).toBe("events_test");
-    expect(event.database).toBe("sub_test");
+    expect(event.database).toBe(subTestId);
     expect((event.record as Record<string, unknown>).title).toBe("hello");
 
     close();
   });
 
   test("receives event after record update via REST API", async () => {
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "subscribe", collection: "events_test" }));
     await nextMessage();
 
     // Create a record first
-    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/sub_test/collections/events_test/records`, {
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/${subTestId}/collections/events_test/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
       body: JSON.stringify({ title: "before" }),
@@ -323,7 +325,7 @@ describe("Realtime event broadcasting", () => {
     await nextMessage();
 
     // Update the record
-    const updateRes = await fetch(`http://localhost:${TEST_PORT}/api/sub_test/collections/events_test/records/${recordId}`, {
+    const updateRes = await fetch(`http://localhost:${TEST_PORT}/api/${subTestId}/collections/events_test/records/${recordId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
       body: JSON.stringify({ title: "after" }),
@@ -342,14 +344,14 @@ describe("Realtime event broadcasting", () => {
   });
 
   test("receives event after record delete via REST API", async () => {
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, subTestId);
     await waitForConnected();
 
     ws.send(JSON.stringify({ type: "subscribe", collection: "events_test" }));
     await nextMessage();
 
     // Create a record
-    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/sub_test/collections/events_test/records`, {
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/${subTestId}/collections/events_test/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
       body: JSON.stringify({ title: "delete_me" }),
@@ -362,7 +364,7 @@ describe("Realtime event broadcasting", () => {
     await nextMessage();
 
     // Delete the record
-    const deleteRes = await fetch(`http://localhost:${TEST_PORT}/api/sub_test/collections/events_test/records/${recordId}`, {
+    const deleteRes = await fetch(`http://localhost:${TEST_PORT}/api/${subTestId}/collections/events_test/records/${recordId}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${userToken}` },
     });
@@ -378,7 +380,7 @@ describe("Realtime event broadcasting", () => {
   });
 
   test("does not receive events for unsubscribed collections", async () => {
-    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, "sub_test");
+    const { ws, nextMessage, waitForConnected, close } = makeMessagingWs(userToken, subTestId);
     await waitForConnected();
 
     // Subscribe to a different collection
@@ -386,7 +388,7 @@ describe("Realtime event broadcasting", () => {
     await nextMessage();
 
     // Create a record in events_test (not subscribed)
-    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/sub_test/collections/events_test/records`, {
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/${subTestId}/collections/events_test/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
       body: JSON.stringify({ title: "should_not_arrive" }),

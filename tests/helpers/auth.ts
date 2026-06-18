@@ -79,14 +79,16 @@ export async function setupTestEnvironment(
   manager: DatabaseManager;
   pool: DatabasePool;
   authHeaders: Record<string, string>;
+  dbId: string;
 }> {
   const manager = new DatabaseManager({ dataDir });
-  manager.createDatabase(appName);
-  const pool = manager.get(appName);
+  const info = manager.createDatabase(appName);
+  const pool = manager.get(info.id);
   const apiKey = await createAdminApiKey(pool);
   return {
     manager,
     pool,
     authHeaders: { Authorization: `Bearer ${apiKey}` },
+    dbId: info.id,
   };
 }

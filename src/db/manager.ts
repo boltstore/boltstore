@@ -96,38 +96,41 @@ export class DatabaseManager {
   }
 
   /**
-   * Resolve a database pool by ID or name.
-   * If the identifier starts with "dbs_", it's treated as an ID; otherwise as a name.
+   * Resolve a database pool by ID. Only accepts dbs_-prefixed database IDs.
    */
-  get(nameOrId: string): DatabasePool {
-    validateIdentifier(nameOrId.replace(/^dbs_/, ""), "database identifier");
-
-    if (isReservedTable(nameOrId)) {
+  get(id: string): DatabasePool {
+    if (!id.startsWith("dbs_") && id !== "_system") {
       throw Object.assign(
-        new Error(`Cannot use reserved name "${nameOrId}" as a database identifier.`),
-        { status: 403 }
+        new Error(`Database identifier must start with "dbs_". Use the database ID, not the name.`),
+        { status: 400 }
       );
     }
 
     // The system meta database is always accessible
-    if (nameOrId === "_system") {
+    if (id === "_system") {
       return this.metaPool;
     }
 
+    if (isReservedTable(id)) {
+      throw Object.assign(
+        new Error(`Cannot use reserved name "${id}" as a database identifier.`),
+        { status: 403 }
+      );
+    }
+
     // Check if already loaded
-    const cached = this.appPools.get(nameOrId);
+    const cached = this.appPools.get(id);
     if (cached) return cached;
 
-    // Look up by ID (dbs_ prefix) or name
+    // Look up by ID
     const metaDb = this.metaPool.read();
-    const isId = nameOrId.startsWith("dbs_");
     const row = metaDb
-      .query(isId ? "SELECT path FROM _databases WHERE id=?" : "SELECT path FROM _databases WHERE name=?")
-      .get(nameOrId) as { path: string } | null;
+      .query("SELECT path FROM _databases WHERE id=?")
+      .get(id) as { path: string } | null;
 
     if (!row) {
       throw Object.assign(
-        new Error(`Database "${nameOrId}" not found. Use POST /api/admin/databases to create it.`),
+        new Error(`Database "${id}" not found. Use POST /api/admin/databases to create it.`),
         { status: 404 }
       );
     }
@@ -135,7 +138,7 @@ export class DatabaseManager {
     // Create the pool
     const parentMetaQueryTimeoutMs = (this.metaPool as unknown as { config?: { queryTimeoutMs?: number } }).config?.queryTimeoutMs ?? 0;
     const pool = new DatabasePool({ path: row.path, queryTimeoutMs: parentMetaQueryTimeoutMs });
-    this.appPools.set(nameOrId, pool);
+    this.appPools.set(id, pool);
     return pool;
   }
 
@@ -203,14 +206,19 @@ export class DatabaseManager {
   }
 
   /**
-   * Delete an application database by ID or name.
+   * Delete an application database by ID.
    */
-  deleteDatabase(nameOrId: string): void {
-    validateIdentifier(nameOrId.replace(/^dbs_/, ""), "database identifier");
-
-    if (nameOrId.startsWith("_")) {
+  deleteDatabase(id: string): void {
+    if (!id.startsWith("dbs_")) {
       throw Object.assign(
-        new Error(`Cannot delete system database "${nameOrId}".`),
+        new Error(`Database identifier must start with "dbs_". Use the database ID, not the name.`),
+        { status: 400 }
+      );
+    }
+
+    if (id.startsWith("_")) {
+      throw Object.assign(
+        new Error(`Cannot delete system database "${id}".`),
         { status: 403 }
       );
     }
@@ -218,30 +226,26 @@ export class DatabaseManager {
     return this.metaPool.writeTransaction(() => {
       const metaDb = this.metaPool.write();
 
-      const isId = nameOrId.startsWith("dbs_");
       const row = metaDb
-        .query(isId ? "SELECT path, name FROM _databases WHERE id=?" : "SELECT path, id FROM _databases WHERE name=?")
-        .get(nameOrId) as { path: string; name?: string; id?: string } | null;
+        .query("SELECT path FROM _databases WHERE id=?")
+        .get(id) as { path: string } | null;
 
       if (!row) {
         throw Object.assign(
-          new Error(`Database "${nameOrId}" not found.`),
+          new Error(`Database "${id}" not found.`),
           { status: 404 }
         );
       }
 
-      // Close and remove the pool if loaded (check both ID and name cache)
-      for (const [key, cached] of this.appPools.entries()) {
-        if (key === nameOrId || key === row.id || (!isId && key === row.name)) {
-          cached.close();
-          this.appPools.delete(key);
-          break;
-        }
+      // Close and remove the pool if loaded
+      const cached = this.appPools.get(id);
+      if (cached) {
+        cached.close();
+        this.appPools.delete(id);
       }
 
       // Remove from metadata
-      const lookupField = isId ? "id" : "name";
-      metaDb.run(`DELETE FROM _databases WHERE ${lookupField}=?`, [nameOrId]);
+      metaDb.run("DELETE FROM _databases WHERE id=?", [id]);
 
       // Remove the app directory
       const dirName = row.path ? row.path.split("/").slice(0, -2).pop() : null;
@@ -279,14 +283,14 @@ export class DatabaseManager {
   }
 
   /**
-   * Check if a database exists by ID or name (metadata check only, no pool created).
+   * Check if a database exists by ID.
    */
-  exists(nameOrId: string): boolean {
+  exists(id: string): boolean {
+    if (!id.startsWith("dbs_")) return false;
     const metaDb = this.metaPool.read();
-    const isId = nameOrId.startsWith("dbs_");
     const row = metaDb
-      .query(isId ? "SELECT 1 FROM _databases WHERE id=?" : "SELECT 1 FROM _databases WHERE name=?")
-      .get(nameOrId);
+      .query("SELECT 1 FROM _databases WHERE id=?")
+      .get(id);
     return row !== null;
   }
 
@@ -305,13 +309,13 @@ export class DatabaseManager {
   }
 
   /**
-   * Close a specific database pool and remove it from the cache.
+   * Close a specific database pool by ID and remove it from the cache.
    */
-  closePool(nameOrId: string): void {
-    const cached = this.appPools.get(nameOrId);
+  closePool(id: string): void {
+    const cached = this.appPools.get(id);
     if (cached) {
       cached.close();
-      this.appPools.delete(nameOrId);
+      this.appPools.delete(id);
     }
   }
 

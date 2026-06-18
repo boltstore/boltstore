@@ -43,8 +43,8 @@ beforeAll(() => {
   cleanup();
   Bun.spawnSync(["mkdir", "-p", TEST_DATA_DIR]);
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
-  manager.createDatabase(TEST_APP);
-  pool = manager.get(TEST_APP);
+  const { id: dbId } = manager.createDatabase(TEST_APP);
+  pool = manager.get(dbId);
 
   // Create a test collection
   createCollection(pool, "todos", [

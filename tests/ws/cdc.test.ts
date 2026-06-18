@@ -10,6 +10,7 @@ let server: ReturnType<typeof Bun.serve>;
 let manager: DatabaseManager;
 let userToken: string;
 let adminApiKey: string;
+let cdcTestId: string;
 
 function cleanup() {
   try { if (manager) manager.close(); } catch {}
@@ -20,15 +21,16 @@ beforeAll(async () => {
   cleanup();
   mkdirSync(TEST_DATA_DIR, { recursive: true });
   manager = new DatabaseManager({ dataDir: TEST_DATA_DIR });
-  manager.createDatabase("cdc_test");
-  const pool = manager.get("cdc_test");
+  const result = manager.createDatabase("cdc_test");
+  cdcTestId = result.id;
+  const pool = manager.get(cdcTestId);
   const user = await createUserAndToken(pool, "cdcuser@test.local");
   userToken = user.token;
   adminApiKey = await createAdminApiKey(manager.getMetaPool());
   server = createServer({ port: TEST_PORT, manager, auth: testAuthConfig() });
 
   // Create a test collection
-  const createColRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/cdc_test/collections`, {
+  const createColRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/${cdcTestId}/collections`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
     body: JSON.stringify({ name: "cdc_items", columns: [{ name: "title", type: "TEXT" }, { name: "count", type: "INTEGER" }] }),
@@ -46,7 +48,7 @@ afterAll(() => {
 
 describe("CDC change log persistence", () => {
   test("changes endpoint returns empty list initially", async () => {
-    const res = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/events/changes`, {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/events/changes`, {
       headers: { Authorization: `Bearer ${userToken}` },
     });
     expect(res.status).toBe(200);
@@ -55,14 +57,14 @@ describe("CDC change log persistence", () => {
   });
 
   test("create record persists a change entry", async () => {
-    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/collections/cdc_items/records`, {
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/collections/cdc_items/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
       body: JSON.stringify({ title: "first", count: 1 }),
     });
     expect(createRes.status).toBe(201);
 
-    const changesRes = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/events/changes`, {
+    const changesRes = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/events/changes`, {
       headers: { Authorization: `Bearer ${userToken}` },
     });
     expect(changesRes.status).toBe(200);
@@ -78,7 +80,7 @@ describe("CDC change log persistence", () => {
   });
 
   test("update record persists a change entry with previous", async () => {
-    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/collections/cdc_items/records`, {
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/collections/cdc_items/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
       body: JSON.stringify({ title: "before_update", count: 10 }),
@@ -86,14 +88,14 @@ describe("CDC change log persistence", () => {
     const created = await createRes.json();
     const recordId = created.data.id;
 
-    const updateRes = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/collections/cdc_items/records/${recordId}`, {
+    const updateRes = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/collections/cdc_items/records/${recordId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
       body: JSON.stringify({ title: "after_update", count: 20 }),
     });
     expect(updateRes.status).toBe(200);
 
-    const changesRes = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/events/changes?collection=cdc_items`, {
+    const changesRes = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/events/changes?collection=cdc_items`, {
       headers: { Authorization: `Bearer ${userToken}` },
     });
     const body = await changesRes.json();
@@ -107,7 +109,7 @@ describe("CDC change log persistence", () => {
   });
 
   test("delete record persists a change entry", async () => {
-    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/collections/cdc_items/records`, {
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/collections/cdc_items/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
       body: JSON.stringify({ title: "to_delete", count: 99 }),
@@ -115,13 +117,13 @@ describe("CDC change log persistence", () => {
     const created = await createRes.json();
     const recordId = created.data.id;
 
-    const deleteRes = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/collections/cdc_items/records/${recordId}`, {
+    const deleteRes = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/collections/cdc_items/records/${recordId}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${userToken}` },
     });
     expect(deleteRes.status).toBe(200);
 
-    const changesRes = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/events/changes?collection=cdc_items`, {
+    const changesRes = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/events/changes?collection=cdc_items`, {
       headers: { Authorization: `Bearer ${userToken}` },
     });
     const body = await changesRes.json();
@@ -131,7 +133,7 @@ describe("CDC change log persistence", () => {
   });
 
   test("changes can be filtered by collection", async () => {
-    const res = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/events/changes?collection=cdc_items`, {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/events/changes?collection=cdc_items`, {
       headers: { Authorization: `Bearer ${userToken}` },
     });
     expect(res.status).toBe(200);
@@ -143,7 +145,7 @@ describe("CDC change log persistence", () => {
 
   test("changes can be filtered by since timestamp", async () => {
     const future = new Date(Date.now() + 86400000).toISOString();
-    const res = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/events/changes?since=${future}`, {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/events/changes?since=${future}`, {
       headers: { Authorization: `Bearer ${userToken}` },
     });
     expect(res.status).toBe(200);
@@ -154,7 +156,7 @@ describe("CDC change log persistence", () => {
 
 describe("SSE event stream", () => {
   test("SSE endpoint returns 200 with correct content type", async () => {
-    const res = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/events/stream`, {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/events/stream`, {
       headers: { Authorization: `Bearer ${userToken}` },
     });
     expect(res.status).toBe(200);
@@ -162,7 +164,7 @@ describe("SSE event stream", () => {
   });
 
   test("SSE stream receives events after record changes", async () => {
-    const sseRes = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/events/stream`, {
+    const sseRes = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/events/stream`, {
       headers: { Authorization: `Bearer ${userToken}` },
     });
     expect(sseRes.status).toBe(200);
@@ -171,7 +173,7 @@ describe("SSE event stream", () => {
     expect(reader).toBeDefined();
 
     // Create a record
-    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/cdc_test/collections/cdc_items/records`, {
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/${cdcTestId}/collections/cdc_items/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
       body: JSON.stringify({ title: "sse_test", count: 42 }),

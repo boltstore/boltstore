@@ -2,19 +2,22 @@ import { DatabaseManager } from "../db/manager";
 import { loadConfig } from "../config";
 import { importData, exportData } from "../admin/import-export";
 import { info, success, warn, error as cliError, out } from "../cli-style";
-import { deprecateCommand } from "./help";
 
 export async function importCommand(args: string[]): Promise<void> {
   const collection = args[1];
   const filePath = args[2];
 
   if (!collection || !filePath) {
-    cliError("Usage: boltstore db:import <collection> <file> [--db <path>] [--format csv|json]");
+    cliError("Usage: boltstore db:import <collection> <file> --db <database-id> [--format csv|json]");
     return;
   }
 
   const config = await loadConfig();
-  const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+  const dbId = args.includes("--db") ? args[args.indexOf("--db") + 1] : undefined;
+  if (!dbId) {
+    cliError("Usage: boltstore db:import <collection> <file> --db <database-id> [--format csv|json]");
+    return;
+  }
   const formatArg = args.includes("--format") ? args[args.indexOf("--format") + 1] : undefined;
 
   let format: "csv" | "json" | undefined;
@@ -28,12 +31,13 @@ export async function importCommand(args: string[]): Promise<void> {
   const manager = new DatabaseManager({ dataDir: config.databasePath });
 
   try {
-    if (!manager.exists(dbName)) {
-      manager.createDatabase(dbName);
+    if (!manager.exists(dbId)) {
+      cliError(`Database "${dbId}" not found. Create it via the admin API first.`);
+      return;
     }
 
     const input = await Bun.file(filePath).text();
-    const pool = manager.get(dbName);
+    const pool = manager.get(dbId);
     const result = importData(pool, collection, input, { format, autoCreate: true });
 
     if (result.collection) {
@@ -57,24 +61,28 @@ export async function exportCommand(args: string[]): Promise<void> {
   const collection = args[1];
 
   if (!collection) {
-    cliError("Usage: boltstore db:export <collection> [--db <path>] [--format csv|json]");
+    cliError("Usage: boltstore db:export <collection> --db <database-id> [--format csv|json]");
     return;
   }
 
   const config = await loadConfig();
-  const dbName = args.includes("--db") ? args[args.indexOf("--db") + 1] : "default";
+  const dbId = args.includes("--db") ? args[args.indexOf("--db") + 1] : undefined;
+  if (!dbId) {
+    cliError("Usage: boltstore db:export <collection> --db <database-id> [--format csv|json]");
+    return;
+  }
   const formatArg = args.includes("--format") ? args[args.indexOf("--format") + 1] : "json";
   const format: "csv" | "json" = (formatArg === "csv" ? "csv" : "json");
 
   const manager = new DatabaseManager({ dataDir: config.databasePath });
 
   try {
-    if (!manager.exists(dbName)) {
-      cliError(`Database "${dbName}" not found.`);
+    if (!manager.exists(dbId)) {
+      cliError(`Database "${dbId}" not found.`);
       return;
     }
 
-    const pool = manager.get(dbName);
+    const pool = manager.get(dbId);
     const result = exportData(pool, collection, { format });
 
     if (format === "csv") {
