@@ -21,14 +21,25 @@ function buildApiKeyConnectionContext(ctx: ApiKeyContext): ApiKeyConnectionConte
 export async function authenticateWsUpgrade(
   url: URL,
   manager: DatabaseManager | undefined,
-  authConfig: AuthConfig
+  authConfig: AuthConfig,
+  request?: Request
 ): Promise<WsAuthResult | Response> {
-  const token = url.searchParams.get("token");
+  let token = url.searchParams.get("token");
   const database = url.searchParams.get("database") || url.searchParams.get("db") || undefined;
+
+  if (!token && request) {
+    const auth = request.headers.get("Authorization");
+    if (auth?.startsWith("Bearer ")) {
+      token = auth.slice(7).trim();
+    }
+    if (!token) {
+      token = request.headers.get("X-API-Key") || request.headers.get("x-api-key");
+    }
+  }
 
   if (!token) {
     return new Response(
-      JSON.stringify({ error: { code: "UNAUTHORIZED", message: "Authentication required. Provide ?token= query parameter." } }),
+      JSON.stringify({ error: { code: "UNAUTHORIZED", message: "Authentication required. Provide ?token=, Authorization header, or X-API-Key header." } }),
       { status: 401, headers: { "Content-Type": "application/json" } }
     );
   }

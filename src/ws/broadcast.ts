@@ -60,6 +60,10 @@ function subscriberCanSeeRecord(
   // Non-admins cannot verify they were allowed to see a record that is now gone.
   if (eventType === "delete" && collectionHasRLS(pool, collection)) return false;
 
+  // API keys do not carry a user identity (userId/email), so RLS does not apply.
+  // API-key access is already restricted by collection scopes in
+  // connectionCanReadCollection. This is intentional: API keys are machine
+  // credentials that bypass per-user RLS rules.
   const rlsCtx = conn.userId && conn.email ? { userId: conn.userId, email: conn.email } : null;
   if (!rlsCtx) return true;
 

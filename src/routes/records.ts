@@ -11,9 +11,23 @@ function principalId(auth: Awaited<ReturnType<typeof authenticateRequest>>): str
   return auth instanceof Response ? undefined : auth.principalId;
 }
 
+function isSystemCollection(name: string): boolean {
+  return name.startsWith("_");
+}
+
 function requireApiKeyCollectionPermission(auth: Awaited<ReturnType<typeof authenticateRequest>>, collection: string, method: string) {
   if (auth instanceof Response) return auth;
   if (auth.isApiKey) {
+    // API keys cannot access system collections unless they have admin scope
+    if (isSystemCollection(collection)) {
+      const ops = auth.apiKey?.permissions.operations ?? [];
+      if (!ops.includes("admin")) {
+        return new Response(
+          JSON.stringify({ error: { code: "FORBIDDEN", message: "API key cannot access system collections." } }),
+          { status: 403, headers: { "Content-Type": "application/json" } }
+        );
+      }
+    }
     const op = operationForMethod(method);
     if (!apiKeyAllows(auth.apiKey!, op, collection)) {
       return new Response(
@@ -69,7 +83,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
       else if (key === "limit") options.limit = parseInt(value, 10);
       else if (key === "offset") options.offset = parseInt(value, 10);
       else if (key === "page") options.page = parseInt(value, 10);
-      else if (key === "per_page") options.perPage = parseInt(value, 10);
+      else if (key === "per_page") options.perPage = Math.min(parseInt(value, 10), 1000);
       else if (key === "cursor") options.cursor = value;
       else if (key === "fields") options.fields = value.split(",").map(s => s.trim()).filter(Boolean);
       else { if (!options.filter) options.filter = {}; options.filter[key] = value; }

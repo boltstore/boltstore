@@ -11,6 +11,16 @@ interface SseClientInfo {
   isAdmin: boolean;
 }
 
+function collectionHasRLS(pool: DatabasePool, collection: string): boolean {
+  const db = pool.read();
+  try {
+    const row = db.query("SELECT read_rule FROM _collections WHERE name=?").get(collection) as { read_rule: string | null } | null;
+    return !!row?.read_rule && row.read_rule.trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
 const sseClients = new Map<string, SseClientInfo>();
 let sseCounter = 0;
 
@@ -44,6 +54,9 @@ export function broadcastSseEvent(event: RecordEvent, pool?: DatabasePool): void
   const encoder = new TextEncoder();
   for (const [id, client] of sseClients) {
     if (client.database !== event.database) continue;
+
+    // Suppress delete events on RLS-protected collections for non-admins
+    if (pool && !client.isAdmin && event.event === "delete" && collectionHasRLS(pool, event.collection)) continue;
 
     if (pool && !client.isAdmin && client.userId && client.email) {
       const rlsCtx = { userId: client.userId, email: client.email };

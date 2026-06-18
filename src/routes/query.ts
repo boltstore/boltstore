@@ -4,6 +4,11 @@ import { executeQuery, type QueryParams } from "../query";
 import { jsonResponse, errorResponse } from "../server";
 import { authenticateRequest, type AuthConfig } from "../middleware/auth";
 import { applyRLS, toRLSContext } from "../rls";
+import { apiKeyAllows } from "../admin/api-keys";
+
+function isSystemCollection(name: string): boolean {
+  return name.startsWith("_");
+}
 
 export function registerQueryRoutes(
   router: Router,
@@ -16,6 +21,20 @@ export function registerQueryRoutes(
 
     const { collection, filter, sort, fields, limit, offset, search, aggregate, groupBy, having } = await req.json();
     if (!collection || typeof collection !== "string") return errorResponse("VALIDATION", "Field 'collection' is required.", 400);
+
+    // Enforce API-key collection scopes
+    if (auth.isApiKey) {
+      if (isSystemCollection(collection)) {
+        const ops = auth.apiKey?.permissions.operations ?? [];
+        if (!ops.includes("admin")) {
+          return errorResponse("FORBIDDEN", "API key cannot query system collections.", 403);
+        }
+      }
+      if (!apiKeyAllows(auth.apiKey!, "read", collection)) {
+        return errorResponse("FORBIDDEN", "API key lacks permission for this collection.", 403);
+      }
+    }
+
     const queryParams: QueryParams = {};
     if (filter) queryParams.filter = filter;
     if (sort) queryParams.sort = Array.isArray(sort) ? sort : [sort];

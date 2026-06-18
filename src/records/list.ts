@@ -3,7 +3,7 @@ import { validateIdentifier } from "@boltstore/utils";
 import { toBindings } from "../db/cast";
 import { applyRLS, toRLSContext } from "../rls";
 import type { AuthContext } from "../middleware/auth";
-import { getColumnNames, MAX_LIMIT, MAX_OFFSET } from "./schema-cache";
+import { getColumnNames, getColumnTypes, MAX_LIMIT, MAX_OFFSET } from "./schema-cache";
 import { countRecords } from "./count";
 
 interface ListRecordsResult {
@@ -77,14 +77,26 @@ function listRecords(
   }
 
   if (options?.filter) {
+    const columnTypes = getColumnTypes(pool, collection);
     for (const [key, value] of Object.entries(options.filter)) {
       if (value === null || value === undefined) continue;
       if (typeof value === "object" && !Array.isArray(value)) {
         throw Object.assign(new Error(`Filter value for "${key}" must be a scalar or array.`), { status: 400 });
       }
       validateIdentifier(key, "filter field");
+      const colType = columnTypes.get(key);
+      let coerced = value;
+      if (colType === "INTEGER" && typeof value === "string") {
+        const n = Number(value);
+        if (!Number.isNaN(n)) coerced = Math.floor(n);
+      } else if (colType === "REAL" && typeof value === "string") {
+        const n = Number(value);
+        if (!Number.isNaN(n)) coerced = n;
+      } else if (colType === "BOOLEAN" && typeof value === "string") {
+        coerced = value === "true" || value === "1" ? 1 : 0;
+      }
       conditions.push(`"${key}" = ?`);
-      params.push(value);
+      params.push(coerced);
     }
   }
 

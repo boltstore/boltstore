@@ -38,6 +38,11 @@ beforeEach(() => {
   // After restore tests, the pool may have been closed. Re-get it.
   pool = manager.get(TEST_APP);
 
+  // Clean up backup files from previous tests
+  const backupsDir = `${TEST_DATA_DIR}/backuptestapp/backups`;
+  try { rmSync(backupsDir, { recursive: true, force: true }); } catch {}
+  try { mkdirSync(backupsDir, { recursive: true }); } catch {}
+
   // Reset: drop all user tables
   const db = pool.write();
   const rows = db

@@ -98,6 +98,14 @@ export function jsonResponse(data: unknown, status = 200, headers?: Record<strin
   return new Response(body, { status, headers: responseHeaders });
 }
 
+export class RequestTimeoutError extends Error {
+  status = 408;
+  constructor() {
+    super("Request timeout");
+    this.name = "RequestTimeoutError";
+  }
+}
+
 export const MAX_RESPONSE_SIZE = parseInt(Bun.env.MAX_RESPONSE_SIZE || "10485760", 10); // 10 MB default
 
 /**
@@ -290,7 +298,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         // --- Request timeout ---
         const timeoutPromise = requestTimeoutMs > 0
           ? new Promise<Response>((_, reject) =>
-              setTimeout(() => reject(new Error("Request timeout")), requestTimeoutMs)
+              setTimeout(() => reject(new RequestTimeoutError()), requestTimeoutMs)
             )
           : null;
 
@@ -307,7 +315,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
               ? await Promise.race([handlerPromise, timeoutPromise])
               : await handlerPromise;
           } catch (err) {
-            const isTimeout = err instanceof Error && err.message === "Request timeout";
+            const isTimeout = err instanceof RequestTimeoutError;
             if (isTimeout) {
               logger.warn("Request timeout", logMeta);
               response = errorResponse("REQUEST_TIMEOUT", "Request timed out.", 408);

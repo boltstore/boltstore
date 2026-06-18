@@ -228,7 +228,9 @@ export class DatabasePool {
       this.transactionDepth--;
       if (this.transactionDepth === 0) {
         db.run("COMMIT");
-        // Checkpoint WAL so read connections see the changes
+        // Checkpoint WAL so read connections see the changes immediately.
+        // This is important for read-after-write consistency in tests and
+        // for operations like backup that write metadata then read it back.
         try { db.run("PRAGMA wal_checkpoint(PASSIVE)"); } catch {}
       }
       return result;

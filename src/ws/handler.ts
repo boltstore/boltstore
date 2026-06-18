@@ -159,7 +159,7 @@ export async function handleWsUpgrade(
 ): Promise<Response | undefined> {
   const url = new URL(request.url);
 
-  const authResult = await authenticateWsUpgrade(url, manager, authConfig);
+  const authResult = await authenticateWsUpgrade(url, manager, authConfig, request);
   if (authResult instanceof Response) {
     return authResult;
   }

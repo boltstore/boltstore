@@ -6,6 +6,7 @@ const MAX_OFFSET = 100000;
 
 interface SchemaCacheEntry {
   columns: string[];
+  columnTypes: Map<string, string>;
   exists: boolean;
   fetchedAt: number;
 }
@@ -29,10 +30,25 @@ function fetchColumns(pool: DatabasePool, collection: string): SchemaCacheEntry 
     .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1")
     .get(collection);
   if (!existsRow) {
-    return { columns: [], exists: false, fetchedAt: Date.now() };
+    return { columns: [], columnTypes: new Map(), exists: false, fetchedAt: Date.now() };
   }
-  const rows = db.query(`PRAGMA table_info("${collection}")`).all() as { name: string }[];
-  return { columns: rows.map((r) => r.name), exists: true, fetchedAt: Date.now() };
+  const rows = db.query(`PRAGMA table_info("${collection}")`).all() as { name: string; type: string }[];
+  const columnTypes = new Map<string, string>();
+  for (const r of rows) {
+    columnTypes.set(r.name, r.type.toUpperCase());
+  }
+  return { columns: rows.map((r) => r.name), columnTypes, exists: true, fetchedAt: Date.now() };
+}
+
+export function getColumnTypes(pool: DatabasePool, collection: string): Map<string, string> {
+  const cache = getPoolCache(pool);
+  const entry = cache.get(collection);
+  if (entry && Date.now() - entry.fetchedAt < SCHEMA_CACHE_TTL_MS) {
+    return entry.columnTypes;
+  }
+  const fresh = fetchColumns(pool, collection);
+  cache.set(collection, fresh);
+  return fresh.columnTypes;
 }
 
 function getColumnNames(pool: DatabasePool, collection: string): string[] {
