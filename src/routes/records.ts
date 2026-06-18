@@ -17,17 +17,17 @@ function isSystemCollection(name: string): boolean {
 
 function requireApiKeyCollectionPermission(auth: Awaited<ReturnType<typeof authenticateRequest>>, collection: string, method: string) {
   if (auth instanceof Response) return auth;
-  if (auth.isApiKey) {
-    // API keys cannot access system collections unless they have admin scope
-    if (isSystemCollection(collection)) {
-      const ops = auth.apiKey?.permissions.operations ?? [];
-      if (!ops.includes("admin")) {
-        return new Response(
-          JSON.stringify({ error: { code: "FORBIDDEN", message: "API key cannot access system collections." } }),
-          { status: 403, headers: { "Content-Type": "application/json" } }
-        );
-      }
+  // System collections (_users, _tokens, etc.) are only accessible by admins
+  if (isSystemCollection(collection)) {
+    if (!auth.isAdmin) {
+      return new Response(
+        JSON.stringify({ error: { code: "FORBIDDEN", message: "System collections are only accessible by admins." } }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
     }
+    return null;
+  }
+  if (auth.isApiKey) {
     const op = operationForMethod(method);
     if (!apiKeyAllows(auth.apiKey!, op, collection)) {
       return new Response(

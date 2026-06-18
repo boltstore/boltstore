@@ -88,13 +88,19 @@ Boltstore supports two authentication methods:
 
 > **Important:** API keys are system-level credentials. An API key created inside an application database (via the SDK or direct DB access) is not recognized by the system and will be rejected with 401. Always create API keys through the admin API routes, which authenticate against the system database.
 
+## System Tables
+
+Collections whose names start with `_` (e.g. `_users`, `_tokens`, `_api_keys`) are **system tables** and are only accessible by admin users through the records API. Non-admin users cannot read or write them.
+
+Users update their own profile (email, password) via `PATCH /api/:database/auth/me` — not through the records API. For application-specific user data (avatars, bios, display names), create a separate collection with its own RLS rules.
+
 ## API Tiers
 
 | Prefix | Access | Operations |
 |---|---|---|
 | `GET /api/health` | Public | Health check |
 | `POST /api/auth/*` | Public | Login, register |
-| `/api/collections/:collection/records` | Authenticated | CRUD on records |
+| `/api/collections/:collection/records` | Authenticated | CRUD on records (system tables excluded) |
 | `/api/admin/*` | Admin only | Schema changes, indexes, views, raw SQL, transactions, API key management |
 
 ## Admin Panel
