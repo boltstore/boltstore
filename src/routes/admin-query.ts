@@ -1,9 +1,8 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { executeReadQuery, executeWriteQuery, explainQuery, type QueryContext } from "../admin/query";
-import { jsonResponse, errorResponse, auditFromRequest, logAuditEvent } from "../server";
+import { jsonResponse, errorResponse, auditFromRequest, logAuditEvent, requestContext } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig, type AuthContext } from "../middleware/auth";
-import { requestContext } from "../server";
 
 function queryContext(req: Request, database: string, auth: AuthContext): QueryContext {
   const ctx = requestContext.get(req);

@@ -6,8 +6,7 @@
 
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
-import type { ApiResponse } from "../server";
-import { jsonResponse, logAuditEvent, auditFromRequest } from "../server";
+import { jsonResponse, type ApiResponse } from "../server";
 import pkg from "../../package.json";
 
 export function registerHealthRoutes(

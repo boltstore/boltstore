@@ -13,7 +13,6 @@
 import { DatabasePool } from "../db/pool";
 import { toBindings } from "../db/cast";
 import { validateIdentifier, isReservedTable } from "@boltstore/utils";
-import { listRecords } from "../records";
 
 // ---------------------------------------------------------------------------
 // Types

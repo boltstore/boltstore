@@ -1,6 +1,6 @@
 import { DatabaseManager } from "../db/manager";
 import { loadConfig } from "../config";
-import { info, success, warn as cliWarn, error as cliError, out } from "../cli-style";
+import { info, success, error as cliError, out } from "../cli-style";
 
 export async function applicationsCommand(args: string[]): Promise<void> {
   const config = await loadConfig();

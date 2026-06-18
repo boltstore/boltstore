@@ -1,8 +1,7 @@
 import { DatabasePool } from "../../db/pool";
 import { toBindings } from "../../db/cast";
 import { validateIdentifier, type ColumnDefinition, type ColumnType } from "@boltstore/utils";
-import { createCollection, getCollection } from "../../collections";
-import { listRecords } from "../../records";
+import { createCollection } from "../../collections";
 import { parseCSV, coerceCSVValue } from "./csv";
 import { parseJSONInput } from "./json-input";
 import { inferSchema } from "./schema-inference";

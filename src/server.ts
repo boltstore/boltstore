@@ -6,7 +6,7 @@
  * @module boltstore/server
  */
 
-import { Router, type RouteHandler } from "./router";
+import { Router } from "./router";
 import { logger, generateRequestId, type LogEntry, flushLogger, stopLogger } from "./logger";
 import { applyCors, handlePreflight, type CorsConfig, defaultConfig as defaultCorsConfig } from "./middleware/cors";
 import { checkRateLimit, type RateLimitConfig } from "./middleware/rate-limit";

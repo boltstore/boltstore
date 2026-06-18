@@ -1,8 +1,8 @@
-import type { RecordEvent, Subscription } from "./types";
+import type { RecordEvent } from "./types";
 import { getSubscriptionsForCollection, getSubscriptionsForRecord } from "./subscription";
 import { getConnectionById } from "./connection";
 import { broadcastSseEvent } from "./sse";
-import { applyRLS, toRLSContext } from "../rls";
+import { applyRLS } from "../rls";
 import { toBindings } from "../db/cast";
 import type { DatabasePool } from "../db/pool";
 

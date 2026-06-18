@@ -1,9 +1,6 @@
 import { DatabaseManager } from "../db/manager";
-import {
-  verifyAccessToken,
-  type AuthConfig,
-} from "../auth";
-export { type AuthConfig } from "../auth";
+import { verifyAccessToken, type AuthConfig } from "../auth";
+export type { AuthConfig } from "../auth";
 import { verifyApiKey, type ApiKeyContext } from "../admin/api-keys";
 
 export interface AuthContext {

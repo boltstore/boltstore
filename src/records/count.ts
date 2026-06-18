@@ -1,6 +1,6 @@
 import { DatabasePool } from "../db/pool";
 import { toBindings } from "../db/cast";
-import { applyRLS, toRLSContext, type RLSContext } from "../rls";
+import { applyRLS, toRLSContext } from "../rls";
 import type { AuthContext } from "../middleware/auth";
 import { getColumnNames } from "./schema-cache";
 

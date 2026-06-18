@@ -8,7 +8,6 @@
  */
 
 import { DatabasePool } from "./db/pool";
-import { validateIdentifier } from "@boltstore/utils";
 
 /** A single migration record. */
 export interface Migration {

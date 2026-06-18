@@ -1,9 +1,7 @@
-import { QueryParams, SqlFragment } from "./types";
-import { buildWhere } from "./filter-builder";
+import { QueryParams } from "./types";
+import { buildWhere, buildFilterExpression, validateAndQuote } from "./filter-builder";
 import { buildSearchClause } from "./search";
-import { buildFilterExpression } from "./filter-builder";
 import { validateIdentifier } from "@boltstore/utils";
-import { validateAndQuote } from "./filter-builder";
 import type { RLSResult } from "../rls";
 
 export function buildQuery(

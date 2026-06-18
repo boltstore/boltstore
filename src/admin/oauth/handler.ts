@@ -1,5 +1,5 @@
 import { DatabasePool } from "../../db/pool";
-import { createTokenPairForUser, type AuthConfig, type TokenPair, type User } from "../../auth";
+import { createTokenPairForUser, type AuthConfig, type TokenPair } from "../../auth";
 import { getProviders, getProviderEnvConfig } from "./registry";
 import { findOrCreateOAuthUser } from "./user";
 

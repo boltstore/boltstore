@@ -1,6 +1,5 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
-import type { ApiResponse } from "../server";
 import { jsonResponse, errorResponse, safeErrorResponse, auditFromRequest, logAuditEvent } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
 

@@ -1,6 +1,6 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
-import { jsonResponse, errorResponse } from "../server";
+import { jsonResponse } from "../server";
 import { authenticateRequest, type AuthConfig } from "../middleware/auth";
 import { listChanges } from "../ws/changes";
 import { createSseResponse } from "../ws/sse";

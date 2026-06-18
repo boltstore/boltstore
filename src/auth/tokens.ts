@@ -1,5 +1,5 @@
 import { DatabasePool } from "../db/pool";
-import type { AuthConfig, TokenPair, JwtPayload, User } from "./types";
+import type { AuthConfig, TokenPair } from "./types";
 import { bootstrapAuthTables } from "./tables";
 import { signJwt, verifyJwt, unixNow, now, generateJti } from "./jwt";
 import { validateEmail, validatePassword } from "./validation";
