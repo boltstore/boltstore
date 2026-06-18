@@ -79,6 +79,15 @@ PORT=3000 boltstore serve
 | `corsHeaders` | `CORS_HEADERS` | `Content-Type,Authorization` | Allowed CORS headers |
 | `trustedProxies` | `TRUSTED_PROXIES` | `[]` | Trusted proxy IPs/CIDRs |
 
+## Authentication
+
+Boltstore supports two authentication methods:
+
+- **JWT tokens** — Issued via `POST /api/:database/auth/login`. Scoped to a single application database. Users created in one app database cannot access another.
+- **API keys** — System-level credentials stored in the meta database (`_boltstore.db`). Created and managed via `/api/admin/:database/api-keys`. API keys are **global credentials** — an admin API key can manage any application database. They are not scoped to a single app database.
+
+> **Important:** API keys are system-level credentials. An API key created inside an application database (via the SDK or direct DB access) is not recognized by the system and will be rejected with 401. Always create API keys through the admin API routes, which authenticate against the system database.
+
 ## API Tiers
 
 | Prefix | Access | Operations |
@@ -86,7 +95,7 @@ PORT=3000 boltstore serve
 | `GET /api/health` | Public | Health check |
 | `POST /api/auth/*` | Public | Login, register |
 | `/api/collections/:collection/records` | Authenticated | CRUD on records |
-| `/api/admin/*` | Admin only | Schema changes, indexes, views, raw SQL, transactions |
+| `/api/admin/*` | Admin only | Schema changes, indexes, views, raw SQL, transactions, API key management |
 
 ## Admin Panel
 

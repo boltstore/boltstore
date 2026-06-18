@@ -8,7 +8,7 @@ import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { createServer } from "../src/server";
 import { DatabaseManager } from "../src/db/manager";
 import { mkdirSync, rmSync } from "node:fs";
-import { createAdminApiKey, testAuthConfig } from "./helpers/auth";
+import { createAdminApiKey, createUserAndToken, testAuthConfig } from "./helpers/auth";
 import pkg from "../package.json";
 
 const TEST_PORT = 9877;
@@ -208,5 +208,67 @@ describe("CORS headers", () => {
       headers: { Origin: "https://random-origin.com" },
     });
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+});
+
+describe("API-key admin auth — system-level enforcement", () => {
+  let appUserToken: string;
+  let appAdminKey: string;
+
+  beforeAll(async () => {
+    // Create a second app database and a user in it
+    manager.createDatabase("apikey_auth_test");
+    const pool = manager.get("apikey_auth_test");
+    const user = await createUserAndToken(pool, "appuser@test.local");
+    appUserToken = user.token;
+    // Create an admin API key inside the app DB (not the system DB)
+    const { createApiKey } = await import("../src/admin/api-keys");
+    const appKey = await createApiKey(pool, "app-admin-key", { operations: ["admin"] });
+    appAdminKey = appKey.secret;
+  });
+
+  test("app-level admin API key cannot create API keys via system route", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/admin/apikey_auth_test/api-keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${appAdminKey}` },
+      body: JSON.stringify({ name: "should-fail", permissions: {} }),
+    });
+    // App-level keys are not found in the system meta pool → 401
+    expect(res.status).toBe(401);
+  });
+
+  test("app-level admin API key cannot list API keys via system route", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/admin/apikey_auth_test/api-keys`, {
+      headers: { Authorization: `Bearer ${appAdminKey}` },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("app-level JWT user cannot create API keys", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/admin/apikey_auth_test/api-keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${appUserToken}` },
+      body: JSON.stringify({ name: "should-fail", permissions: {} }),
+    });
+    // JWT from app DB is not found in system meta pool → 401
+    expect(res.status).toBe(401);
+  });
+
+  test("cross-DB URL trickery is blocked — app key cannot manage keys in another app", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/admin/apikey_auth_test/api-keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${appAdminKey}` },
+      body: JSON.stringify({ name: "cross-db-trick", permissions: {} }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("system-level admin API key can create API keys", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/admin/apikey_auth_test/api-keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ name: "should-succeed", permissions: {} }),
+    });
+    expect(res.status).toBe(201);
   });
 });
