@@ -36,17 +36,35 @@ function connectionCanReadCollection(connectionId: string, database: string, col
   return true;
 }
 
-const rlsCache = new Map<string, { whereClause: string; params: unknown[] } | null>();
+const rlsCache = new Map<string, { whereClause: string; params: unknown[]; rawRule: string } | null>();
 
-function getCachedRls(pool: DatabasePool, collection: string, userId: string, email: string): { whereClause: string; params: unknown[] } | null {
+function getCachedRls(pool: DatabasePool, collection: string, userId: string, email: string): { whereClause: string; params: unknown[]; rawRule: string } | null {
   const cacheKey = `${collection}:${userId}:${email}`;
-  let rls = rlsCache.get(cacheKey);
-  if (rls === undefined) {
+  let cached = rlsCache.get(cacheKey);
+  if (cached === undefined) {
     const rlsCtx = { userId, email };
-    rls = applyRLS(pool, collection, "read", rlsCtx) || null;
-    rlsCache.set(cacheKey, rls);
+    const rls = applyRLS(pool, collection, "read", rlsCtx);
+    if (rls) {
+      // Also fetch the raw rule with $userId/$email tokens for record-level matching
+      const db = pool.read();
+      const policyRow = db.query("SELECT read_rule FROM _collections WHERE name=?").get(collection) as { read_rule: string | null } | null;
+      cached = { whereClause: rls.whereClause, params: rls.params, rawRule: policyRow?.read_rule || "" };
+    } else {
+      cached = null;
+    }
+    rlsCache.set(cacheKey, cached);
   }
-  return rls;
+  return cached;
+}
+
+function getRawRlsRule(pool: DatabasePool, collection: string): string {
+  try {
+    const db = pool.read();
+    const row = db.query("SELECT read_rule FROM _collections WHERE name=?").get(collection) as { read_rule: string | null } | null;
+    return row?.read_rule || "";
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -91,11 +109,13 @@ export function broadcastEvent(event: RecordEvent, pool?: DatabasePool): void {
       if (conn.isAdmin) {
         // Admin sees everything
       } else if (event.event === "delete") {
-        // For delete events the record no longer exists in the DB, so we cannot
-        // re-verify RLS via query. Instead, trust that the writer passed the RLS
-        // write check and let subscribers who already passed the candidate filter
-        // receive the deletion notification. This ensures real-time sync works
-        // for owners deleting their own records.
+        // The record was deleted from the DB, so we cannot run a SQL query.
+        // Instead, verify the subscriber's RLS access against the record data
+        // that was captured before deletion.
+        if (conn.userId && conn.email) {
+          const rawRule = getRawRlsRule(pool, collection);
+          if (rawRule && !recordSatisfiesRls(record as Record<string, unknown>, rawRule, conn.userId, conn.email)) continue;
+        }
       } else if (conn.userId && conn.email) {
         const rls = getCachedRls(pool, collection, conn.userId, conn.email);
         if (rls) {
@@ -135,6 +155,50 @@ function collectionHasRLS(pool: DatabasePool, collection: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Check whether a record's fields match an RLS rule against a subscriber's identity.
+ * Used for delete events where the record is gone from the DB but we still have the
+ * record data that was fetched before deletion.
+ *
+ * Handles the common pattern `field = $userId` by comparing record[field] === userId.
+ * For compound rules using AND, requires all conditions to match.
+ */
+function recordSatisfiesRls(record: Record<string, unknown>, rule: string, userId: string, email: string): boolean {
+  if (!rule || rule.trim() === "") return true;
+  
+  // Split on AND (case-insensitive) to handle compound rules
+  const parts = rule.split(/\s+AND\s+/i);
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
+      // Recurse into parenthesized groups
+      if (!recordSatisfiesRls(record, trimmed.slice(1, -1), userId, email)) return false;
+      continue;
+    }
+    
+    // Check for field = $userId pattern
+    const userIdMatch = trimmed.match(/"?(\w+)"?\s*=\s*\$userId\b/i);
+    if (userIdMatch) {
+      const field = userIdMatch[1];
+      if (record[field] !== userId) return false;
+      continue;
+    }
+    
+    // Check for field = $email pattern
+    const emailMatch = trimmed.match(/"?(\w+)"?\s*=\s*\$email\b/i);
+    if (emailMatch) {
+      const field = emailMatch[1];
+      if (record[field] !== email) return false;
+      continue;
+    }
+    
+    // Unknown pattern in rule — conservatively deny
+    return false;
+  }
+  
+  return true;
 }
 
 /** Clear the RLS cache. Useful for testing. */
