@@ -26,7 +26,14 @@ export const HELP = `
    routes                  List all API routes grouped by access tier
    status                  Display server health and stats
 
- Options:
+   bench                   Run performance benchmarks against a temp database
+   bench --records <n>     Number of seed records (default: 10000)
+   bench --iterations <n>  Iterations per test (default: 1000)
+   bench --batch-size <n>  Records per batch (default: 100)
+   bench --concurrent <n>  Concurrent request count (default: 1000)
+   bench --keep-data       Keep temp database after benchmark
+
+  Options:
    --port <number>       HTTP server port (default: 8080)
    --db <database-id>    Database ID (dbs_ prefix)
    --config <path>       Path to config file

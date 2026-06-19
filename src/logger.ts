@@ -19,7 +19,12 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   error: 3,
 };
 
-const LOG_LEVEL = (Bun.env.LOG_LEVEL || "info").toLowerCase() as LogLevel;
+let LOG_LEVEL = (Bun.env.LOG_LEVEL || process.env.LOG_LEVEL || "info").toLowerCase() as LogLevel;
+
+/** Change the log level at runtime. Useful for suppressing logs during benchmarks. */
+export function setLogLevel(level: LogLevel): void {
+  LOG_LEVEL = level;
+}
 
 /** Output destination: "stderr" | "stdout" | a file path. */
 const LOG_OUTPUT = Bun.env.LOG_OUTPUT || "stderr";

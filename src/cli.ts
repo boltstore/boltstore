@@ -9,6 +9,7 @@ import { importCommand, exportCommand } from "./cli/import-export";
 import { backupCommand, restoreCommand } from "./cli/backup";
 import { statusCommand } from "./cli/status";
 import { routesCommand } from "./cli/routes";
+import { benchCommand } from "./cli/bench";
 
 
 export async function runCli(args: string[]): Promise<void> {
@@ -70,6 +71,10 @@ export async function runCli(args: string[]): Promise<void> {
 
     case "status":
       await statusCommand();
+      break;
+
+    case "bench":
+      await benchCommand(args);
       break;
 
     case "--help":

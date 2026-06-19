@@ -26,6 +26,7 @@ const CLI_COMMANDS = new Set([
   "migrate", "migrate:rollback", "migrate:list",
   "db:import", "db:export",
   "db:backup", "db:restore",
+  "bench",
 ]);
 
 try {
