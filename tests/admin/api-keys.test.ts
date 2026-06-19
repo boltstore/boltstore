@@ -52,11 +52,14 @@ describe("createApiKey", () => {
     expect(key.last_used_at).toBeNull();
   });
 
-  test("creates a key with default scoped role and empty permissions", async () => {
-    const key = await createApiKey(pool, "Default Key");
+  test("creates a key with default scoped role and default permissions", async () => {
+    const key = await createApiKey(pool, "Default Key", {
+      role: "scoped",
+      allowedDatabases: ["*"],
+    });
     expect(key.permissions.role).toBe("scoped");
-    expect(key.permissions.allowedDatabases).toEqual([]);
-    expect(key.permissions.allowedOperations).toEqual([]);
+    expect(key.permissions.allowedDatabases).toEqual(["*"]);
+    expect(key.permissions.allowedOperations).toEqual(["read", "create", "update", "delete"]);
   });
 
   test("creates an admin key", async () => {
@@ -65,7 +68,10 @@ describe("createApiKey", () => {
   });
 
   test("trims whitespace from name", async () => {
-    const key = await createApiKey(pool, "  Trimmed Name  ");
+    const key = await createApiKey(pool, "  Trimmed Name  ", {
+      role: "scoped",
+      allowedDatabases: ["*"],
+    });
     expect(key.name).toBe("Trimmed Name");
   });
 
@@ -95,6 +101,7 @@ describe("createApiKey", () => {
     try {
       await createApiKey(pool, "Bad Op", {
         role: "scoped",
+        allowedDatabases: ["dbs_abc123"],
         allowedOperations: ["read", "adminish"] as unknown as string[],
       });
       expect.unreachable("Should have thrown");
@@ -127,7 +134,21 @@ describe("createApiKey", () => {
       expect.unreachable("Should have thrown");
     } catch (err: unknown) {
       const e = err as Error & { status?: number };
-      expect(e.message).toContain("must be an array");
+      expect(e.message).toContain("require");
+      expect(e.status).toBe(400);
+    }
+  });
+  
+  test("rejects empty allowedDatabases array", async () => {
+    try {
+      await createApiKey(pool, "Empty DBs", {
+        role: "scoped",
+        allowedDatabases: [],
+      });
+      expect.unreachable("Should have thrown");
+    } catch (err: unknown) {
+      const e = err as Error & { status?: number };
+      expect(e.message).toContain("at least one database");
       expect(e.status).toBe(400);
     }
   });
@@ -159,6 +180,7 @@ describe("createApiKey", () => {
     try {
       await createApiKey(pool, "Bad Collections", {
         role: "scoped",
+        allowedDatabases: ["*"],
         collections: "posts" as unknown as string[],
       });
       expect.unreachable("Should have thrown");
@@ -170,8 +192,8 @@ describe("createApiKey", () => {
   });
 
   test("generates unique IDs and secrets for different keys", async () => {
-    const key1 = await createApiKey(pool, "Key 1");
-    const key2 = await createApiKey(pool, "Key 2");
+    const key1 = await createApiKey(pool, "Key 1", { role: "scoped", allowedDatabases: ["*"] });
+    const key2 = await createApiKey(pool, "Key 2", { role: "scoped", allowedDatabases: ["*"] });
 
     expect(key1.id).not.toBe(key2.id);
     expect(key1.secret).not.toBe(key2.secret);
@@ -180,8 +202,8 @@ describe("createApiKey", () => {
 
 describe("listApiKeys", () => {
   test("lists all API keys without secrets", async () => {
-    await createApiKey(pool, "Key A");
-    await createApiKey(pool, "Key B");
+    await createApiKey(pool, "Key A", { role: "scoped", allowedDatabases: ["*"] });
+    await createApiKey(pool, "Key B", { role: "scoped", allowedDatabases: ["*"] });
 
     const keys = listApiKeys(pool);
     expect(keys).toHaveLength(2);
@@ -191,10 +213,10 @@ describe("listApiKeys", () => {
   });
 
   test("returns sorted by created_at descending", async () => {
-    await createApiKey(pool, "Older");
+    await createApiKey(pool, "Older", { role: "scoped", allowedDatabases: ["*"] });
     // Tiny delay to ensure different timestamps
     await new Promise((r) => setTimeout(r, 10));
-    await createApiKey(pool, "Newer");
+    await createApiKey(pool, "Newer", { role: "scoped", allowedDatabases: ["*"] });
 
     const keys = listApiKeys(pool);
     expect(keys[0].name).toBe("Newer");
@@ -207,7 +229,7 @@ describe("listApiKeys", () => {
   });
 
   test("shows revoked status correctly", async () => {
-    const key = await createApiKey(pool, "To Revoke");
+    const key = await createApiKey(pool, "To Revoke", { role: "scoped", allowedDatabases: ["*"] });
     revokeApiKey(pool, key.id);
 
     const keys = listApiKeys(pool);
@@ -218,7 +240,7 @@ describe("listApiKeys", () => {
 
 describe("getApiKey", () => {
   test("returns a single key by ID", async () => {
-    const created = await createApiKey(pool, "Single Key");
+    const created = await createApiKey(pool, "Single Key", { role: "scoped", allowedDatabases: ["*"] });
     const found = getApiKey(pool, created.id);
 
     expect(found.id).toBe(created.id);
@@ -239,7 +261,7 @@ describe("getApiKey", () => {
 
 describe("revokeApiKey", () => {
   test("revokes a key", async () => {
-    const key = await createApiKey(pool, "Revocable");
+    const key = await createApiKey(pool, "Revocable", { role: "scoped", allowedDatabases: ["*"] });
     revokeApiKey(pool, key.id);
 
     const found = getApiKey(pool, key.id);
@@ -247,7 +269,7 @@ describe("revokeApiKey", () => {
   });
 
   test("revocation is irreversible — verify fails after revoke", async () => {
-    const key = await createApiKey(pool, "Revoke Me");
+    const key = await createApiKey(pool, "Revoke Me", { role: "scoped", allowedDatabases: ["*"] });
 
     // Should verify before revocation
     const ctx = await verifyApiKey(pool, key.secret);
@@ -294,17 +316,20 @@ describe("verifyApiKey", () => {
     expect(ctx.permissions.collections).toEqual(["posts"]);
   });
 
-  test("returns context for key with no permissions", async () => {
-    const key = await createApiKey(pool, "No Perms");
+  test("returns context for key with minimum permissions", async () => {
+    const key = await createApiKey(pool, "Min Perms", {
+      role: "scoped",
+      allowedDatabases: ["dbs_test456"],
+    });
     const ctx = await verifyApiKey(pool, key.secret);
     expect(ctx.keyId).toBe(key.id);
     expect(ctx.permissions.role).toBe("scoped");
-    expect(ctx.permissions.allowedDatabases).toEqual([]);
-    expect(ctx.permissions.allowedOperations).toEqual([]);
+    expect(ctx.permissions.allowedDatabases).toEqual(["dbs_test456"]);
+    expect(ctx.permissions.allowedOperations).toEqual(["read", "create", "update", "delete"]);
   });
 
   test("rejects invalid secret", async () => {
-    await createApiKey(pool, "Valid Key");
+    await createApiKey(pool, "Valid Key", { role: "scoped", allowedDatabases: ["*"] });
     try {
       await verifyApiKey(pool, "blt_invalid_key_here");
       expect.unreachable("Should have thrown");
@@ -325,7 +350,7 @@ describe("verifyApiKey", () => {
   });
 
   test("rejects wrong prefix", async () => {
-    await createApiKey(pool, "Key");
+    await createApiKey(pool, "Key", { role: "scoped", allowedDatabases: ["*"] });
     // Prefix look-up won't find anything so it should be invalid
     try {
       await verifyApiKey(pool, "blt_different_prefix_than_stored");
@@ -337,7 +362,7 @@ describe("verifyApiKey", () => {
   });
 
   test("updates last_used_at on successful verification", async () => {
-    const key = await createApiKey(pool, "Usage Key");
+    const key = await createApiKey(pool, "Usage Key", { role: "scoped", allowedDatabases: ["*"] });
     await verifyApiKey(pool, key.secret);
 
     const found = getApiKey(pool, key.id);
@@ -347,8 +372,8 @@ describe("verifyApiKey", () => {
   test("multiple keys with same prefix but different hash — only correct one verifies", async () => {
     // Create two keys — their prefixes may collide (12 chars is 64^12 space, but
     // we need to test that hashing properly distinguishes them)
-    const key1 = await createApiKey(pool, "Key 1");
-    const key2 = await createApiKey(pool, "Key 2");
+    const key1 = await createApiKey(pool, "Key 1", { role: "scoped", allowedDatabases: ["*"] });
+    const key2 = await createApiKey(pool, "Key 2", { role: "scoped", allowedDatabases: ["*"] });
 
     // Both should verify with their own secrets
     const ctx1 = await verifyApiKey(pool, key1.secret);

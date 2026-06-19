@@ -101,12 +101,16 @@ export function apiKeyAllows(
   // Admin keys can do everything
   if (perms.role === "admin") return true;
 
-  // Scoped keys must have the database in their allowed list
+  // Scoped keys must have the database in their allowed list.
+  // An empty list means no database access at all (principle of least privilege).
   const dbs = perms.allowedDatabases ?? [];
-  if (dbs.length > 0 && !dbs.includes("*") && !dbs.includes(database)) return false;
+  if (!dbs.includes("*") && !dbs.includes(database)) return false;
 
-  // Check operation
-  const ops = perms.allowedOperations ?? [];
+  // Check operation. When no operations are explicitly configured,
+  // default to allowing all four operations for convenience.
+  const ops = perms.allowedOperations && perms.allowedOperations.length > 0
+    ? perms.allowedOperations
+    : ["read", "create", "update", "delete"] as ApiKeyOperation[];
   if (!ops.includes(operation)) return false;
 
   // Check collection allow-list
@@ -213,9 +217,19 @@ export async function createApiKey(
   }
 
   // Validate allowed_databases (for scoped keys) — must be dbs_ IDs or "*"
-  if (permissions.allowedDatabases) {
-    if (!Array.isArray(permissions.allowedDatabases)) {
-      throw Object.assign(new Error("allowedDatabases must be an array."), { status: 400 });
+  if (!permissions.allowedDatabases || !Array.isArray(permissions.allowedDatabases)) {
+    if (role !== "admin") {
+      throw Object.assign(
+        new Error("Scoped API keys require an allowedDatabases array. Use [\"*\"] for all databases."),
+        { status: 400 }
+      );
+    }
+  } else {
+    if (permissions.allowedDatabases.length === 0) {
+      throw Object.assign(
+        new Error("Scoped API keys require at least one database in allowedDatabases. Use [\"*\"] for all databases."),
+        { status: 400 }
+      );
     }
     for (const db of permissions.allowedDatabases) {
       if (typeof db !== "string") {
@@ -276,7 +290,7 @@ export async function createApiKey(
       keyHash,
       prefix,
       JSON.stringify(permissions.allowedDatabases ?? []),
-      JSON.stringify(permissions.allowedOperations ?? []),
+      JSON.stringify(permissions.allowedOperations && permissions.allowedOperations.length > 0 ? permissions.allowedOperations : ["read", "create", "update", "delete"]),
       permissions.collections ? JSON.stringify(permissions.collections) : null,
       ts,
     ]
@@ -290,7 +304,7 @@ export async function createApiKey(
     permissions: {
       role,
       allowedDatabases: permissions.allowedDatabases ?? [],
-      allowedOperations: permissions.allowedOperations ?? [],
+      allowedOperations: permissions.allowedOperations && permissions.allowedOperations.length > 0 ? permissions.allowedOperations : ["read", "create", "update", "delete"],
       collections: permissions.collections,
     },
     revoked: false,
