@@ -21,11 +21,12 @@ export function buildQuery(
 
   if (isAggregate && params.aggregate) {
     const agg = params.aggregate;
-    const target = agg.field ? validateAndQuote(agg.field) : "*";
+    const fn = agg.function.startsWith("$") ? agg.function.slice(1).toUpperCase() : agg.function.toUpperCase();
     if (agg.function === "$count" && (!agg.field || agg.field === "*")) {
       sql += `SELECT COUNT(*)`;
     } else {
-      sql += `SELECT ${agg.function.slice(1).toUpperCase()}(${target})`;
+      const target = agg.field ? validateAndQuote(agg.field) : "*";
+      sql += `SELECT ${fn}(${target})`;
     }
     if (agg.alias) sql += ` AS "${agg.alias}"`;
   } else if (params.fields && params.fields.length > 0) {

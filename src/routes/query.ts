@@ -24,6 +24,7 @@ export function registerQueryRoutes(
     if (search !== undefined && typeof search !== "string") return errorResponse("VALIDATION", "Field 'search' must be a string.", 400);
     if (aggregate !== undefined && (typeof aggregate !== "object" || Array.isArray(aggregate))) return errorResponse("VALIDATION", "Field 'aggregate' must be an object with 'function', 'field', and optional 'alias'.", 400);
     if (aggregate && typeof aggregate.function !== "string") return errorResponse("VALIDATION", "Field 'aggregate.function' is required and must be a string.", 400);
+    if (aggregate && aggregate.function && !["$count", "$sum", "$avg", "$min", "$max"].includes(aggregate.function)) return errorResponse("VALIDATION", `Invalid aggregate function "${aggregate.function}". Valid functions: $count, $sum, $avg, $min, $max.`, 400);
     if (groupBy !== undefined && typeof groupBy !== "string") return errorResponse("VALIDATION", "Field 'groupBy' must be a string.", 400);
 
     // Enforce API-key collection scopes
