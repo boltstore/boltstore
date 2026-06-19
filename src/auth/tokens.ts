@@ -11,7 +11,8 @@ const DEFAULT_REFRESH_EXPIRY = 604800;
 export function createTokenPairForUser(
   pool: DatabasePool,
   user: { id: string; email: string },
-  config: AuthConfig
+  config: AuthConfig,
+  isAdmin = false
 ): TokenPair {
   if (!config.secret) {
     throw Object.assign(
@@ -32,6 +33,7 @@ export function createTokenPairForUser(
     email: user.email,
     type: "access",
     jti: accessJti,
+    admin: isAdmin,
     iat: nowSec,
     exp: nowSec + accessExpiry,
   };
@@ -72,7 +74,8 @@ export async function loginUser(
   pool: DatabasePool,
   email: string,
   password: string,
-  config: AuthConfig
+  config: AuthConfig,
+  isAdmin = false
 ): Promise<TokenPair> {
   validateEmail(email);
   validatePassword(password);
@@ -113,13 +116,14 @@ export async function loginUser(
     );
   }
 
-  return createTokenPairForUser(pool, { id: row.id, email: row.email }, config);
+  return createTokenPairForUser(pool, { id: row.id, email: row.email }, config, isAdmin);
 }
 
 export async function refreshAccessToken(
   pool: DatabasePool,
   refreshToken: string,
-  config: AuthConfig
+  config: AuthConfig,
+  isAdmin = false
 ): Promise<TokenPair> {
   if (!config.secret) {
     throw Object.assign(

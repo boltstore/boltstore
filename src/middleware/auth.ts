@@ -48,10 +48,8 @@ export async function authenticateRequest(
 
   if (apiKey) {
     try {
-      // All API keys are stored in the system meta database
       const ctx = await verifyApiKey(manager.getMetaPool(), apiKey);
 
-      // For scoped keys, verify the target database is in the allowed list
       if (ctx.permissions.role !== "admin") {
         const allowedDbs = ctx.permissions.allowedDatabases ?? [];
         if (allowedDbs.length > 0 && !allowedDbs.includes("*") && !allowedDbs.includes(database)) {
@@ -82,16 +80,22 @@ export async function authenticateRequest(
   try {
     const ctx = verifyAccessToken(pool, token!, authConfig);
 
-    // Check if this user exists in the system database — system users are admins
+    // Determine admin status from JWT claim first (avoids DB query on every request).
+    // Fall back to system DB query for tokens that predate the admin claim.
     let isAdmin = false;
-    try {
-      const metaDb = manager.getMetaPool().read();
-      const sysUser = metaDb
-        .query("SELECT 1 FROM _users WHERE id=?")
-        .get(ctx.userId);
-      if (sysUser) isAdmin = true;
-    } catch {
-      // Meta pool might not be available — not admin
+    const payload = extractJwtPayload(token!);
+    if (payload?.admin === true) {
+      isAdmin = true;
+    } else if (payload?.sub) {
+      try {
+        const metaDb = manager.getMetaPool().read();
+        const sysUser = metaDb
+          .query("SELECT 1 FROM _users WHERE id=?")
+          .get(payload.sub);
+        if (sysUser) isAdmin = true;
+      } catch {
+        // Meta pool might not be available — not admin
+      }
     }
 
     return {
@@ -106,6 +110,18 @@ export async function authenticateRequest(
       JSON.stringify({ error: { code: "UNAUTHORIZED", message } }),
       { status: 401, headers: { "Content-Type": "application/json" } }
     );
+  }
+}
+
+/** Decode a JWT payload without signature verification. Used only for extracting
+ *  the admin claim — do NOT trust this for authentication. */
+function extractJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    return JSON.parse(Buffer.from(parts[1], "base64url").toString());
+  } catch {
+    return null;
   }
 }
 

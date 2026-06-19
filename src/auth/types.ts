@@ -36,4 +36,6 @@ export interface JwtPayload {
   type?: "access" | "refresh";
   aud?: string;
   iss?: string;
+  /** Set on access tokens: whether this user exists in the system database (admin). */
+  admin?: boolean;
 }

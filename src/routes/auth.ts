@@ -56,7 +56,8 @@ export function registerAuthRoutes(
       if (!email || typeof email !== "string") return errorResponse("VALIDATION", "Field 'email' is required.", 400);
       if (!password || typeof password !== "string") return errorResponse("VALIDATION", "Field 'password' is required.", 400);
       const pool = manager.get(params.database);
-      const tokens = await loginUser(pool, email, password, config);
+      const isAdmin = params.database === "_system";
+      const tokens = await loginUser(pool, email, password, config, isAdmin);
       audit(req, "auth.login", true, params.database, tokens.userId, { email });
       return jsonResponse({ data: tokens });
     } catch (err) {
@@ -71,7 +72,8 @@ export function registerAuthRoutes(
       const { refreshToken } = await req.json();
       if (!refreshToken || typeof refreshToken !== "string") return errorResponse("VALIDATION", "Field 'refreshToken' is required.", 400);
       const pool = manager.get(params.database);
-      const tokens = await refreshAccessToken(pool, refreshToken, config);
+      const isAdmin = params.database === "_system";
+      const tokens = await refreshAccessToken(pool, refreshToken, config, isAdmin);
       audit(req, "auth.refresh", true, params.database, tokens.userId);
       return jsonResponse({ data: tokens });
     } catch (err) {
