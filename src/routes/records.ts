@@ -87,6 +87,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
       else if (key === "per_page") options.perPage = Math.min(parseInt(value, 10), 1000);
       else if (key === "cursor") options.cursor = value;
       else if (key === "fields") options.fields = value.split(",").map(s => s.trim()).filter(Boolean);
+      else if (key === "expand" || key === "cascade") { /* consumed separately, skip */ }
       else { if (!options.filter) options.filter = {}; options.filter[key] = value; }
     }
     if (options.filter) validateFilterValues(options.filter);

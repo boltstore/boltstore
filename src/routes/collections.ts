@@ -4,6 +4,35 @@ import { createCollection, listCollections, getCollection, updateCollection, del
 import { type ColumnDefinition } from "@boltstore/utils";
 import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
+import type { RelationDefinition } from "../relations";
+
+interface RequestRelation {
+  field?: string;
+  target?: string;
+  cascadeDelete?: boolean;
+  cascade?: boolean;
+  targetField?: string;
+  type?: string;
+}
+
+/**
+ * Convert the array-based relations format from REST API requests to the
+ * Record<string, RelationDefinition> format expected by createCollection.
+ */
+function normalizeRelations(requestRelations: unknown): Record<string, RelationDefinition> | undefined {
+  if (!Array.isArray(requestRelations) || requestRelations.length === 0) return undefined;
+  const result: Record<string, RelationDefinition> = {};
+  for (const rel of requestRelations as RequestRelation[]) {
+    if (!rel.field || typeof rel.field !== "string") continue;
+    if (!rel.target || typeof rel.target !== "string") continue;
+    result[rel.field] = {
+      field: rel.field,
+      foreignCollection: rel.target,
+      cascadeDelete: rel.cascadeDelete ?? rel.cascade ?? false,
+    };
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
 
 function auditCollectionEvent(
   type: "collection.create" | "collection.update" | "collection.delete",
@@ -72,7 +101,7 @@ export function registerCollectionRoutes(
       if (!name || typeof name !== "string") return errorResponse("VALIDATION", "Field 'name' is required.", 400);
       if (!Array.isArray(columns)) return errorResponse("VALIDATION", "Field 'columns' is required.", 400);
       const pool = manager.get(params.database);
-      const result = createCollection(pool, name, columns as ColumnDefinition[], { relations, rls });
+      const result = createCollection(pool, name, columns as ColumnDefinition[], { relations: normalizeRelations(relations), rls });
       auditCollectionEvent("collection.create", req, auth, params.database, name, true, undefined, { columns });
       const responseData: Record<string, unknown> = { ...result };
       if (!rls) {
@@ -95,7 +124,7 @@ export function registerCollectionRoutes(
       const { columns, relations, rls } = await req.json();
       if (!Array.isArray(columns)) return errorResponse("VALIDATION", "Field 'columns' is required.", 400);
       const pool = manager.get(params.database);
-      const result = updateCollection(pool, params.collection, columns as ColumnDefinition[], { relations, rls });
+      const result = updateCollection(pool, params.collection, columns as ColumnDefinition[], { relations: normalizeRelations(relations), rls });
       auditCollectionEvent("collection.update", req, auth, params.database, params.collection, true, undefined, { columns, relations, rls });
       return jsonResponse({ data: result });
     } catch (err) {
