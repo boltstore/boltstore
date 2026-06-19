@@ -229,7 +229,7 @@ export async function benchCommand(args: string[]): Promise<void> {
     maxBodySize: 100 * 1024 * 1024,
   });
 
-  const port = server.port;
+  const port = server.port as number;
   const baseUrl = `http://localhost:${port}`;
   success(`Server started on ${baseUrl}`);
 

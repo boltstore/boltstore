@@ -179,7 +179,7 @@ export function importData(
     .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1")
     .get(collection) !== null;
 
-  let collectionResult: { name: string; schema: unknown[] } | undefined;
+  let collectionResult: { name: string; columns: unknown[] } | undefined;
 
   if (!collectionExists) {
     if (autoCreate) {
@@ -196,7 +196,7 @@ export function importData(
           imported: 0,
           failed: 0,
           dryRun: true,
-          collection: { name: collection, schema },
+          collection: { name: collection, columns: schema },
         };
       }
 

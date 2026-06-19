@@ -12,7 +12,7 @@ export interface ImportResult {
   errors?: ImportError[];
   collection?: {
     name: string;
-    schema: unknown[];
+    columns: unknown[];
   };
   dryRun: boolean;
 }
