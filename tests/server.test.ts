@@ -267,7 +267,7 @@ describe("API-key admin auth — system-level enforcement", () => {
     const res = await fetch(`http://localhost:${TEST_PORT}/api/admin/apikey_auth_test/api-keys`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify({ name: "should-succeed", permissions: {} }),
+      body: JSON.stringify({ name: "should-succeed", role: "admin" }),
     });
     expect(res.status).toBe(201);
   });
