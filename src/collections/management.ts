@@ -137,6 +137,12 @@ export function createCollection(
     return {
       name,
       schema: columns,
+      relations: options?.relations ? Object.fromEntries(
+        Object.entries(options.relations).map(([k, v]) => [
+          k,
+          { field: v.field, foreignCollection: v.foreignCollection, cascadeDelete: v.cascadeDelete },
+        ])
+      ) : undefined,
       recordCount: 0,
       createdAt: now,
       updatedAt: now,
@@ -160,7 +166,7 @@ export function listCollections(pool: DatabasePool): CollectionInfo[] {
     return [];
   }
 
-  const rows = db.query("SELECT name, schema_json, created_at, updated_at FROM _collections ORDER BY name").all();
+  const rows = db.query("SELECT name, schema_json, relations_json, created_at, updated_at FROM _collections ORDER BY name").all();
 
   return (rows as Record<string, unknown>[]).map((row: Record<string, unknown>) => {
     const name = String(row.name || "");
@@ -169,6 +175,14 @@ export function listCollections(pool: DatabasePool): CollectionInfo[] {
       schema = JSON.parse(String(row.schema_json || "[]"));
     } catch {
       schema = [];
+    }
+
+    let relations: Record<string, { field: string; foreignCollection: string; cascadeDelete?: boolean }> | undefined;
+    if (row.relations_json) {
+      try {
+        relations = JSON.parse(String(row.relations_json));
+      } catch {
+      }
     }
 
     // Get live record count
@@ -183,6 +197,7 @@ export function listCollections(pool: DatabasePool): CollectionInfo[] {
     return {
       name,
       schema,
+      relations,
       recordCount,
       createdAt: String(row.created_at || ""),
       updatedAt: String(row.updated_at || ""),
@@ -214,18 +229,38 @@ export function getCollection(pool: DatabasePool, name: string): CollectionInfo 
   const systemCols = new Set(["id", "created_at", "updated_at"]);
   const userColumns = allColumns.filter((c) => !systemCols.has(c.name));
 
+  // Restore original column types (e.g. BOOLEAN) from _collections.schema_json
+  const metaRow = db.query("SELECT schema_json, relations_json, created_at, updated_at FROM _collections WHERE name=?").get(name) as
+    | { schema_json?: string; relations_json?: string; created_at?: string; updated_at?: string }
+    | null;
+  if (metaRow?.schema_json) {
+    try {
+      const originalSchema = JSON.parse(metaRow.schema_json) as ColumnDefinition[];
+      const typeMap = new Map(originalSchema.map((c) => [c.name, c.type]));
+      for (const col of userColumns) {
+        const originalType = typeMap.get(col.name);
+        if (originalType) col.type = originalType;
+      }
+    } catch {
+    }
+  }
+
   // Record count
   const countRow = db.query(`SELECT COUNT(*) as cnt FROM "${name}"`).get() as { cnt?: number } | null;
   const recordCount = countRow?.cnt ?? 0;
 
-  // Metadata from _collections
-  const metaRow = db.query("SELECT created_at, updated_at FROM _collections WHERE name=?").get(name) as
-    | { created_at?: string; updated_at?: string }
-    | null;
+  let relations: Record<string, { field: string; foreignCollection: string; cascadeDelete?: boolean }> | undefined;
+  if (metaRow?.relations_json) {
+    try {
+      relations = JSON.parse(metaRow.relations_json);
+    } catch {
+    }
+  }
 
   return {
     name,
     schema: userColumns,
+    relations,
     recordCount,
     createdAt: metaRow?.created_at || "",
     updatedAt: metaRow?.updated_at || "",
