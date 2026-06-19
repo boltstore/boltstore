@@ -19,6 +19,7 @@ export function bootstrapAuthTables(pool: DatabasePool): void {
   try { db.run("ALTER TABLE _users ADD COLUMN oauth_only INTEGER NOT NULL DEFAULT 0"); } catch {}
   try { db.run("ALTER TABLE _users ADD COLUMN name TEXT"); } catch {}
   try { db.run("ALTER TABLE _users ADD COLUMN source TEXT NOT NULL DEFAULT 'register'"); } catch {}
+  try { db.run("ALTER TABLE _users ADD COLUMN password_set INTEGER NOT NULL DEFAULT 1"); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS _tokens (
