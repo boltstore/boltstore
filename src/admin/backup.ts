@@ -166,6 +166,9 @@ export function createBackup(
     );
   });
 
+  // Ensure read pool sees the new backup metadata immediately
+  pool.checkpointWal();
+
   return {
     id,
     path: backupPath,

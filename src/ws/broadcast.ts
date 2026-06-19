@@ -36,70 +36,75 @@ function connectionCanReadCollection(connectionId: string, database: string, col
   return true;
 }
 
-function collectionHasRLS(pool: DatabasePool, collection: string): boolean {
-  const db = pool.read();
-  try {
-    const row = db.query("SELECT read_rule FROM _collections WHERE name=?").get(collection) as { read_rule: string | null } | null;
-    return !!row?.read_rule && row.read_rule.trim() !== "";
-  } catch {
-    return false;
+const rlsCache = new Map<string, { whereClause: string; params: unknown[] } | null>();
+
+function getCachedRls(pool: DatabasePool, collection: string, userId: string, email: string): { whereClause: string; params: unknown[] } | null {
+  const cacheKey = `${collection}:${userId}:${email}`;
+  let rls = rlsCache.get(cacheKey);
+  if (rls === undefined) {
+    const rlsCtx = { userId, email };
+    rls = applyRLS(pool, collection, "read", rlsCtx) || null;
+    rlsCache.set(cacheKey, rls);
   }
+  return rls;
 }
 
-function subscriberCanSeeRecord(
-  pool: DatabasePool,
+/**
+ * Pre-filter subscribers before building per-subscriber SQL.
+ * Returns just the candidate connectionIds that pass admin, collection, and API-key checks.
+ */
+function getCandidateSubscribers(
+  subs: Array<{ connectionId: string; filter?: Record<string, unknown> }>,
+  database: string,
   collection: string,
-  record: Record<string, unknown>,
-  connectionId: string,
-  eventType: string
-): boolean {
-  const conn = getConnectionById(connectionId);
-  if (!conn) return false;
-  if (conn.isAdmin) return true;
-
-  // For delete events on RLS-protected collections, only admins receive them.
-  // Non-admins cannot verify they were allowed to see a record that is now gone.
-  if (eventType === "delete" && collectionHasRLS(pool, collection)) return false;
-
-  // API keys do not carry a user identity (userId/email), so RLS does not apply.
-  // API-key access is already restricted by collection scopes in
-  // connectionCanReadCollection. This is intentional: API keys are machine
-  // credentials that bypass per-user RLS rules.
-  const rlsCtx = conn.userId && conn.email ? { userId: conn.userId, email: conn.email } : null;
-  if (!rlsCtx) return true;
-
-  const rls = applyRLS(pool, collection, "read", rlsCtx);
-  if (!rls) return true;
-
-  const recordId = record.id as string;
-  if (!recordId) return true;
-
-  const db = pool.read();
-  const sql = `SELECT 1 FROM "${collection}" WHERE id=? AND ${rls.whereClause}`;
-  const row = db.query(sql).get(recordId, ...toBindings(rls.params));
-  return !!row;
+  record: Record<string, unknown>
+): string[] {
+  const sent = new Set<string>();
+  const candidates: string[] = [];
+  for (const sub of subs) {
+    if (sent.has(sub.connectionId)) continue;
+    sent.add(sub.connectionId);
+    if (!connectionCanReadCollection(sub.connectionId, database, collection)) continue;
+    if (sub.filter && !matchesFilter(record, sub.filter)) continue;
+    candidates.push(sub.connectionId);
+  }
+  return candidates;
 }
 
 export function broadcastEvent(event: RecordEvent, pool?: DatabasePool): void {
   const { database, collection, record } = event;
   const recordId = record.id as string | undefined;
 
+  // Cache the collection RLS presence once per broadcast — avoids re-querying per subscriber
+  const hasRls = pool ? collectionHasRLS(pool, collection) : false;
+
   const subs = recordId
     ? [...getSubscriptionsForRecord(database, collection, recordId), ...getSubscriptionsForCollection(database, collection)]
     : getSubscriptionsForCollection(database, collection);
 
-  const sent = new Set<string>();
-  for (const sub of subs) {
-    if (sent.has(sub.connectionId)) continue;
-    sent.add(sub.connectionId);
+  const candidates = getCandidateSubscribers(subs, database, collection, record);
 
-    if (!connectionCanReadCollection(sub.connectionId, database, collection)) continue;
+  for (const connId of candidates) {
+    if (hasRls && pool) {
+      const conn = getConnectionById(connId);
+      if (!conn) continue;
+      if (conn.isAdmin) {
+        // Admin sees everything
+      } else if (event.event === "delete") {
+        // No delete events for non-admins on RLS collections
+        continue;
+      } else if (conn.userId && conn.email) {
+        const rls = getCachedRls(pool, collection, conn.userId, conn.email);
+        if (rls) {
+          const db = pool.read();
+          const sql = `SELECT 1 FROM "${collection}" WHERE id=? AND ${rls.whereClause}`;
+          const row = db.query(sql).get(recordId, ...toBindings(rls.params));
+          if (!row) continue;
+        }
+      }
+    }
 
-    if (sub.filter && !matchesFilter(record, sub.filter)) continue;
-
-    if (pool && !subscriberCanSeeRecord(pool, collection, record, sub.connectionId, event.event)) continue;
-
-    const ws = wsByConnectionId.get(sub.connectionId);
+    const ws = wsByConnectionId.get(connId);
     if (!ws) continue;
 
     try {
@@ -117,4 +122,19 @@ function matchesFilter(record: Record<string, unknown>, filter: Record<string, u
     if (record[key] !== value) return false;
   }
   return true;
+}
+
+function collectionHasRLS(pool: DatabasePool, collection: string): boolean {
+  const db = pool.read();
+  try {
+    const row = db.query("SELECT read_rule FROM _collections WHERE name=?").get(collection) as { read_rule: string | null } | null;
+    return !!row?.read_rule && row.read_rule.trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
+/** Clear the RLS cache. Useful for testing. */
+export function clearRlsCache(): void {
+  rlsCache.clear();
 }

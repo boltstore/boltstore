@@ -214,8 +214,11 @@ export class DatabasePool {
    * Execute a function within a transaction on the write connection.
    * All operations are serialized through this single connection.
    *
-   * Uses explicit BEGIN/COMMIT with WAL checkpoint after commit so
-   * read connections see changes immediately.
+   * Uses explicit BEGIN/COMMIT. WAL checkpointing is deferred — SQLite's
+   * WAL mode handles checkpointing automatically. Explicit checkpoints
+   * on every commit added ~5-15ms latency per write transaction.
+   * Call `checkpointWal()` explicitly when immediate read-after-write
+   * consistency is required (e.g., tests, backup metadata).
    */
   writeTransaction<T>(fn: () => T): T {
     const db = this.writeDb;
@@ -228,10 +231,6 @@ export class DatabasePool {
       this.transactionDepth--;
       if (this.transactionDepth === 0) {
         db.run("COMMIT");
-        // Checkpoint WAL so read connections see the changes immediately.
-        // This is important for read-after-write consistency in tests and
-        // for operations like backup that write metadata then read it back.
-        try { db.run("PRAGMA wal_checkpoint(PASSIVE)"); } catch {}
       }
       return result;
     } catch (error) {
@@ -241,6 +240,14 @@ export class DatabasePool {
       }
       throw error;
     }
+  }
+
+  /**
+   * Force a WAL checkpoint. Call this after writeTransaction when
+   * immediate read-after-write consistency across connections is needed.
+   */
+  checkpointWal(): void {
+    try { this.writeDb.run("PRAGMA wal_checkpoint(PASSIVE)"); } catch {}
   }
 
   /**
