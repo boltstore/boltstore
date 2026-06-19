@@ -169,7 +169,7 @@ describe("importData — JSON", () => {
 
     expect(result.collection).toBeDefined();
     expect(result.collection!.name).toBe("users");
-    expect(result.collection!.schema).toHaveLength(3);
+    expect(result.collection!.columns).toHaveLength(3);
 
     // Verify collection was actually created
     const info = getCollection(pool, "users");
@@ -185,7 +185,7 @@ describe("importData — JSON", () => {
     expect(result.collection).toBeDefined();
 
     // Check inferred types from the import result (before PRAGMA strips BOOLEAN→INTEGER)
-    const schema = result.collection!.schema;
+    const schema = result.collection!.columns;
     const countCol = schema.find((c: { name: string }) => c.name === "count");
     const nameCol = schema.find((c: { name: string }) => c.name === "name");
     const enabledCol = schema.find((c: { name: string }) => c.name === "enabled");
@@ -303,7 +303,7 @@ describe("importData — CSV", () => {
     expect(result.collection!.name).toBe("auto_csv");
 
     const info = getCollection(pool, "auto_csv");
-    const schemaNames = info.schema.map((c: { name: string }) => c.name);
+    const schemaNames = info.columns.map((c: { name: string }) => c.name);
     expect(schemaNames).toContain("name");
     expect(schemaNames).toContain("age");
     expect(schemaNames).toContain("score");
@@ -316,7 +316,7 @@ describe("importData — CSV", () => {
     expect(result.imported).toBe(2);
 
     // Check inferred types from the import result (before PRAGMA strips BOOLEAN→INTEGER)
-    const schema = result.collection!.schema;
+    const schema = result.collection!.columns;
     const activeCol = schema.find((c: { name: string }) => c.name === "active");
     const priceCol = schema.find((c: { name: string }) => c.name === "price");
     const countCol = schema.find((c: { name: string }) => c.name === "count");
@@ -363,7 +363,7 @@ describe("importData — CSV", () => {
     expect(result.imported).toBe(3);
 
     const info = getCollection(pool, "no_header");
-    const schemaNames = info.schema.map((c: { name: string }) => c.name);
+    const schemaNames = info.columns.map((c: { name: string }) => c.name);
     expect(schemaNames).toContain("col_0");
     expect(schemaNames).toContain("col_1");
   });

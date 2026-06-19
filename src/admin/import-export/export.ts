@@ -20,7 +20,7 @@ export function exportData(
   } else {
     try {
       const info = getCollection(pool, collection);
-      exportFields = info.schema.map((c: { name: string }) => c.name);
+      exportFields = info.columns.map((c: { name: string }) => c.name);
     } catch {
       exportFields = [];
     }

@@ -136,7 +136,7 @@ export function createCollection(
 
     return {
       name,
-      schema: columns,
+      columns: columns,
       relations: options?.relations ? Object.fromEntries(
         Object.entries(options.relations).map(([k, v]) => [
           k,
@@ -196,7 +196,7 @@ export function listCollections(pool: DatabasePool): CollectionInfo[] {
 
     return {
       name,
-      schema,
+      columns: schema,
       relations,
       recordCount,
       createdAt: String(row.created_at || ""),
@@ -259,7 +259,7 @@ export function getCollection(pool: DatabasePool, name: string): CollectionInfo 
 
   return {
     name,
-    schema: userColumns,
+    columns: userColumns,
     relations,
     recordCount,
     createdAt: metaRow?.created_at || "",
@@ -384,7 +384,7 @@ export function updateCollection(
 
     return {
       name,
-      schema: mergedSchema,
+      columns: mergedSchema,
       recordCount: countRow?.cnt ?? 0,
       createdAt: "", // unchanged, not returned here
       updatedAt: now,

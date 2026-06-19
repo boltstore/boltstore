@@ -132,7 +132,7 @@ export function importData(
               imported: 0,
               failed: 0,
               dryRun,
-              collection: { name: created.name, schema: created.schema },
+              collection: { name: created.name, columns: created.columns },
             };
           }
         }
@@ -205,7 +205,7 @@ export function importData(
         type: s.type as ColumnType,
       }));
       const created = createCollection(pool, collection, typedSchema);
-      collectionResult = { name: created.name, schema: created.schema };
+      collectionResult = { name: created.name, columns: created.columns };
       collectionExists = true;
     } else {
       throw Object.assign(

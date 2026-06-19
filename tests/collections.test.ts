@@ -77,7 +77,7 @@ describe("createCollection", () => {
     ]);
 
     expect(result.name).toBe("users");
-    expect(result.schema).toHaveLength(2);
+    expect(result.columns).toHaveLength(2);
     expect(result.recordCount).toBe(0);
     expect(result.createdAt).toBeTruthy();
   });
@@ -86,8 +86,8 @@ describe("createCollection", () => {
     createCollection(pool, "posts", [{ name: "title", type: "TEXT" }]);
 
     const info = getCollection(pool, "posts");
-    expect(info.schema).toHaveLength(1);
-    expect(info.schema[0].name).toBe("title");
+    expect(info.columns).toHaveLength(1);
+    expect(info.columns[0].name).toBe("title");
   });
 
   test("returns 400 when no columns provided", () => {
@@ -185,8 +185,8 @@ describe("createCollection", () => {
     ]);
 
     const info = getCollection(pool, "all_types");
-    expect(info.schema).toHaveLength(6);
-    const types = info.schema.map((c) => c.type);
+    expect(info.columns).toHaveLength(6);
+    const types = info.columns.map((c) => c.type);
     expect(types).toContain("TEXT");
     expect(types).toContain("INTEGER");
     expect(types).toContain("REAL");
@@ -254,8 +254,8 @@ describe("listCollections", () => {
 
     const c = result[0];
     expect(c.name).toBe("apples");
-    expect(c.schema).toBeDefined();
-    expect(Array.isArray(c.schema)).toBe(true);
+    expect(c.columns).toBeDefined();
+    expect(Array.isArray(c.columns)).toBe(true);
     expect(c.recordCount).toBe(0);
     expect(c.createdAt).toBeTruthy();
     expect(c.updatedAt).toBeTruthy();
@@ -283,11 +283,11 @@ describe("getCollection", () => {
 
     const info = getCollection(pool, "books");
     expect(info.name).toBe("books");
-    expect(info.schema).toHaveLength(2);
-    expect(info.schema[0].name).toBe("title");
-    expect(info.schema[0].type).toBe("TEXT");
-    expect(info.schema[1].name).toBe("pages");
-    expect(info.schema[1].type).toBe("INTEGER");
+    expect(info.columns).toHaveLength(2);
+    expect(info.columns[0].name).toBe("title");
+    expect(info.columns[0].type).toBe("TEXT");
+    expect(info.columns[1].name).toBe("pages");
+    expect(info.columns[1].type).toBe("INTEGER");
     expect(info.recordCount).toBe(0);
   });
 
@@ -316,7 +316,7 @@ describe("getCollection", () => {
     createCollection(pool, "widgets", [{ name: "color", type: "TEXT" }]);
     const info = getCollection(pool, "widgets");
 
-    const schemaNames = info.schema.map((c) => c.name);
+    const schemaNames = info.columns.map((c) => c.name);
     expect(schemaNames).not.toContain("id");
     expect(schemaNames).not.toContain("created_at");
     expect(schemaNames).not.toContain("updated_at");
@@ -339,9 +339,9 @@ describe("updateCollection", () => {
     ]);
 
     expect(result.name).toBe("inventory");
-    expect(result.schema).toHaveLength(3);
-    expect(result.schema[1].name).toBe("quantity");
-    expect(result.schema[2].name).toBe("price");
+    expect(result.columns).toHaveLength(3);
+    expect(result.columns[1].name).toBe("quantity");
+    expect(result.columns[2].name).toBe("price");
   });
 
   test("returns 404 for non-existent collection", () => {
@@ -411,7 +411,7 @@ describe("updateCollection", () => {
     updateCollection(pool, "persist_test", [{ name: "b", type: "INTEGER" }]);
 
     const info = getCollection(pool, "persist_test");
-    const colNames = info.schema.map((c) => c.name);
+    const colNames = info.columns.map((c) => c.name);
     expect(colNames).toContain("a");
     expect(colNames).toContain("b");
   });
@@ -519,15 +519,15 @@ describe("Collection lifecycle", () => {
     expect(list.find((c) => c.name === "lifecycle")).toBeDefined();
 
     const info = getCollection(pool, "lifecycle");
-    expect(info.schema).toHaveLength(2);
+    expect(info.columns).toHaveLength(2);
 
     const updated = updateCollection(pool, "lifecycle", [
       { name: "description", type: "TEXT" },
     ]);
-    expect(updated.schema).toHaveLength(3);
+    expect(updated.columns).toHaveLength(3);
 
     const info2 = getCollection(pool, "lifecycle");
-    expect(info2.schema).toHaveLength(3);
+    expect(info2.columns).toHaveLength(3);
 
     deleteCollection(pool, "lifecycle");
 
