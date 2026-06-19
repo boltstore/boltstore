@@ -80,22 +80,11 @@ export async function authenticateRequest(
   try {
     const ctx = verifyAccessToken(pool, token!, authConfig);
 
-    // Determine admin status from JWT claim first (avoids DB query on every request).
-    // Fall back to system DB query for tokens that predate the admin claim.
+    // Determine admin status from JWT claim (avoids DB query on every request).
     let isAdmin = false;
     const payload = extractJwtPayload(token!);
     if (payload?.admin === true) {
       isAdmin = true;
-    } else if (payload?.sub) {
-      try {
-        const metaDb = manager.getMetaPool().read();
-        const sysUser = metaDb
-          .query("SELECT 1 FROM _users WHERE id=?")
-          .get(payload.sub);
-        if (sysUser) isAdmin = true;
-      } catch {
-        // Meta pool might not be available — not admin
-      }
     }
 
     return {

@@ -47,7 +47,7 @@ afterAll(() => {
 });
 
 function connectWs(token: string, database?: string): WebSocket {
-  const dbParam = database ? `&database=${database}` : "";
+  const dbParam = database ? `&db=${database}` : "";
   return new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${token}${dbParam}`);
 }
 

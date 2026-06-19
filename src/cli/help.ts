@@ -1,5 +1,3 @@
-import { warn } from "../cli-style";
-
 export const HELP = `
  ⚡ boltstore — Lightweight backend-as-a-service
 
@@ -37,7 +35,3 @@ export const HELP = `
    --format <fmt>        Format for import/export: csv or json
    --help                Show this help
 `;
-
-export function deprecateCommand(oldCmd: string, newCmd: string): void {
-  warn(`"${oldCmd}" is deprecated and will be removed in the next release. Use "${newCmd}" instead.`);
-}

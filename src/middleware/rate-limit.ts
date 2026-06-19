@@ -156,7 +156,7 @@ export function normalizePathForKey(pathname: string): string {
 /**
  * Check if a request should be rate-limited.
  *
- * @param clientIp - The client's IP address (or "127.0.0.1" as fallback).
+ * @param clientIp - The client's IP address.
  * @param pathname - The request path (used as part of the rate limit key).
  * @param tier - The rate limit tier for this request.
  * @param config - Rate limit configuration.

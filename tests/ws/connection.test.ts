@@ -53,7 +53,7 @@ describe("WebSocket connection lifecycle", () => {
   });
 
   test("accepts connection with valid JWT token", async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=${wsTestId}`);
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&db=${wsTestId}`);
     const connected = new Promise<void>((resolve, reject) => {
       ws.onopen = () => resolve();
       ws.onerror = () => reject(new Error("Connection failed"));
@@ -75,7 +75,7 @@ describe("WebSocket connection lifecycle", () => {
   });
 
   test("receives connected message on open", async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=${wsTestId}`);
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&db=${wsTestId}`);
     const msg = await new Promise<string>((resolve, reject) => {
       ws.onmessage = (e) => resolve(e.data as string);
       ws.onerror = () => reject(new Error("Connection failed"));
@@ -91,7 +91,7 @@ describe("WebSocket connection lifecycle", () => {
 
 describe("WebSocket ping/pong", () => {
   test("responds to ping with pong", async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=${wsTestId}`);
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&db=${wsTestId}`);
 
     // Wait for connected message first
     await new Promise<void>((resolve, reject) => {
@@ -112,7 +112,7 @@ describe("WebSocket ping/pong", () => {
   });
 
   test("rejects unknown message type", async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=${wsTestId}`);
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&db=${wsTestId}`);
 
     await new Promise<void>((resolve, reject) => {
       ws.onmessage = () => resolve();
@@ -133,7 +133,7 @@ describe("WebSocket ping/pong", () => {
   });
 
   test("rejects invalid JSON message", async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&database=${wsTestId}`);
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}/ws?token=${userToken}&db=${wsTestId}`);
 
     await new Promise<void>((resolve, reject) => {
       ws.onmessage = () => resolve();

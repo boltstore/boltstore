@@ -2,13 +2,11 @@ import { DatabaseManager } from "../db/manager";
 import { loadConfig } from "../config";
 import { createAdminUser } from "../auth/users";
 import { info, success, error as cliError, out } from "../cli-style";
-import { deprecateCommand } from "./help";
 
 export async function adminCommand(args: string[]): Promise<void> {
   const subcommand = args[1];
 
   if (subcommand === "databases") {
-    deprecateCommand("admin databases", "applications");
     const { applicationsCommand } = await import("./applications");
     args[0] = "applications";
     return applicationsCommand(args);
@@ -29,10 +27,6 @@ export async function adminCommand(args: string[]): Promise<void> {
         info("Cancelled.");
         return;
       }
-    }
-
-    if (subcommand === "init") {
-      deprecateCommand("admin init", "admin");
     }
 
     out("");

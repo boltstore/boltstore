@@ -25,7 +25,7 @@ export async function authenticateWsUpgrade(
   request?: Request
 ): Promise<WsAuthResult | Response> {
   let token = url.searchParams.get("token");
-  const database = url.searchParams.get("database") || url.searchParams.get("db") || undefined;
+  const database = url.searchParams.get("db") || undefined;
 
   if (!token && request) {
     const auth = request.headers.get("Authorization");
