@@ -31,11 +31,33 @@ import { logger } from "./logger";
 
 /** Default safe error factory used by `wrapRoute` when no resolver is provided. */
 export function defaultRouteError(err: unknown): Response {
-  const status = err instanceof Error ? (err as { status?: number }).status : undefined;
-  const isOperational = typeof status === "number";
-  const message = isOperational ? (err as Error).message : "An unexpected error occurred.";
-  const code = isOperational ? "REQUEST_ERROR" : "INTERNAL_ERROR";
-  if (!isOperational) {
+  let status: number | undefined;
+  let message: string;
+  let code: string;
+
+  if (err instanceof Error) {
+    const operationalStatus = (err as { status?: number }).status;
+    if (typeof operationalStatus === "number") {
+      status = operationalStatus;
+      message = err.message;
+      code = "REQUEST_ERROR";
+    } else if (err instanceof SyntaxError || err.name === "SyntaxError") {
+      // JSON parse errors on request body — return 400 instead of 500
+      status = 400;
+      message = "Invalid JSON in request body.";
+      code = "INVALID_JSON";
+    } else {
+      status = 500;
+      message = "An unexpected error occurred.";
+      code = "INTERNAL_ERROR";
+    }
+  } else {
+    status = 500;
+    message = "An unexpected error occurred.";
+    code = "INTERNAL_ERROR";
+  }
+
+  if (code === "INTERNAL_ERROR") {
     logger.error("Unhandled route error", {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
@@ -43,7 +65,7 @@ export function defaultRouteError(err: unknown): Response {
   }
   return new Response(
     JSON.stringify({ error: { code, message } }),
-    { status: isOperational ? status : 500, headers: { "Content-Type": "application/json" } }
+    { status: status || 500, headers: { "Content-Type": "application/json" } }
   );
 }
 

@@ -134,6 +134,10 @@ export function safeErrorResponse(err: unknown, logMeta?: Partial<LogEntry>): Re
     const message = err.message || "Request failed.";
     return errorResponse("REQUEST_ERROR", message, status);
   }
+  // JSON parse errors on request body — return 400 instead of 500
+  if (err instanceof SyntaxError || (err instanceof Error && err.name === "SyntaxError")) {
+    return errorResponse("INVALID_JSON", "Invalid JSON in request body.", 400);
+  }
   logger.error("Unexpected handler error", { ...logMeta, error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined });
   return errorResponse("INTERNAL_ERROR", "An unexpected error occurred.", 500);
 }
