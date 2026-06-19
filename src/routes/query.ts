@@ -19,7 +19,7 @@ export function registerQueryRoutes(
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
 
-    const { collection, filter, sort, fields, limit, offset, search, aggregate, groupBy, having } = await req.json();
+    const { collection, filter, sort, fields, limit, offset, search, searchFields, aggregate, groupBy, having } = await req.json();
     if (!collection || typeof collection !== "string") return errorResponse("VALIDATION", "Field 'collection' is required.", 400);
     if (search !== undefined && typeof search !== "string") return errorResponse("VALIDATION", "Field 'search' must be a string.", 400);
     if (aggregate !== undefined && (typeof aggregate !== "object" || Array.isArray(aggregate))) return errorResponse("VALIDATION", "Field 'aggregate' must be an object with 'function', 'field', and optional 'alias'.", 400);
@@ -45,6 +45,7 @@ export function registerQueryRoutes(
     if (limit !== undefined) queryParams.limit = limit;
     if (offset !== undefined) queryParams.offset = offset;
     if (search) queryParams.search = search;
+    if (searchFields) queryParams.searchFields = searchFields;
     if (aggregate) queryParams.aggregate = aggregate;
     if (groupBy) queryParams.groupBy = groupBy;
     if (having) queryParams.having = having;

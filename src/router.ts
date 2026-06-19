@@ -27,12 +27,20 @@ export function wrapRoute(
   };
 }
 
+import { logger } from "./logger";
+
 /** Default safe error factory used by `wrapRoute` when no resolver is provided. */
 export function defaultRouteError(err: unknown): Response {
   const status = err instanceof Error ? (err as { status?: number }).status : undefined;
   const isOperational = typeof status === "number";
   const message = isOperational ? (err as Error).message : "An unexpected error occurred.";
   const code = isOperational ? "REQUEST_ERROR" : "INTERNAL_ERROR";
+  if (!isOperational) {
+    logger.error("Unhandled route error", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+  }
   return new Response(
     JSON.stringify({ error: { code, message } }),
     { status: isOperational ? status : 500, headers: { "Content-Type": "application/json" } }
