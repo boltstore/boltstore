@@ -17,6 +17,7 @@
 import { DatabasePool } from "../db/pool";
 import { hashPassword, verifyPassword } from "../auth";
 import { generateSecureId } from "@boltstore/utils";
+import { logger } from "../logger";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,6 +170,12 @@ function generateKeySecret(): string {
   return `${API_KEY_PREFIX}${raw}`;
 }
 
+/** Extract a prefix from a raw API key secret for index lookup and rate-limit keying.
+ *  The prefix includes `blt_` + 8 chars = 48 bits of searchable entropy. */
+function extractKeyPrefix(secret: string): string {
+  return secret.length >= 12 ? secret.slice(0, 12) : secret;
+}
+
 /** Get current ISO-8601 timestamp. */
 function now(): string {
   return new Date().toISOString();
@@ -255,7 +262,7 @@ export async function createApiKey(
   const secret = generateKeySecret();
   const keyHash = await hashPassword(secret);
   const id = generateKeyId();
-  const prefix = secret.slice(0, 8);
+  const prefix = extractKeyPrefix(secret);
   const ts = now();
 
   const db = pool.write();
@@ -420,7 +427,7 @@ export async function verifyApiKey(
   bootstrapApiKeyTables(pool);
 
   // Look up by prefix first (efficient index scan)
-  const prefix = secret.slice(0, 8);
+  const prefix = extractKeyPrefix(secret);
   const db = pool.read();
 
   const candidates = db
@@ -484,6 +491,7 @@ function safeParseJsonArray(json: string): string[] {
     const parsed = JSON.parse(json);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
+    logger.warn("Failed to parse stored JSON array", { value: json ? json.slice(0, 200) : "empty" });
     return [];
   }
 }

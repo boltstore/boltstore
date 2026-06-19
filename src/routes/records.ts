@@ -6,6 +6,7 @@ import { jsonResponse, errorResponse } from "../server";
 import { authenticateRequest, type AuthConfig } from "../middleware/auth";
 import { apiKeyAllows, operationForMethod } from "../admin/api-keys";
 import { notifyRecordChange } from "../ws/cdc";
+import { generateSecureId } from "@boltstore/utils";
 
 function principalId(auth: Awaited<ReturnType<typeof authenticateRequest>>): string | undefined {
   return auth instanceof Response ? undefined : auth.principalId;
@@ -205,12 +206,17 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
 
     const result = batchRecords(pool, params.collection, body, auth);
 
+    const timestamp = new Date().toISOString();
     for (const op of body) {
       if (op.action === "delete" && op.id) {
         const deleted = deleteRecords.get(op.id) || { id: op.id };
         notifyRecordChange("delete", params.database, params.collection, deleted, undefined, pool, principalId(auth));
       } else if (op.action === "create") {
-        notifyRecordChange("create", params.database, params.collection, { id: "batch" }, undefined, pool, principalId(auth));
+        // Emit individual create events with estimated record data.
+        // The batch function generates IDs internally, so we emit the
+        // data-as-submitted shape rather than a placeholder.
+        const createData = { ...(op.data || {}), id: generateSecureId("rec"), created_at: timestamp, updated_at: timestamp };
+        notifyRecordChange("create", params.database, params.collection, createData, undefined, pool, principalId(auth));
       }
     }
 

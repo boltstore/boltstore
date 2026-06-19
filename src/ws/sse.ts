@@ -2,6 +2,8 @@ import type { RecordEvent } from "./types";
 import { applyRLS } from "../rls";
 import { toBindings } from "../db/cast";
 import type { DatabasePool } from "../db/pool";
+import type { ApiKeyConnectionContext } from "./types";
+import { apiKeyAllows } from "../admin/api-keys";
 
 interface SseClientInfo {
   controller: ReadableStreamDefaultController;
@@ -9,6 +11,7 @@ interface SseClientInfo {
   userId?: string;
   email?: string;
   isAdmin: boolean;
+  apiKey?: ApiKeyConnectionContext;
 }
 
 function collectionHasRLS(pool: DatabasePool, collection: string): boolean {
@@ -35,9 +38,10 @@ export function addSseClient(
   database: string,
   userId?: string,
   email?: string,
-  isAdmin?: boolean
+  isAdmin?: boolean,
+  apiKey?: ApiKeyConnectionContext
 ): void {
-  sseClients.set(id, { controller, database, userId, email, isAdmin: isAdmin ?? false });
+  sseClients.set(id, { controller, database, userId, email, isAdmin: isAdmin ?? false, apiKey });
   controller.enqueue(new TextEncoder().encode(":ok\n\n"));
 }
 
@@ -54,6 +58,17 @@ export function broadcastSseEvent(event: RecordEvent, pool?: DatabasePool): void
   const encoder = new TextEncoder();
   for (const [id, client] of sseClients) {
     if (client.database !== event.database) continue;
+
+    // Enforce API-key collection scopes
+    if (client.apiKey) {
+      if (event.collection.startsWith("_") && client.apiKey.permissions.role !== "admin") continue;
+      if (!apiKeyAllows(
+        { keyId: client.apiKey.keyId, name: "", permissions: client.apiKey.permissions },
+        client.database,
+        "read",
+        event.collection,
+      )) continue;
+    }
 
     // Suppress delete events on RLS-protected collections for non-admins
     if (pool && !client.isAdmin && event.event === "delete" && collectionHasRLS(pool, event.collection)) continue;
@@ -84,12 +99,13 @@ export function createSseResponse(
   database: string,
   userId?: string,
   email?: string,
-  isAdmin?: boolean
+  isAdmin?: boolean,
+  apiKey?: ApiKeyConnectionContext
 ): { response: Response; id: string } {
   const id = createSseId();
   const stream = new ReadableStream({
     start(controller) {
-      addSseClient(id, controller, database, userId, email, isAdmin);
+      addSseClient(id, controller, database, userId, email, isAdmin, apiKey);
     },
     cancel() {
       removeSseClient(id);

@@ -14,6 +14,9 @@ export interface WsHandlerConfig {
   auth?: AuthConfig;
 }
 
+const PING_RATE_LIMIT_WINDOW_MS = 10_000;
+const MAX_PINGS_PER_WINDOW = 5;
+
 function isSystemCollection(name?: string): boolean {
   return !!name && name.startsWith("_");
 }
@@ -35,6 +38,8 @@ function canSubscribe(data: WsUpgradeData, database: string, collection?: string
 export function createWebSocketHandler(config: WsHandlerConfig) {
   const { manager, auth: authConfig = {} } = config;
 
+  const pingCounts = new Map<string, { count: number; windowStart: number }>();
+
   return {
     open(ws: ServerWebSocket<WsUpgradeData | undefined>): void {
       const data = ws.data;
@@ -45,6 +50,7 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
 
       registerConnection(ws as unknown as WebSocket, data);
       registerWsForBroadcast(data.connectionId, ws as unknown as WebSocket);
+      pingCounts.set(data.connectionId, { count: 0, windowStart: Date.now() });
 
       logger.info(`WebSocket connected: ${data.connectionId}`, {
         request_id: "ws",
@@ -75,11 +81,27 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
       const data = ws.data;
       const database = data?.database;
 
-      switch (msg.type) {
-      case "ping":
+      // Rate-limit pings per connection to prevent resource exhaustion
+      if (msg.type === "ping" && data?.connectionId) {
+        const pingState = pingCounts.get(data.connectionId);
+        if (pingState) {
+          const now = Date.now();
+          if (now - pingState.windowStart > PING_RATE_LIMIT_WINDOW_MS) {
+            pingState.count = 1;
+            pingState.windowStart = now;
+          } else {
+            pingState.count++;
+            if (pingState.count > MAX_PINGS_PER_WINDOW) {
+              ws.close(4001, "Ping rate limit exceeded");
+              return;
+            }
+          }
+        }
         ws.send(JSON.stringify({ type: "pong" }));
-        break;
+        return;
+      }
 
+      switch (msg.type) {
       case "subscribe": {
         const subMsg = msg as unknown as SubscribeMessage;
         if (!database) {
@@ -123,6 +145,7 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
       if (connectionId) {
         removeAllSubscriptions(connectionId);
         unregisterWsForBroadcast(connectionId);
+        pingCounts.delete(connectionId);
       }
       unregisterConnection(ws as unknown as WebSocket);
 

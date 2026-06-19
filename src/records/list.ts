@@ -95,8 +95,14 @@ function listRecords(
       } else if (colType === "BOOLEAN" && typeof value === "string") {
         coerced = value === "true" || value === "1" ? 1 : 0;
       }
-      conditions.push(`"${key}" = ?`);
-      params.push(coerced);
+      if (Array.isArray(coerced)) {
+        const placeholders = coerced.map(() => "?").join(", ");
+        conditions.push(`"${key}" IN (${placeholders})`);
+        params.push(...coerced);
+      } else {
+        conditions.push(`"${key}" = ?`);
+        params.push(coerced);
+      }
     }
   }
 

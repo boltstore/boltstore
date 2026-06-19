@@ -44,11 +44,17 @@ export function registerEventRoutes(router: Router, manager: DatabaseManager, au
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
 
+    const apiKeyCtx = auth.isApiKey && auth.apiKey ? {
+      keyId: auth.apiKey.keyId,
+      permissions: auth.apiKey.permissions,
+    } : undefined;
+
     const { response, id } = createSseResponse(
       params.database,
       auth.principalId,
       auth.email,
-      auth.isAdmin
+      auth.isAdmin,
+      apiKeyCtx
     );
     return response;
   });

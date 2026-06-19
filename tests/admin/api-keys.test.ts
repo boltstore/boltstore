@@ -40,7 +40,7 @@ describe("createApiKey", () => {
 
     expect(key.id).toStartWith("apk_");
     expect(key.name).toBe("My Service Key");
-    expect(key.prefix).toHaveLength(8);
+    expect(key.prefix).toHaveLength(12);
     expect(key.secret).toStartWith("blt_");
     expect(key.secret.length).toBeGreaterThan(40);
     expect(key.permissions.role).toBe("scoped");
@@ -345,7 +345,7 @@ describe("verifyApiKey", () => {
   });
 
   test("multiple keys with same prefix but different hash — only correct one verifies", async () => {
-    // Create two keys — their prefixes may collide (8 chars is 64^8 space, but
+    // Create two keys — their prefixes may collide (12 chars is 64^12 space, but
     // we need to test that hashing properly distinguishes them)
     const key1 = await createApiKey(pool, "Key 1");
     const key2 = await createApiKey(pool, "Key 2");

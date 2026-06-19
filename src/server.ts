@@ -172,7 +172,7 @@ export function createRouter(config: { manager?: DatabaseManager; auth?: AuthCon
   const manager = config.manager;
   const authCfg = config.auth || {};
 
-  registerHealthRoutes(router, manager);
+  registerHealthRoutes(router, manager, authCfg);
   if (manager) {
     registerDatabaseRoutes(router, manager, authCfg);
     registerCollectionRoutes(router, manager, authCfg);
@@ -268,7 +268,10 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         // --- Rate limiting ---
         if (rateLimit) {
           const tier = getRateLimitTier(pathname);
-          const limitResult = checkRateLimit(clientIp, pathname, tier, rateLimit);
+          const apiKeyHeader = request.headers.get("Authorization")?.startsWith("Bearer blt_")
+            ? request.headers.get("Authorization")!.slice(7).trim().slice(0, 8)
+            : (request.headers.get("X-API-Key") || request.headers.get("x-api-key"))?.trim().slice(0, 8);
+          const limitResult = checkRateLimit(clientIp, pathname, tier, rateLimit, apiKeyHeader);
           if (!limitResult.allowed) {
             logger.warn("Rate limit exceeded", {
               ...logMeta,
