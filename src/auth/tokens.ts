@@ -2,7 +2,7 @@ import { DatabasePool } from "../db/pool";
 import type { AuthConfig, TokenPair } from "./types";
 import { bootstrapAuthTables } from "./tables";
 import { signJwt, verifyJwt, unixNow, now, generateJti } from "./jwt";
-import { validateEmail, validatePassword } from "./validation";
+import { validateEmail } from "./validation";
 import { verifyPassword } from "./password";
 
 const DEFAULT_ACCESS_EXPIRY = 900;
@@ -77,8 +77,18 @@ export async function loginUser(
   config: AuthConfig,
   isAdmin = false
 ): Promise<TokenPair> {
+  // Validate email format silently; format-only validation during login
+  // should not leak whether the email or password was the cause of failure.
   validateEmail(email);
-  validatePassword(password);
+
+  // Do NOT use validatePassword here — that leaks the minimum length policy.
+  // Instead, any invalid credential combination returns the same generic 401.
+  if (!password || password.length < 8) {
+    throw Object.assign(
+      new Error("Invalid email or password."),
+      { status: 401 }
+    );
+  }
 
   if (!config.secret) {
     throw Object.assign(
