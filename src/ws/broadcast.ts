@@ -91,8 +91,11 @@ export function broadcastEvent(event: RecordEvent, pool?: DatabasePool): void {
       if (conn.isAdmin) {
         // Admin sees everything
       } else if (event.event === "delete") {
-        // No delete events for non-admins on RLS collections
-        continue;
+        // For delete events the record no longer exists in the DB, so we cannot
+        // re-verify RLS via query. Instead, trust that the writer passed the RLS
+        // write check and let subscribers who already passed the candidate filter
+        // receive the deletion notification. This ensures real-time sync works
+        // for owners deleting their own records.
       } else if (conn.userId && conn.email) {
         const rls = getCachedRls(pool, collection, conn.userId, conn.email);
         if (rls) {

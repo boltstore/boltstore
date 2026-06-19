@@ -44,13 +44,10 @@ export async function authenticateRequest(
     );
   }
 
-  // Token verification happens against the database specified in the request.
-  // Each application database stores its own _users and _tokens tables.
-  const authPool = database === "_system" ? manager.getMetaPool() : manager.get(database);
-
+  // API keys are always verified against the _system database
   if (apiKey) {
     try {
-      const ctx = await verifyApiKey(authPool, apiKey);
+      const ctx = await verifyApiKey(manager.getMetaPool(), apiKey);
 
       if (ctx.permissions.role !== "admin") {
         const allowedDbs = ctx.permissions.allowedDatabases ?? [];
@@ -79,8 +76,29 @@ export async function authenticateRequest(
     }
   }
 
+  // JWT token verification:
+  // Admin tokens are always stored in the _system database's _tokens table.
+  // Regular user tokens are stored per-application database.
+  // Try _system first (covers admin + _system-specific tokens), then fall back
+  // to the per-database pool for non-admin user tokens.
   try {
-    const ctx = verifyAccessToken(authPool, token!, authConfig);
+    let ctx: { userId: string; email: string };
+    let lastError: unknown;
+    try {
+      ctx = verifyAccessToken(manager.getMetaPool(), token!, authConfig);
+    } catch (e) {
+      lastError = e;
+      if (database !== "_system") {
+        // Fall back to per-database pool for regular user tokens
+        try {
+          ctx = verifyAccessToken(manager.get(database), token!, authConfig);
+        } catch {
+          throw lastError;
+        }
+      } else {
+        throw e;
+      }
+    }
 
     // Determine admin status from JWT claim (avoids DB query on every request).
     let isAdmin = false;
