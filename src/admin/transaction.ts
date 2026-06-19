@@ -59,6 +59,16 @@ export function executeTransaction(
     );
   }
 
+  for (let i = 0; i < operations.length; i++) {
+    const op = operations[i] as Record<string, unknown>;
+    if (!op.sql || typeof op.sql !== "string" || op.sql.trim().length === 0) {
+      throw Object.assign(
+        new Error(`Operation ${i}: each operation requires a "sql" field with a SQL statement.`),
+        { status: 400 }
+      );
+    }
+  }
+
   return pool.writeTransaction(() => {
     const db = pool.write();
     const results: OperationResult[] = [];
