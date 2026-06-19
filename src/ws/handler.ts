@@ -117,7 +117,9 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
           break;
         }
         const sub = addSubscription(data!.connectionId, database, subMsg);
-        ws.send(JSON.stringify({ type: "subscribed", subscriptionId: sub.id }));
+        const response: Record<string, unknown> = { type: "subscribed", subscriptionId: sub.id };
+        if (subMsg.localId) response.localId = subMsg.localId;
+        ws.send(JSON.stringify(response));
         break;
       }
 
