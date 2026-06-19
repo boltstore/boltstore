@@ -32,12 +32,13 @@ export function applyCors(
   requestOrigin: string | null,
   config: CorsConfig = defaultConfig
 ): Response {
+  const origins = config.origins.length > 0 ? config.origins : ["*"];
   let origin: string | null = null;
 
-  if (config.origins.includes("*")) {
+  if (origins.includes("*")) {
     // When wildcard is explicitly configured, send wildcard (do not echo).
     origin = "*";
-  } else if (requestOrigin && config.origins.includes(requestOrigin)) {
+  } else if (requestOrigin && origins.includes(requestOrigin)) {
     origin = requestOrigin;
   }
 
@@ -62,11 +63,12 @@ export function applyCors(
  * Returns a 204 No Content response with appropriate CORS headers.
  */
 export function handlePreflight(requestOrigin: string | null, config: CorsConfig = defaultConfig): Response {
+  const origins = config.origins.length > 0 ? config.origins : ["*"];
   let origin: string | null = null;
 
-  if (config.origins.includes("*")) {
+  if (origins.includes("*")) {
     origin = "*";
-  } else if (requestOrigin && config.origins.includes(requestOrigin)) {
+  } else if (requestOrigin && origins.includes(requestOrigin)) {
     origin = requestOrigin;
   }
 

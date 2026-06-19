@@ -259,6 +259,13 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
       };
 
       try {
+        // --- CORS preflight (before rate limiting — OPTIONS do not consume the budget) ---
+        if (method === "OPTIONS") {
+          const origin = request.headers.get("Origin");
+          logger.debug("CORS preflight", logMeta);
+          return handlePreflight(origin, corsConfig);
+        }
+
         // --- Request size limit ---
         const contentLength = request.headers.get("Content-Length");
         if (contentLength && parseInt(contentLength, 10) > maxBodySize) {
@@ -292,13 +299,6 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           }
         }
 
-        // --- CORS preflight ---
-        if (method === "OPTIONS") {
-          const origin = request.headers.get("Origin");
-          logger.debug("CORS preflight", logMeta);
-          return handlePreflight(origin, corsConfig);
-        }
-
         // --- WebSocket upgrade ---
         const upgradeHeader = request.headers.get("Upgrade");
         if (upgradeHeader?.toLowerCase() === "websocket") {
@@ -308,10 +308,11 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         }
 
         // --- Request timeout ---
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = requestTimeoutMs > 0
-          ? new Promise<Response>((_, reject) =>
-              setTimeout(() => reject(new RequestTimeoutError()), requestTimeoutMs)
-            )
+          ? new Promise<Response>((_, reject) => {
+              timeoutId = setTimeout(() => reject(new RequestTimeoutError()), requestTimeoutMs);
+            })
           : null;
 
         // --- Route matching ---
@@ -320,6 +321,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
 
         if (!match) {
           response = errorResponse("NOT_FOUND", `Route not found: ${method} ${pathname}`, 404);
+          if (timeoutId !== undefined) clearTimeout(timeoutId);
         } else {
           const handlerPromise = match.handler(request, match.params);
           try {
@@ -336,6 +338,8 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
               logger.error("Handler error", { ...logMeta, error: message, stack: err instanceof Error ? err.stack : undefined });
               response = errorResponse("INTERNAL_ERROR", "An unexpected error occurred", 500);
             }
+          } finally {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
           }
         }
 

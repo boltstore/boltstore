@@ -29,9 +29,9 @@ try {
     // Start the server (import dynamically to avoid loading the server for CLI commands)
     const { createServer } = await import("./server");
     const { DatabaseManager } = await import("./db/manager");
-    const { loadConfig } = await import("./config");
+    const { autoInitConfig } = await import("./cli/init");
 
-    const config = await loadConfig();
+    const config = await autoInitConfig();
     const manager = new DatabaseManager({ dataDir: config.databasePath });
 
     const server = createServer({

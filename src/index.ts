@@ -6,14 +6,14 @@
 
 import { createServer, stopServerBackgroundTasks } from "./server";
 import { DatabaseManager } from "./db/manager";
-import { loadConfig } from "./config";
+import { autoInitConfig } from "./cli/init";
 import { info, success, error } from "./cli-style";
 
 let manager: DatabaseManager | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
 
 try {
-  const config = await loadConfig();
+  const config = await autoInitConfig();
 
   // Initialize the database manager (manages multiple application databases)
   const dataDir = config.databasePath;

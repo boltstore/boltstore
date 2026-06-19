@@ -166,7 +166,7 @@ export async function refreshAccessToken(
 
   pool.write().run("UPDATE _tokens SET revoked=1 WHERE jti=?", [payload.jti]);
 
-  return createTokenPairForUser(pool, userRow, config);
+  return createTokenPairForUser(pool, userRow, config, isAdmin);
 }
 
 export function logoutUser(pool: DatabasePool, userId: string): void {

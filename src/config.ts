@@ -50,7 +50,7 @@ const DEFAULT_CONFIG: BoltstoreConfig = {
   rateLimitAdmin: 500,
   rateLimitWindowSeconds: 60,
   serverTimezone: "UTC",
-  corsOrigins: [],
+  corsOrigins: ["*"],
   corsMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   corsHeaders: ["Content-Type", "Authorization"],
   logLevel: "info",
@@ -232,6 +232,7 @@ export async function loadConfig(): Promise<BoltstoreConfig> {
       }
     }
   }
+
 
   // Load from file
   const fileConfig = configPath ? await parseConfigFile(configPath) : {};

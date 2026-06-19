@@ -1,7 +1,7 @@
 import { error as cliError, out } from "./cli-style";
 import { HELP } from "./cli/help";
 import { serveCommand } from "./cli/serve";
-import { initCommand } from "./cli/init";
+import { initCommand, autoInitConfig } from "./cli/init";
 import { applicationsCommand } from "./cli/applications";
 import { adminCommand } from "./cli/admin";
 import { migrateCommand, migrateRollbackCommand, migrateListCommand } from "./cli/migrate";
@@ -10,26 +10,13 @@ import { backupCommand, restoreCommand } from "./cli/backup";
 import { statusCommand } from "./cli/status";
 import { routesCommand } from "./cli/routes";
 
-const NO_CONFIG_COMMANDS = new Set(["init", "admin", "help", "--help", "-h"]);
-
-async function checkConfigExists(): Promise<void> {
-  for (const candidate of ["boltstore.yaml", "boltstore.yml", "boltstore.json"]) {
-    try {
-      if (await Bun.file(candidate).exists()) return;
-    } catch {
-      // Skip
-    }
-  }
-  cliError("No config file found. Run boltstore init first to create one.");
-  process.exit(1);
-}
 
 export async function runCli(args: string[]): Promise<void> {
   const command = args[0];
 
   try {
-    if (!NO_CONFIG_COMMANDS.has(command)) {
-      await checkConfigExists();
+    if (command !== "help" && command !== "--help" && command !== "-h") {
+      await autoInitConfig();
     }
 
     switch (command) {

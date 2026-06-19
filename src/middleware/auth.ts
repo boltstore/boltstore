@@ -44,11 +44,13 @@ export async function authenticateRequest(
     );
   }
 
-  const pool = database === "_system" ? manager.getMetaPool() : manager.get(database);
+  // Token verification happens against the database specified in the request.
+  // Each application database stores its own _users and _tokens tables.
+  const authPool = database === "_system" ? manager.getMetaPool() : manager.get(database);
 
   if (apiKey) {
     try {
-      const ctx = await verifyApiKey(manager.getMetaPool(), apiKey);
+      const ctx = await verifyApiKey(authPool, apiKey);
 
       if (ctx.permissions.role !== "admin") {
         const allowedDbs = ctx.permissions.allowedDatabases ?? [];
@@ -78,7 +80,7 @@ export async function authenticateRequest(
   }
 
   try {
-    const ctx = verifyAccessToken(pool, token!, authConfig);
+    const ctx = verifyAccessToken(authPool, token!, authConfig);
 
     // Determine admin status from JWT claim (avoids DB query on every request).
     let isAdmin = false;

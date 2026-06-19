@@ -16,7 +16,7 @@
 import { runCli } from "./cli";
 import { createServer, stopServerBackgroundTasks } from "./server";
 import { DatabaseManager } from "./db/manager";
-import { loadConfig } from "./config";
+import { autoInitConfig } from "./cli/init";
 import { info, success, error } from "./cli-style";
 
 const command = process.argv[2];
@@ -33,7 +33,7 @@ try {
     await runCli(process.argv.slice(2));
   } else {
     // No command or unrecognized arg → start the server
-    const config = await loadConfig();
+    const config = await autoInitConfig();
     const manager = new DatabaseManager({ dataDir: config.databasePath });
 
     const server = createServer({

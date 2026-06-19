@@ -85,7 +85,7 @@ export function broadcastEvent(event: RecordEvent, pool?: DatabasePool): void {
   const candidates = getCandidateSubscribers(subs, database, collection, record);
 
   for (const connId of candidates) {
-    if (hasRls && pool) {
+    if (hasRls && pool && recordId) {
       const conn = getConnectionById(connId);
       if (!conn) continue;
       if (conn.isAdmin) {
