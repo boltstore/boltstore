@@ -130,7 +130,7 @@ function updateRecord(
 
   return pool.writeTransaction(() => {
     const db = pool.write();
-    const nowValue = (db.query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now') as now").get() as { now: string }).now;
+    let nowValue = (db.query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now') as now").get() as { now: string }).now;
     const updates: [string, unknown][] = [...userUpdates, ["updated_at", nowValue]];
 
     let selectSql = `SELECT 1 FROM "${collection}" WHERE id=?`;
@@ -145,6 +145,18 @@ function updateRecord(
         new Error(`Record "${id}" not found in collection "${collection}".`),
         { status: 404 }
       );
+    }
+
+    // Ensure updated_at is strictly greater than the current value.
+    // This prevents false conflict-negatives when two writes land in
+    // the same clock millisecond (millisecond-precision timestamps
+    // are not unique enough for reliable conflict detection).
+    const currentRow = db.query(`SELECT updated_at FROM "${collection}" WHERE id=?`).get(id) as { updated_at: string } | null;
+    if (currentRow && nowValue <= currentRow.updated_at) {
+      const d = new Date(currentRow.updated_at);
+      d.setMilliseconds(d.getMilliseconds() + 1);
+      nowValue = d.toISOString();
+      updates[updates.length - 1][1] = nowValue;
     }
 
     const setClauses = updates.map(([k]) => `"${k}" = ?`).join(", ");

@@ -325,6 +325,16 @@ describe("Conflict Resolution", () => {
         operations: [{ event: "update", collection: conflictCol, id: conflictRecordId, data: { title: "client_value", count: 0 }, baseVersion: currentUpdatedAt }],
       }),
     });
+    if (pushRes.status !== 409) {
+      const pushBody = await pushRes.json();
+      console.log("DIAG: push returned", pushRes.status, JSON.stringify(pushBody));
+      // Also fetch current record to see its updated_at
+      const curRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${conflictCol}/records/${conflictRecordId}`, {
+        headers: { Authorization: `Bearer ${userToken}` },
+      });
+      const curBody = await curRes.json();
+      console.log("DIAG: current record updated_at:", curBody.data.updated_at, "baseVersion:", currentUpdatedAt);
+    }
     expect(pushRes.status).toBe(409);
     const body = await pushRes.json();
     expect(body.data.results[0].status).toBe("conflict");
@@ -500,6 +510,64 @@ describe("Sync State", () => {
     });
     const body = await getRes.json();
     expect(body.data.cursor).toBe(99);
+  });
+
+  test("RLS: pull filters changes by read_rule", async () => {
+    const rlsCol = "rls_pull_test";
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/${syncDbId}/collections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
+      body: JSON.stringify({
+        name: rlsCol,
+        columns: [{ name: "title", type: "TEXT" }, { name: "owner_id", type: "TEXT" }],
+        rls: { read: "owner_id = $userId", write: "owner_id = $userId" },
+      }),
+    });
+    expect(createRes.status).toBe(201);
+
+    // Store both users' info
+    const pool = manager.get(syncDbId);
+    const user = { token: userToken, userId: "" };
+    // Look up the first user's ID from the DB
+    const userRow = pool.read().query("SELECT id FROM _users WHERE email = ?").all("syncuser@test.local") as { id: string }[];
+    user.userId = userRow[0].id;
+    const user2 = await createUserAndToken(pool, "user2@test.local");
+
+    // Create records as each user
+    const rec1Res = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${rlsCol}/records`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({ title: "user1_record", owner_id: user.userId }),
+    });
+    expect(rec1Res.status).toBe(201);
+
+    const rec2Res = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${rlsCol}/records`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${user2.token}` },
+      body: JSON.stringify({ title: "user2_record", owner_id: user2.userId }),
+    });
+    expect(rec2Res.status).toBe(201);
+
+    // User1 pulls — should only see their own change
+    const user1Pull = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/sync/pull`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({ collection: rlsCol }),
+    });
+    expect(user1Pull.status).toBe(200);
+    const user1Body = await user1Pull.json();
+    expect(user1Body.data.changes.length).toBe(1);
+    expect(user1Body.data.changes[0].record.title).toBe("user1_record");
+
+    // Admin pulls — should see all changes
+    const adminPull = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/sync/pull`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
+      body: JSON.stringify({ collection: rlsCol }),
+    });
+    expect(adminPull.status).toBe(200);
+    const adminBody = await adminPull.json();
+    expect(adminBody.data.changes.length).toBe(2);
   });
 
   test("validates clientId is required", async () => {

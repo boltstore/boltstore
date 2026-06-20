@@ -19,7 +19,7 @@ function isSystemCollection(name: string): boolean {
 
 function getConflictStrategy(pool: import("../db/pool").DatabasePool, collection: string): ConflictStrategy {
   try {
-    const row = pool.read().query("SELECT conflict_strategy FROM _collections WHERE name=?").get(collection) as { conflict_strategy?: string } | null;
+    const row = pool.write().query("SELECT conflict_strategy FROM _collections WHERE name=?").get(collection) as { conflict_strategy?: string } | null;
     if (row?.conflict_strategy && ["last-write-wins", "server-wins", "client-merge"].includes(row.conflict_strategy)) {
       return row.conflict_strategy as ConflictStrategy;
     }
@@ -29,7 +29,7 @@ function getConflictStrategy(pool: import("../db/pool").DatabasePool, collection
 
 function getRecordUpdatedAt(pool: import("../db/pool").DatabasePool, collection: string, id: string): string | null {
   try {
-    const row = pool.read().query(`SELECT updated_at FROM "${collection}" WHERE id=?`).get(id) as { updated_at?: string } | null;
+    const row = pool.write().query(`SELECT updated_at FROM "${collection}" WHERE id=?`).get(id) as { updated_at?: string } | null;
     return row?.updated_at ?? null;
   } catch {
     return null;
@@ -64,6 +64,21 @@ export function registerSyncRoutes(router: Router, manager: DatabaseManager, aut
       collection,
       limit: Math.min(limit ?? 100, 1000),
     });
+
+    // Filter changes through RLS — non-admin users should only see
+    // changes for records they have read access to.
+    if (!auth.isAdmin) {
+      result.changes = result.changes.filter((change) => {
+        if (!change.recordId) return true;
+        try {
+          const record = getRecord(pool, change.collection, change.recordId, auth);
+          return true;
+        } catch {
+          if (change.event === "delete") return true;
+          return false;
+        }
+      });
+    }
 
     return jsonResponse({ data: result });
   });
