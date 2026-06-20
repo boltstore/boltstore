@@ -234,20 +234,25 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
   // --- WebSocket handler (only if realtime enabled) ---
   const wsHandler = enableRealtime ? createWebSocketHandler({ manager, auth: config.auth }) : null;
 
-  // --- Server creation ---
-
-  const wsConfig = wsHandler ? {
+  // Build WebSocket handler config — always provide one so the type system is consistent.
+  // When disabled, use a no-op handler that rejects all connections.
+  const websocketConfig = wsHandler ? {
     open: wsHandler.open,
     message: wsHandler.message,
     close: wsHandler.close,
     drain: wsHandler.drain,
-  } : undefined;
+  } : {
+    open: () => {},
+    message: () => {},
+    close: () => {},
+    drain: () => {},
+  };
+
+  // --- Server creation ---
 
   const server = Bun.serve<import("./ws/types").WsUpgradeData>({
     port: config.port,
-
-    ...(wsConfig ? { websocket: wsConfig } : {}),
-
+    websocket: websocketConfig,
     async fetch(request: Request): Promise<Response> {
       const requestId = generateRequestId();
       const startTime = performance.now();
