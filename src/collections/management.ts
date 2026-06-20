@@ -288,7 +288,7 @@ export function getCollection(pool: DatabasePool, name: string): CollectionInfo 
 export function updateCollection(
   pool: DatabasePool,
   name: string,
-  newColumns: ColumnDefinition[],
+  newColumns?: ColumnDefinition[],
   options?: { rls?: RLSConfig; relations?: Record<string, RelationDefinition>; conflictStrategy?: ConflictStrategy }
 ): CollectionInfo {
   validateIdentifier(name, "collection name");
@@ -310,8 +310,8 @@ export function updateCollection(
       );
     }
 
-    // Reject empty columns array
-    if (!Array.isArray(newColumns) || newColumns.length === 0) {
+    // Reject empty columns array when columns are explicitly provided
+    if (newColumns !== undefined && (!Array.isArray(newColumns) || newColumns.length === 0)) {
       throw Object.assign(
         new Error("At least one column is required."),
         { status: 400 }

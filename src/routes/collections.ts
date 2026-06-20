@@ -125,11 +125,12 @@ export function registerCollectionRoutes(
       if (columns !== undefined && !Array.isArray(columns)) {
         return errorResponse("VALIDATION", "Field 'columns' must be an array.", 400);
       }
-      if (!columns && !rls && !conflictStrategy && !relations) {
+      if (!columns && columns === undefined && !rls && !conflictStrategy && !relations) {
         return errorResponse("VALIDATION", "At least one of 'columns', 'rls', 'conflictStrategy', or 'relations' is required.", 400);
       }
       const pool = manager.get(params.database);
-      const result = updateCollection(pool, params.collection, (columns ?? []) as ColumnDefinition[], { relations: normalizeRelations(relations), rls, conflictStrategy });
+      // Only pass columns array if actually changing columns — undefined means no column changes
+      const result = updateCollection(pool, params.collection, columns as ColumnDefinition[] | undefined, { relations: normalizeRelations(relations), rls, conflictStrategy });
       auditCollectionEvent("collection.update", req, auth, params.database, params.collection, true, undefined, { columns, relations, rls, conflictStrategy });
       return jsonResponse({ data: result });
     } catch (err) {
