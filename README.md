@@ -231,6 +231,47 @@ Collections whose names start with `_` (e.g. `_users`, `_tokens`, `_api_keys`) a
 
 Users update their own profile (email, password) via `PATCH /api/:database/auth/me` — not through the records API. For application-specific user data (avatars, bios, display names), create a separate collection with its own RLS rules.
 
+## Client-side LocalStore (Offline Cache)
+
+The `@boltstore/client` SDK includes an optional offline queryable cache that persists records locally. When configured, it acts as a write-through cache — data is only stored locally *after* the server confirms the operation, so permissions are always enforced server-side first.
+
+**How data flows:**
+
+```
+records.create/update/delete ──► SERVER (permission check) ──► localStore (write-through)
+client.query()                ──► localStore (cache hit)  ──► SERVER (miss) ──► localStore (cache fill)
+client.sync.pull()            ──► SERVER                  ──► localStore (auto-apply)
+records.get()                 ──► localStore (cache hit)  ──► SERVER (miss) ──► localStore (cache fill)
+```
+
+**Available stores** — all implement the same `LocalStore` interface:
+
+| Store | Environment | Persistence | Dependencies |
+|---|---|---|---|
+| `MemoryStore` | All | No (in-memory) | None |
+| `IndexedDbStore` | Browser | Yes (IndexedDB) | None (browser built-in) |
+| `BunSqliteStore` | Bun | Yes (bun:sqlite) | None (Bun built-in) |
+| `NodeFileStore` | Node.js | Yes (JSON files) | None (`fs` built-in) |
+| `BetterSqlite3Store` | Node.js | Yes (SQLite) | `npm install better-sqlite3` |
+| `ReactNativeSqliteStore` | React Native (bare) | Yes (SQLite) | `npm install react-native-sqlite-storage` |
+| `ExpoSqliteStore` | React Native (Expo) | Yes (SQLite) | `npx expo install expo-sqlite` |
+
+**Security:** System collections (`_`-prefixed) are never cached — the client skips both reads and writes to the local store for any collection starting with `_`. This is defense-in-depth; the server already rejects non-admin access to system collections.
+
+**Usage example (browser):**
+
+```typescript
+import { BoltstoreClient, IndexedDbStore } from "@boltstore/client";
+
+const client = new BoltstoreClient({
+  baseUrl: "http://localhost:8080",
+  databaseId: "dbs_xxx",
+  localStore: new IndexedDbStore(),  // cache all data in IndexedDB
+});
+```
+
+See the [client README](https://github.com/boltstore/client#localstore-offline-queryable-cache) for the full API.
+
 ## Row-Level Security (RLS)
 
 RLS policies are compiled from SQL-like expressions (e.g., `owner_id = $userId`) and cached in memory per pool.

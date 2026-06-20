@@ -41,7 +41,13 @@ export function registerQueryRoutes(
 
     const queryParams: QueryParams = {};
     if (filter) queryParams.filter = filter;
-    if (sort) queryParams.sort = Array.isArray(sort) ? sort : [sort];
+    if (sort) {
+      const entries = Array.isArray(sort) ? sort : [sort];
+      queryParams.sort = entries.map((s: any) => {
+        if (typeof s === "string") return s;
+        return `${s.field}:${s.direction || "asc"}`;
+      });
+    }
     if (fields) queryParams.fields = fields;
     if (limit !== undefined) queryParams.limit = limit;
     if (offset !== undefined) queryParams.offset = offset;

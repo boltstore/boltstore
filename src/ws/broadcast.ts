@@ -119,7 +119,10 @@ export function broadcastEvent(event: RecordEvent, pool?: DatabasePool): void {
       } else if (conn.userId && conn.email) {
         const rls = getCachedRls(pool, collection, conn.userId, conn.email);
         if (rls) {
-          const db = pool.read();
+          // Use pool.write() here — when called from inside a transaction
+          // (e.g. sync push), the write connection sees uncommitted rows
+          // that read connections cannot.
+          const db = pool.write();
           const sql = `SELECT 1 FROM "${collection}" WHERE id=? AND ${rls.whereClause}`;
           const row = db.query(sql).get(recordId, ...toBindings(rls.params));
           if (!row) continue;
