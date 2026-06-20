@@ -279,6 +279,178 @@ describe("Sync Push", () => {
   });
 });
 
+describe("Conflict Resolution", () => {
+  let conflictCol: string;
+  let conflictRecordId: string;
+  let currentUpdatedAt: string;
+
+  beforeAll(async () => {
+    conflictCol = "conflict_test";
+    // Create collection with server-wins strategy
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/${syncDbId}/collections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
+      body: JSON.stringify({ name: conflictCol, columns: [{ name: "title", type: "TEXT" }, { name: "count", type: "INTEGER" }], conflictStrategy: "server-wins" }),
+    });
+    if (createRes.status !== 201) {
+      const body = await createRes.json();
+      console.error("Failed to create conflict_test:", body);
+    }
+
+    // Create a record directly
+    const createRecRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${conflictCol}/records`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({ title: "original", count: 1 }),
+    });
+    const created = await createRecRes.json();
+    conflictRecordId = created.data.id;
+    currentUpdatedAt = created.data.updated_at;
+  });
+
+  test("server-wins: returns conflict and keeps server version when baseVersion mismatch", async () => {
+    // Simulate another client modifying the record
+    const modifyRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${conflictCol}/records/${conflictRecordId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({ title: "modified_by_server", count: 99 }),
+    });
+    expect(modifyRes.status).toBe(200);
+
+    // Push update with stale baseVersion
+    const pushRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/sync/push`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({
+        operations: [{ event: "update", collection: conflictCol, id: conflictRecordId, data: { title: "client_value", count: 0 }, baseVersion: currentUpdatedAt }],
+      }),
+    });
+    expect(pushRes.status).toBe(409);
+    const body = await pushRes.json();
+    expect(body.data.results[0].status).toBe("conflict");
+    expect(body.data.results[0].conflict.strategy).toBe("server-wins");
+    expect(body.data.results[0].conflict.serverVersion.title).toBe("modified_by_server");
+    expect(body.data.results[0].conflict.clientVersion.title).toBe("client_value");
+
+    // Server version should be preserved
+    const getRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${conflictCol}/records/${conflictRecordId}`, {
+      headers: { Authorization: `Bearer ${userToken}` },
+    });
+    const getBody = await getRes.json();
+    expect(getBody.data.title).toBe("modified_by_server");
+    expect(getBody.data.count).toBe(99);
+  });
+
+  test("last-write-wins: overwrites server version even with baseVersion mismatch", async () => {
+    const lwwCol = "lww_test";
+    const createColRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/${syncDbId}/collections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
+      body: JSON.stringify({ name: lwwCol, columns: [{ name: "title", type: "TEXT" }, { name: "val", type: "INTEGER" }], conflictStrategy: "last-write-wins" }),
+    });
+    expect(createColRes.status).toBe(201);
+
+    // Create record
+    const recRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${lwwCol}/records`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({ title: "initial", val: 1 }),
+    });
+    const rec = await recRes.json();
+    const recId = rec.data.id;
+    const initialUpdatedAt = rec.data.updated_at;
+
+    // Modify on server
+    await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${lwwCol}/records/${recId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({ title: "server_update", val: 2 }),
+    });
+
+    // Push with stale baseVersion — last-write-wins should overwrite
+    const pushRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/sync/push`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({
+        operations: [{ event: "update", collection: lwwCol, id: recId, data: { title: "client_wins", val: 999 }, baseVersion: initialUpdatedAt }],
+      }),
+    });
+    expect(pushRes.status).toBe(200);
+    const body = await pushRes.json();
+    expect(body.data.results[0].status).toBe("updated");
+
+    // Client's version should win
+    const getRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${lwwCol}/records/${recId}`, {
+      headers: { Authorization: `Bearer ${userToken}` },
+    });
+    const getBody = await getRes.json();
+    expect(getBody.data.title).toBe("client_wins");
+    expect(getBody.data.val).toBe(999);
+  });
+
+  test("push without baseVersion does not trigger conflict detection", async () => {
+    const noVerCol = "nover_test";
+    const createColRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/${syncDbId}/collections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
+      body: JSON.stringify({ name: noVerCol, columns: [{ name: "title", type: "TEXT" }], conflictStrategy: "server-wins" }),
+    });
+    expect(createColRes.status).toBe(201);
+
+    const recRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${noVerCol}/records`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({ title: "original" }),
+    });
+    const rec = await recRes.json();
+    const recId = rec.data.id;
+
+    // Modify on server
+    await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${noVerCol}/records/${recId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({ title: "server_modified" }),
+    });
+
+    // Push WITHOUT baseVersion — should go through even with server-wins strategy
+    const pushRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/sync/push`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({
+        operations: [{ event: "update", collection: noVerCol, id: recId, data: { title: "no_version_push" } }],
+      }),
+    });
+    expect(pushRes.status).toBe(200);
+    const body = await pushRes.json();
+    expect(body.data.results[0].status).toBe("updated");
+
+    const getRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${noVerCol}/records/${recId}`, {
+      headers: { Authorization: `Bearer ${userToken}` },
+    });
+    const getBody = await getRes.json();
+    expect(getBody.data.title).toBe("no_version_push");
+  });
+
+  test("collection creation accepts conflictStrategy field", async () => {
+    const stratCol = "strat_test";
+    const createRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/${syncDbId}/collections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
+      body: JSON.stringify({ name: stratCol, columns: [{ name: "x", type: "TEXT" }], conflictStrategy: "client-merge" }),
+    });
+    expect(createRes.status).toBe(201);
+    const body = await createRes.json();
+    expect(body.data.conflictStrategy).toBe("client-merge");
+
+    // Verify via getCollection
+    const getRes = await fetch(`http://localhost:${TEST_PORT}/api/${syncDbId}/collections/${stratCol}`, {
+      headers: { Authorization: `Bearer ${userToken}` },
+    });
+    const getBody = await getRes.json();
+    expect(getBody.data.conflictStrategy).toBe("client-merge");
+  });
+});
+
 describe("Sync State", () => {
   const clientId = "test_device_1";
 

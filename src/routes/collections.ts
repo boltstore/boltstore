@@ -97,12 +97,12 @@ export function registerCollectionRoutes(
     if (admin) return admin;
 
     try {
-      const { name, columns, relations, rls } = await req.json();
+      const { name, columns, relations, rls, conflictStrategy } = await req.json();
       if (!name || typeof name !== "string") return errorResponse("VALIDATION", "Field 'name' is required.", 400);
       if (!Array.isArray(columns)) return errorResponse("VALIDATION", "Field 'columns' is required.", 400);
       const pool = manager.get(params.database);
-      const result = createCollection(pool, name, columns as ColumnDefinition[], { relations: normalizeRelations(relations), rls });
-      auditCollectionEvent("collection.create", req, auth, params.database, name, true, undefined, { columns });
+      const result = createCollection(pool, name, columns as ColumnDefinition[], { relations: normalizeRelations(relations), rls, conflictStrategy });
+      auditCollectionEvent("collection.create", req, auth, params.database, name, true, undefined, { columns, conflictStrategy });
       const responseData: Record<string, unknown> = { ...result };
       if (!rls) {
         responseData.warning = "No Row-Level Security (RLS) rules configured. All authenticated users can read and write every record in this collection. To add RLS, send a PATCH request with an 'rls' field: { \"rls\": { \"read\": \"owner_id = $userId\", \"write\": \"owner_id = $userId\" } }";
@@ -121,11 +121,11 @@ export function registerCollectionRoutes(
     if (admin) return admin;
 
     try {
-      const { columns, relations, rls } = await req.json();
+      const { columns, relations, rls, conflictStrategy } = await req.json();
       if (!Array.isArray(columns)) return errorResponse("VALIDATION", "Field 'columns' is required.", 400);
       const pool = manager.get(params.database);
-      const result = updateCollection(pool, params.collection, columns as ColumnDefinition[], { relations: normalizeRelations(relations), rls });
-      auditCollectionEvent("collection.update", req, auth, params.database, params.collection, true, undefined, { columns, relations, rls });
+      const result = updateCollection(pool, params.collection, columns as ColumnDefinition[], { relations: normalizeRelations(relations), rls, conflictStrategy });
+      auditCollectionEvent("collection.update", req, auth, params.database, params.collection, true, undefined, { columns, relations, rls, conflictStrategy });
       return jsonResponse({ data: result });
     } catch (err) {
       auditCollectionEvent("collection.update", req, auth, params.database, params.collection, false, err instanceof Error ? err.message : "Failed to update collection");

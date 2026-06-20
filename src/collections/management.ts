@@ -12,6 +12,7 @@ import { DatabasePool } from "../db/pool";
 import {
   ColumnDefinition,
   CollectionInfo,
+  ConflictStrategy,
   SQLITE_TYPE_MAP,
   validateIdentifier,
   isReservedTable,
@@ -39,7 +40,7 @@ export function createCollection(
   pool: DatabasePool,
   name: string,
   columns: ColumnDefinition[],
-  options?: { rls?: RLSConfig; relations?: Record<string, RelationDefinition> }
+  options?: { rls?: RLSConfig; relations?: Record<string, RelationDefinition>; conflictStrategy?: ConflictStrategy }
 ): CollectionInfo {
   // Validate collection name
   validateIdentifier(name, "collection name");
@@ -102,6 +103,7 @@ export function createCollection(
         read_rule TEXT,
         write_rule TEXT,
         relations_json TEXT,
+        conflict_strategy TEXT NOT NULL DEFAULT 'last-write-wins',
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
@@ -110,6 +112,7 @@ export function createCollection(
     try { db.run("ALTER TABLE _collections ADD COLUMN read_rule TEXT"); } catch {}
     try { db.run("ALTER TABLE _collections ADD COLUMN write_rule TEXT"); } catch {}
     try { db.run("ALTER TABLE _collections ADD COLUMN relations_json TEXT"); } catch {}
+    try { db.run("ALTER TABLE _collections ADD COLUMN conflict_strategy TEXT NOT NULL DEFAULT 'last-write-wins'"); } catch {}
 
     // Create the actual table
     const sql = buildCreateTableSQL(name, columns);
@@ -123,6 +126,10 @@ export function createCollection(
       "INSERT INTO _collections (name, schema_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
       [name, schemaJson, now, now]
     );
+
+    // Apply conflict strategy if provided
+    const conflictStrategy = options?.conflictStrategy ?? "last-write-wins";
+    db.run("UPDATE _collections SET conflict_strategy=? WHERE name=?", [conflictStrategy, name]);
 
     // Apply RLS if provided
     if (options?.rls) {
@@ -143,6 +150,7 @@ export function createCollection(
           { field: v.field, foreignCollection: v.foreignCollection, cascadeDelete: v.cascadeDelete },
         ])
       ) : undefined,
+      conflictStrategy,
       recordCount: 0,
       createdAt: now,
       updatedAt: now,
@@ -166,7 +174,7 @@ export function listCollections(pool: DatabasePool): CollectionInfo[] {
     return [];
   }
 
-  const rows = db.query("SELECT name, schema_json, relations_json, created_at, updated_at FROM _collections ORDER BY name").all();
+  const rows = db.query("SELECT name, schema_json, relations_json, conflict_strategy, created_at, updated_at FROM _collections ORDER BY name").all();
 
   return (rows as Record<string, unknown>[]).map((row: Record<string, unknown>) => {
     const name = String(row.name || "");
@@ -198,6 +206,7 @@ export function listCollections(pool: DatabasePool): CollectionInfo[] {
       name,
       columns: schema,
       relations,
+      conflictStrategy: (String(row.conflict_strategy || "last-write-wins") as ConflictStrategy),
       recordCount,
       createdAt: String(row.created_at || ""),
       updatedAt: String(row.updated_at || ""),
@@ -230,8 +239,8 @@ export function getCollection(pool: DatabasePool, name: string): CollectionInfo 
   const userColumns = allColumns.filter((c) => !systemCols.has(c.name));
 
   // Restore original column types (e.g. BOOLEAN) from _collections.schema_json
-  const metaRow = db.query("SELECT schema_json, relations_json, created_at, updated_at FROM _collections WHERE name=?").get(name) as
-    | { schema_json?: string; relations_json?: string; created_at?: string; updated_at?: string }
+  const metaRow = db.query("SELECT schema_json, relations_json, conflict_strategy, created_at, updated_at FROM _collections WHERE name=?").get(name) as
+    | { schema_json?: string; relations_json?: string; conflict_strategy?: string; created_at?: string; updated_at?: string }
     | null;
   if (metaRow?.schema_json) {
     try {
@@ -261,6 +270,7 @@ export function getCollection(pool: DatabasePool, name: string): CollectionInfo 
     name,
     columns: userColumns,
     relations,
+    conflictStrategy: (metaRow?.conflict_strategy ?? "last-write-wins") as ConflictStrategy,
     recordCount,
     createdAt: metaRow?.created_at || "",
     updatedAt: metaRow?.updated_at || "",
@@ -279,7 +289,7 @@ export function updateCollection(
   pool: DatabasePool,
   name: string,
   newColumns: ColumnDefinition[],
-  options?: { rls?: RLSConfig; relations?: Record<string, RelationDefinition> }
+  options?: { rls?: RLSConfig; relations?: Record<string, RelationDefinition>; conflictStrategy?: ConflictStrategy }
 ): CollectionInfo {
   validateIdentifier(name, "collection name");
 
@@ -367,6 +377,11 @@ export function updateCollection(
 
     db.run("UPDATE _collections SET schema_json=?, updated_at=? WHERE name=?", [schemaJson, now, name]);
 
+    // Apply conflict strategy if provided
+    if (options?.conflictStrategy) {
+      db.run("UPDATE _collections SET conflict_strategy=? WHERE name=?", [options.conflictStrategy, name]);
+    }
+
     // Apply RLS if provided
     if (options?.rls) {
       setRLS(pool, name, options.rls);
@@ -382,9 +397,13 @@ export function updateCollection(
     // Return info
     const countRow = db.query(`SELECT COUNT(*) as cnt FROM "${name}"`).get() as { cnt?: number } | null;
 
+    // Read current conflict strategy
+    const metaRow = db.query("SELECT conflict_strategy FROM _collections WHERE name=?").get(name) as { conflict_strategy?: string } | null;
+
     return {
       name,
       columns: mergedSchema,
+      conflictStrategy: (metaRow?.conflict_strategy ?? "last-write-wins") as ConflictStrategy,
       recordCount: countRow?.cnt ?? 0,
       createdAt: "", // unchanged, not returned here
       updatedAt: now,
