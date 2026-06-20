@@ -300,13 +300,6 @@ export function updateCollection(
     );
   }
 
-  if (!Array.isArray(newColumns) || newColumns.length === 0) {
-    throw Object.assign(
-      new Error("At least one column is required to update a collection schema."),
-      { status: 400 }
-    );
-  }
-
   return pool.writeTransaction(() => {
     const db = pool.write();
 
@@ -317,65 +310,71 @@ export function updateCollection(
       );
     }
 
-    // Get existing columns from PRAGMA to avoid duplicates
-    const existingRows = db.query(`PRAGMA table_info("${name}")`).all() as Record<string, unknown>[];
-    const existingNames = new Set(existingRows.map((r) => String(r.name || "").toLowerCase()));
+    // Only process column changes if new columns are provided
+    if (Array.isArray(newColumns) && newColumns.length > 0) {
+      // Get existing columns from PRAGMA to avoid duplicates
+      const existingRows = db.query(`PRAGMA table_info("${name}")`).all() as Record<string, unknown>[];
+      const existingNames = new Set(existingRows.map((r) => String(r.name || "").toLowerCase()));
 
-    for (const col of newColumns) {
-      if (!col.name || typeof col.name !== "string") {
-        throw Object.assign(
-          new Error("Each column must have a 'name' (string)."),
-          { status: 400 }
-        );
+      for (const col of newColumns) {
+        if (!col.name || typeof col.name !== "string") {
+          throw Object.assign(
+            new Error("Each column must have a 'name' (string)."),
+            { status: 400 }
+          );
+        }
+        validateIdentifier(col.name, "column name");
+
+        if (existingNames.has(col.name.toLowerCase())) {
+          throw Object.assign(
+            new Error(`Column "${col.name}" already exists on collection "${name}".`),
+            { status: 409 }
+          );
+        }
+
+        if (!SQLITE_TYPE_MAP[col.type]) {
+          throw Object.assign(
+            new Error(
+              `Invalid column type "${col.type}" for column "${col.name}". Supported types: ${Object.keys(SQLITE_TYPE_MAP).join(", ")}.`
+            ),
+            { status: 400 }
+          );
+        }
+
+        const sqlType = SQLITE_TYPE_MAP[col.type];
+        let def = `"${col.name}" ${sqlType}`;
+        if (col.required) def += " NOT NULL";
+        if (col.default !== undefined) {
+          const dv = col.default;
+          if (dv === null) def += " DEFAULT NULL";
+          else if (typeof dv === "string") def += ` DEFAULT '${dv.replace(/'/g, "''")}'`;
+          else if (typeof dv === "boolean") def += ` DEFAULT ${dv ? 1 : 0}`;
+          else def += ` DEFAULT ${dv}`;
+        }
+        if (col.unique) def += " UNIQUE";
+
+        db.run(`ALTER TABLE "${name}" ADD COLUMN ${def}`);
       }
-      validateIdentifier(col.name, "column name");
-
-      if (existingNames.has(col.name.toLowerCase())) {
-        throw Object.assign(
-          new Error(`Column "${col.name}" already exists on collection "${name}".`),
-          { status: 409 }
-        );
-      }
-
-      if (!SQLITE_TYPE_MAP[col.type]) {
-        throw Object.assign(
-          new Error(
-            `Invalid column type "${col.type}" for column "${col.name}". Supported types: ${Object.keys(SQLITE_TYPE_MAP).join(", ")}.`
-          ),
-          { status: 400 }
-        );
-      }
-
-      const sqlType = SQLITE_TYPE_MAP[col.type];
-      let def = `"${col.name}" ${sqlType}`;
-      if (col.required) def += " NOT NULL";
-      if (col.default !== undefined) {
-        const dv = col.default;
-        if (dv === null) def += " DEFAULT NULL";
-        else if (typeof dv === "string") def += ` DEFAULT '${dv.replace(/'/g, "''")}'`;
-        else if (typeof dv === "boolean") def += ` DEFAULT ${dv ? 1 : 0}`;
-        else def += ` DEFAULT ${dv}`;
-      }
-      if (col.unique) def += " UNIQUE";
-
-      db.run(`ALTER TABLE "${name}" ADD COLUMN ${def}`);
     }
 
     // Update _collections metadata
     const now = new Date().toISOString();
 
-    // Merge old + new schema
-    const oldMeta = db.query("SELECT schema_json FROM _collections WHERE name=?").get(name) as
-      | { schema_json?: string }
-      | null;
-    let oldSchema: ColumnDefinition[] = [];
-    if (oldMeta?.schema_json) {
-      try { oldSchema = JSON.parse(oldMeta.schema_json); } catch { /* ignore */ }
+    if (Array.isArray(newColumns) && newColumns.length > 0) {
+      // Merge old + new schema
+      const oldMeta = db.query("SELECT schema_json FROM _collections WHERE name=?").get(name) as
+        | { schema_json?: string }
+        | null;
+      let oldSchema: ColumnDefinition[] = [];
+      if (oldMeta?.schema_json) {
+        try { oldSchema = JSON.parse(oldMeta.schema_json); } catch { /* ignore */ }
+      }
+      const mergedSchema = [...oldSchema, ...newColumns];
+      const schemaJson = JSON.stringify(mergedSchema);
+      db.run("UPDATE _collections SET schema_json=?, updated_at=? WHERE name=?", [schemaJson, now, name]);
+    } else {
+      db.run("UPDATE _collections SET updated_at=? WHERE name=?", [now, name]);
     }
-    const mergedSchema = [...oldSchema, ...newColumns];
-    const schemaJson = JSON.stringify(mergedSchema);
-
-    db.run("UPDATE _collections SET schema_json=?, updated_at=? WHERE name=?", [schemaJson, now, name]);
 
     // Apply conflict strategy if provided
     if (options?.conflictStrategy) {
@@ -397,15 +396,21 @@ export function updateCollection(
     // Return info
     const countRow = db.query(`SELECT COUNT(*) as cnt FROM "${name}"`).get() as { cnt?: number } | null;
 
-    // Read current conflict strategy
-    const metaRow = db.query("SELECT conflict_strategy FROM _collections WHERE name=?").get(name) as { conflict_strategy?: string } | null;
+    // Read current state from metadata
+    const metaRow = db.query("SELECT schema_json, conflict_strategy FROM _collections WHERE name=?").get(name) as
+      { schema_json?: string; conflict_strategy?: string } | null;
+
+    let currentSchema: ColumnDefinition[] = [];
+    if (metaRow?.schema_json) {
+      try { currentSchema = JSON.parse(metaRow.schema_json); } catch { /* ignore */ }
+    }
 
     return {
       name,
-      columns: mergedSchema,
+      columns: currentSchema,
       conflictStrategy: (metaRow?.conflict_strategy ?? "last-write-wins") as ConflictStrategy,
       recordCount: countRow?.cnt ?? 0,
-      createdAt: "", // unchanged, not returned here
+      createdAt: "",
       updatedAt: now,
     };
   });

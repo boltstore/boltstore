@@ -33,7 +33,12 @@ export function registerApiKeyRoutes(
     try {
       const metaPool = manager.getMetaPool();
       const body = await req.json();
-      const { name, role, allowed_databases, allowed_operations, collections } = body || {};
+      const k = (body || {}) as Record<string, unknown>;
+      const name = String(k.name ?? "");
+      const role = String(k.role ?? "scoped");
+      const allowed_databases = (k.allowed_databases ?? k.allowedDatabases ?? []) as string[];
+      const allowed_operations = (k.allowed_operations ?? k.allowedOperations ?? []) as string[];
+      const collections = (k.collections ?? []) as string[];
 
       if (!name || typeof name !== "string") {
         return errorResponse("VALIDATION", "Field 'name' is required.", 400);

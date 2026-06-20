@@ -122,9 +122,14 @@ export function registerCollectionRoutes(
 
     try {
       const { columns, relations, rls, conflictStrategy } = await req.json();
-      if (!Array.isArray(columns)) return errorResponse("VALIDATION", "Field 'columns' is required.", 400);
+      if (columns !== undefined && !Array.isArray(columns)) {
+        return errorResponse("VALIDATION", "Field 'columns' must be an array.", 400);
+      }
+      if (!columns && !rls && !conflictStrategy && !relations) {
+        return errorResponse("VALIDATION", "At least one of 'columns', 'rls', 'conflictStrategy', or 'relations' is required.", 400);
+      }
       const pool = manager.get(params.database);
-      const result = updateCollection(pool, params.collection, columns as ColumnDefinition[], { relations: normalizeRelations(relations), rls, conflictStrategy });
+      const result = updateCollection(pool, params.collection, (columns ?? []) as ColumnDefinition[], { relations: normalizeRelations(relations), rls, conflictStrategy });
       auditCollectionEvent("collection.update", req, auth, params.database, params.collection, true, undefined, { columns, relations, rls, conflictStrategy });
       return jsonResponse({ data: result });
     } catch (err) {

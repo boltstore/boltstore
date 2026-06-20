@@ -279,28 +279,29 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         }
 
         // --- Rate limiting ---
+        let rateLimitResult: import("./middleware/rate-limit").RateLimitResult | undefined;
         if (rateLimit) {
           const tier = getRateLimitTier(pathname);
           const apiKeyHeader = request.headers.get("Authorization")?.startsWith("Bearer blt_")
             ? request.headers.get("Authorization")!.slice(7).trim().slice(0, 8)
             : (request.headers.get("X-API-Key") || request.headers.get("x-api-key"))?.trim().slice(0, 8);
-          const limitResult = checkRateLimit(clientIp, pathname, tier, rateLimit, apiKeyHeader);
-          if (!limitResult.allowed) {
+          rateLimitResult = checkRateLimit(clientIp, pathname, tier, rateLimit, apiKeyHeader);
+          if (!rateLimitResult.allowed) {
             logger.warn("Rate limit exceeded", {
               ...logMeta,
               client_ip: clientIp,
               tier,
-              retry_after: limitResult.retryAfter,
+              retry_after: rateLimitResult.retryAfter,
             });
             const response = errorResponse(
               "RATE_LIMITED",
-              `Too many requests. Try again in ${Math.ceil(limitResult.retryAfter)} seconds.`,
+              `Too many requests. Try again in ${Math.ceil(rateLimitResult.retryAfter)} seconds.`,
               429
             );
-            response.headers.set("Retry-After", String(Math.ceil(limitResult.retryAfter)));
-            response.headers.set("X-RateLimit-Limit", String(limitResult.limit));
-            response.headers.set("X-RateLimit-Remaining", String(limitResult.remaining));
-            response.headers.set("X-RateLimit-Reset", String(limitResult.reset));
+            response.headers.set("Retry-After", String(Math.ceil(rateLimitResult.retryAfter)));
+            response.headers.set("X-RateLimit-Limit", String(rateLimitResult.limit));
+            response.headers.set("X-RateLimit-Remaining", String(rateLimitResult.remaining));
+            response.headers.set("X-RateLimit-Reset", String(rateLimitResult.reset));
             return response;
           }
         }
@@ -347,6 +348,13 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           } finally {
             if (timeoutId !== undefined) clearTimeout(timeoutId);
           }
+        }
+
+        // --- Rate-limit headers on all responses ---
+        if (rateLimitResult) {
+          response.headers.set("X-RateLimit-Limit", String(rateLimitResult.limit));
+          response.headers.set("X-RateLimit-Remaining", String(rateLimitResult.remaining));
+          response.headers.set("X-RateLimit-Reset", String(rateLimitResult.reset));
         }
 
         // --- CORS headers ---

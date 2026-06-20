@@ -9,6 +9,8 @@ import { notifyRecordChange } from "../ws/cdc";
 import type { ConflictStrategy } from "@boltstore/utils";
 import { toBindings } from "../db/cast";
 
+const PER_RECORD_MAX_SIZE = parseInt(Bun.env.SYNC_RECORD_MAX_SIZE || "524288", 10); // 512 KB per record
+
 function principalId(auth: Awaited<ReturnType<typeof authenticateRequest>>): string | undefined {
   return auth instanceof Response ? undefined : auth.principalId;
 }
@@ -104,6 +106,15 @@ export function registerSyncRoutes(router: Router, manager: DatabaseManager, aut
 
     if (operations.length > 1000) {
       return errorResponse("VALIDATION", "Sync push limited to 1000 operations per request.", 400);
+    }
+
+    for (const op of operations) {
+      if (op.data) {
+        const size = new TextEncoder().encode(JSON.stringify(op.data)).byteLength;
+        if (size > PER_RECORD_MAX_SIZE) {
+          return errorResponse("VALIDATION", `Record data exceeds ${PER_RECORD_MAX_SIZE} bytes (${size} bytes).`, 400);
+        }
+      }
     }
 
     const pool = manager.get(params.database);

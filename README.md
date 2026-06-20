@@ -231,6 +231,32 @@ Collections whose names start with `_` (e.g. `_users`, `_tokens`, `_api_keys`) a
 
 Users update their own profile (email, password) via `PATCH /api/:database/auth/me` — not through the records API. For application-specific user data (avatars, bios, display names), create a separate collection with its own RLS rules.
 
+## Row-Level Security (RLS)
+
+RLS policies are compiled from SQL-like expressions (e.g., `owner_id = $userId`) and cached in memory per pool.
+
+### Caching Latency
+
+RLS uses two in-memory caches that share a **30-second TTL** (`rls.ts:62`, `records/schema-cache.ts:15`):
+
+- **Policy cache** — RLS read/write rules are cached for up to 30s after fetch. After PATCHing a collection's RLS rules via the API, the old rules may still apply for that window.
+- **Schema cache** — Column definitions (`PRAGMA table_info`) are cached for 30s. Adding a column via PATCH may not be visible to writes for up to 30s.
+
+The cache is scoped to the `DatabasePool` instance (one per database per process). Calling `invalidateRLSCache()` clears the entry for the affected collection, but only on the same process — multi-process deployments expire independently.
+
+**Recommendation:** After changing RLS or schema, wait 30s or restart the server for immediate consistency.
+
+## Admin Elevation
+
+There is **no HTTP endpoint** for creating admin accounts. This is intentional — admin access controls the entire server (create/delete databases, manage all collections). Requiring a CLI step or pre-deployment seed prevents accidental self-elevation via HTTP and ensures at least one bootstrap admin pathway is always available.
+
+Admin credentials can be created through two channels:
+
+1. **CLI:** `boltstore admin` (or `bun run boltstore admin` from source) — interactive prompt that creates an admin user in the `_system` database (`cli/admin.ts:64`). After creation, log in at `POST /api/_system/auth/login`.
+2. **Pre-seeded API keys:** Insert an admin API key directly into `_system._api_keys` with `role: "admin"` during deployment automation.
+
+The `POST /api/_system/auth/register` endpoint explicitly rejects registrations — admin accounts cannot be created through the public registration flow.
+
 ## API Tiers
 
 | Prefix | Access | Operations |
