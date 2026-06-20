@@ -217,14 +217,13 @@ export async function createApiKey(
   }
 
   // Validate allowed_databases (for scoped keys) — must be dbs_ IDs or "*"
-  if (!permissions.allowedDatabases || !Array.isArray(permissions.allowedDatabases)) {
-    if (role !== "admin") {
+  if (role !== "admin") {
+    if (!permissions.allowedDatabases || !Array.isArray(permissions.allowedDatabases)) {
       throw Object.assign(
         new Error("Scoped API keys require an allowedDatabases array. Use [\"*\"] for all databases."),
         { status: 400 }
       );
     }
-  } else {
     if (permissions.allowedDatabases.length === 0) {
       throw Object.assign(
         new Error("Scoped API keys require at least one database in allowedDatabases. Use [\"*\"] for all databases."),

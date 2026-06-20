@@ -6,8 +6,6 @@ import { apiKeyAllows } from "../admin/api-keys";
 import { createRecord, getRecord, updateRecord, deleteRecord } from "../records";
 import { listChangesSince, getSyncState, upsertSyncState } from "../ws/changes";
 import { notifyRecordChange } from "../ws/cdc";
-import type { ConflictStrategy } from "@boltstore/utils";
-import { toBindings } from "../db/cast";
 
 const PER_RECORD_MAX_SIZE = parseInt(Bun.env.SYNC_RECORD_MAX_SIZE || "524288", 10); // 512 KB per record
 
@@ -17,25 +15,6 @@ function principalId(auth: Awaited<ReturnType<typeof authenticateRequest>>): str
 
 function isSystemCollection(name: string): boolean {
   return name.startsWith("_");
-}
-
-function getConflictStrategy(pool: import("../db/pool").DatabasePool, collection: string): ConflictStrategy {
-  try {
-    const row = pool.write().query("SELECT conflict_strategy FROM _collections WHERE name=?").get(collection) as { conflict_strategy?: string } | null;
-    if (row?.conflict_strategy && ["last-write-wins", "server-wins", "client-merge"].includes(row.conflict_strategy)) {
-      return row.conflict_strategy as ConflictStrategy;
-    }
-  } catch {}
-  return "last-write-wins";
-}
-
-function getRecordUpdatedAt(pool: import("../db/pool").DatabasePool, collection: string, id: string): string | null {
-  try {
-    const row = pool.write().query(`SELECT updated_at FROM "${collection}" WHERE id=?`).get(id) as { updated_at?: string } | null;
-    return row?.updated_at ?? null;
-  } catch {
-    return null;
-  }
 }
 
 export function registerSyncRoutes(router: Router, manager: DatabaseManager, authConfig: AuthConfig): void {
@@ -95,10 +74,9 @@ export function registerSyncRoutes(router: Router, manager: DatabaseManager, aut
     }
 
     const { operations, clientId } = body as {
-      operations?: { event: "create" | "update" | "delete"; collection: string; id?: string; data?: Record<string, unknown>; baseVersion?: string }[];
+      operations?: { event: "create" | "update" | "delete"; collection: string; id?: string; data?: Record<string, unknown> }[];
       clientId?: string;
     };
-    const requestStrategy = (body as { strategy?: string }).strategy;
 
     if (!Array.isArray(operations) || operations.length === 0) {
       return errorResponse("VALIDATION", "Request must contain a non-empty 'operations' array.", 400);
@@ -119,7 +97,7 @@ export function registerSyncRoutes(router: Router, manager: DatabaseManager, aut
 
     const pool = manager.get(params.database);
 
-    type PushResult = { event: string; collection: string; id: string | null; status: string; error?: string; conflict?: { serverVersion: Record<string, unknown>; clientVersion: Record<string, unknown>; strategy: string } };
+    type PushResult = { event: string; collection: string; id: string | null; status: string; error?: string };
     const results: PushResult[] = [];
 
     pool.writeTransaction(() => {
@@ -151,21 +129,8 @@ export function registerSyncRoutes(router: Router, manager: DatabaseManager, aut
                 results.push({ event: "update", collection: op.collection, id: null, status: "error", error: "Missing 'id' for update." });
                 continue;
               }
-              const strategy = getConflictStrategy(pool, op.collection);
-              if (op.baseVersion) {
-                const currentUpdatedAt = getRecordUpdatedAt(pool, op.collection, op.id);
-                if (currentUpdatedAt !== null && currentUpdatedAt !== op.baseVersion) {
-                  const serverRecord = getRecord(pool, op.collection, op.id, auth);
-                  if (strategy === "server-wins") {
-                    results.push({ event: "update", collection: op.collection, id: op.id, status: "conflict", conflict: { serverVersion: serverRecord, clientVersion: op.data ?? {}, strategy: "server-wins" } });
-                    continue;
-                  }
-                  if (strategy === "client-merge") {
-                    results.push({ event: "update", collection: op.collection, id: op.id, status: "conflict", conflict: { serverVersion: serverRecord, clientVersion: op.data ?? {}, strategy: "client-merge" } });
-                    continue;
-                  }
-                }
-              }
+              // Last-write-wins: always accept the update, even if baseVersion doesn't match.
+              // The updated_at timestamp is advanced by updateRecord, so the latest write wins.
               const previous = getRecord(pool, op.collection, op.id, auth);
               const record = updateRecord(pool, op.collection, op.id, op.data ?? {}, auth);
               notifyRecordChange("update", params.database, op.collection, record, previous, pool, principalId(auth));
@@ -194,8 +159,7 @@ export function registerSyncRoutes(router: Router, manager: DatabaseManager, aut
     });
 
     const hasErrors = results.some((r) => r.status === "error");
-    const hasConflicts = results.some((r) => r.status === "conflict");
-    return jsonResponse({ data: { ok: !hasErrors, results } }, hasConflicts ? 409 : (hasErrors ? 207 : 200));
+    return jsonResponse({ data: { ok: !hasErrors, results } }, hasErrors ? 207 : 200);
   });
 
   router.post("/api/:database/sync/state", async (req, params) => {

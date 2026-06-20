@@ -233,44 +233,42 @@ Users update their own profile (email, password) via `PATCH /api/:database/auth/
 
 ## Client-side LocalStore (Offline Cache)
 
-The `@boltstore/client` SDK includes an optional offline queryable cache that persists records locally. When configured, it acts as a write-through cache — data is only stored locally *after* the server confirms the operation, so permissions are always enforced server-side first.
+The `@boltstore/client` SDK includes an automatic offline queryable cache that persists records locally. In browsers, it uses `IndexedDbStore` (IndexedDB) by default — no configuration needed. The SDK is browser-first; support for other environments (Node.js, Bun, React Native) is planned for future releases.
 
 **How data flows:**
 
 ```
-records.create/update/delete ──► SERVER (permission check) ──► localStore (write-through)
-client.query()                ──► localStore (cache hit)  ──► SERVER (miss) ──► localStore (cache fill)
-client.sync.pull()            ──► SERVER                  ──► localStore (auto-apply)
-records.get()                 ──► localStore (cache hit)  ──► SERVER (miss) ──► localStore (cache fill)
+collection.create(data)       ──► localStore (optimistic) ──► SERVER ──► reconcile
+collection.list(options)      ──► SERVER ──► cache ──► return
+                                (fallback to localStore on network error)
+WebSocket event received      ──► localStore (auto-apply)
+Offline write                 ──► localStore (immediate) ──► queue ──► sync on reconnect
 ```
 
-**Available stores** — all implement the same `LocalStore` interface:
+**Available stores (Phase 1 — browser):**
 
 | Store | Environment | Persistence | Dependencies |
 |---|---|---|---|
-| `MemoryStore` | All | No (in-memory) | None |
 | `IndexedDbStore` | Browser | Yes (IndexedDB) | None (browser built-in) |
-| `BunSqliteStore` | Bun | Yes (bun:sqlite) | None (Bun built-in) |
-| `NodeFileStore` | Node.js | Yes (JSON files) | None (`fs` built-in) |
-| `BetterSqlite3Store` | Node.js | Yes (SQLite) | `npm install better-sqlite3` |
-| `ReactNativeSqliteStore` | React Native (bare) | Yes (SQLite) | `npm install react-native-sqlite-storage` |
-| `ExpoSqliteStore` | React Native (Expo) | Yes (SQLite) | `npx expo install expo-sqlite` |
+| `MemoryStore` | All | No (in-memory) | None |
+
+Additional stores (Bun, Node.js, React Native) will be available in future releases.
 
 **Security:** System collections (`_`-prefixed) are never cached — the client skips both reads and writes to the local store for any collection starting with `_`. This is defense-in-depth; the server already rejects non-admin access to system collections.
 
-**Usage example (browser):**
+**Usage (browser — defaults to IndexedDB automatically):**
 
 ```typescript
-import { BoltstoreClient, IndexedDbStore } from "@boltstore/client";
+import { BoltstoreClient } from "@boltstore/client";
 
 const client = new BoltstoreClient({
   baseUrl: "http://localhost:8080",
   databaseId: "dbs_xxx",
-  localStore: new IndexedDbStore(),  // cache all data in IndexedDB
+  // localStore defaults to IndexedDbStore in browser — no import needed
 });
 ```
 
-See the [client README](https://github.com/boltstore/client#localstore-offline-queryable-cache) for the full API.
+See the [client README](https://github.com/boltstore/client) for the full API.
 
 ## Row-Level Security (RLS)
 

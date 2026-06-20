@@ -310,7 +310,14 @@ export function updateCollection(
       );
     }
 
-    // Only process column changes if new columns are provided
+    // Reject empty columns array
+    if (!Array.isArray(newColumns) || newColumns.length === 0) {
+      throw Object.assign(
+        new Error("At least one column is required."),
+        { status: 400 }
+      );
+    }
+
     if (Array.isArray(newColumns) && newColumns.length > 0) {
       // Get existing columns from PRAGMA to avoid duplicates
       const existingRows = db.query(`PRAGMA table_info("${name}")`).all() as Record<string, unknown>[];

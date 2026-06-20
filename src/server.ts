@@ -88,15 +88,18 @@ export function auditFromRequest(request: Request, event: Omit<AuditEvent, "ip" 
 }
 
 /**
- * Standard JSON response helper.
+ * Standard JSON response helper with response size guard.
  */
 export function jsonResponse(data: unknown, status = 200, headers?: Record<string, string>): Response {
   const body = JSON.stringify(data);
-  const responseHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...headers,
-  };
-  return new Response(body, { status, headers: responseHeaders });
+  if (Buffer.byteLength(body, "utf8") > MAX_RESPONSE_SIZE) {
+    return errorResponse(
+      "RESPONSE_TOO_LARGE",
+      `Response body exceeds ${MAX_RESPONSE_SIZE} bytes. Use pagination or export with limit/offset.`,
+      413
+    );
+  }
+  return new Response(body, { status, headers: { "Content-Type": "application/json", ...headers } });
 }
 
 export class RequestTimeoutError extends Error {
@@ -143,20 +146,7 @@ export function safeErrorResponse(err: unknown, logMeta?: Partial<LogEntry>): Re
   return errorResponse("INTERNAL_ERROR", "An unexpected error occurred.", 500);
 }
 
-/**
- * Wrap a JSON response and reject if it exceeds the maximum response body size.
- */
-export function jsonResponseBounded(data: unknown, status = 200, headers?: Record<string, string>): Response {
-  const body = JSON.stringify(data);
-  if (Buffer.byteLength(body, "utf8") > MAX_RESPONSE_SIZE) {
-    return errorResponse(
-      "RESPONSE_TOO_LARGE",
-      `Response body exceeds ${MAX_RESPONSE_SIZE} bytes. Use pagination or export with limit/offset.`,
-      413
-    );
-  }
-  return new Response(body, { status, headers: { "Content-Type": "application/json", ...headers } });
-}
+
 
 /**
  * Determine the rate limit tier for a request based on its path.
