@@ -72,6 +72,43 @@ function getCandidateSubscribers(
   return candidates;
 }
 
+/** Fetch the raw RLS rule text for a collection, used for delete event checking. */
+function getRlsRawRule(pool: DatabasePool, collection: string): string {
+  try {
+    const db = pool.read();
+    const row = db.query("SELECT read_rule FROM _collections WHERE name=?").get(collection) as { read_rule: string | null } | null;
+    return row?.read_rule || "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Check whether a deleted record's fields match an RLS rule for a subscriber.
+ * Handles the common pattern `field = $userId` and `field = $email`.
+ */
+function recordMatchesIdentity(record: Record<string, unknown>, rule: string, userId: string, email: string): boolean {
+  if (!rule || rule.trim() === "") return true;
+  // Split on AND (case-insensitive) to handle compound rules
+  const parts = rule.split(/\s+AND\s+/i);
+  for (const part of parts) {
+    const trimmed = part.trim();
+    const userIdMatch = trimmed.match(/"?(\w+)"?\s*=\s*\$userId\b/i);
+    if (userIdMatch) {
+      if (record[userIdMatch[1]] !== userId) return false;
+      continue;
+    }
+    const emailMatch = trimmed.match(/"?(\w+)"?\s*=\s*\$email\b/i);
+    if (emailMatch) {
+      if (record[emailMatch[1]] !== email) return false;
+      continue;
+    }
+    // Unknown pattern — deny to be safe
+    return false;
+  }
+  return true;
+}
+
 export function broadcastEvent(event: RecordEvent, pool?: DatabasePool): void {
   const { database, collection, record } = event;
   const recordId = record.id as string | undefined;
@@ -93,9 +130,18 @@ export function broadcastEvent(event: RecordEvent, pool?: DatabasePool): void {
         // Admin sees everything
       } else if (event.event === "delete") {
         // The record was deleted from the DB, so we cannot run a SQL query.
-        // Suppress delete events on RLS-protected collections for non-admins.
-        // This matches the SSE behavior in sse.ts:74.
-        continue;
+        // Use the record data captured before deletion to verify RLS.
+        if (conn.userId && conn.email) {
+          const rls = getCachedRls(pool, collection, conn.userId, conn.email);
+          if (rls) {
+            // Check RLS against the deleted record's data.
+            // The whereClause uses ? placeholders substituted with userId/email.
+            // We evaluate it by substituting the known identity values into the rule
+            // and checking against the record fields.
+            const rawRule = getRlsRawRule(pool, collection);
+            if (rawRule && !recordMatchesIdentity(record as Record<string, unknown>, rawRule, conn.userId, conn.email)) continue;
+          }
+        }
       } else if (conn.userId && conn.email) {
         const rls = getCachedRls(pool, collection, conn.userId, conn.email);
         if (rls) {

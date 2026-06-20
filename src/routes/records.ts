@@ -77,7 +77,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
 
     const url = new URL(req.url);
     const pool = manager.get(params.database);
-    const options: { filter?: Record<string,unknown>; sort?: string; direction?: "asc"|"desc"; limit?: number; offset?: number; page?: number; perPage?: number; cursor?: string; fields?: string[] } = {};
+    const options: { filter?: Record<string,unknown>; sort?: string; direction?: "asc"|"desc"; limit?: number; offset?: number; page?: number; perPage?: number; cursor?: string; fields?: string[]; search?: string; searchFields?: string[] } = {};
     for (const [key, value] of url.searchParams.entries()) {
       if (key === "sort") options.sort = value;
       else if (key === "direction") options.direction = value as "asc"|"desc";
@@ -88,6 +88,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
       else if (key === "cursor") options.cursor = value;
       else if (key === "fields") options.fields = value.split(",").map(s => s.trim()).filter(Boolean);
       else if (key === "expand" || key === "cascade") { /* consumed separately, skip */ }
+      else if (key === "search") options.search = value;
+      else if (key === "search_fields") options.searchFields = value.split(",").map(s => s.trim()).filter(Boolean);
       else { if (!options.filter) options.filter = {}; options.filter[key] = value; }
     }
     if (options.filter) validateFilterValues(options.filter);

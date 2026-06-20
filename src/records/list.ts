@@ -37,6 +37,8 @@ function listRecords(
     perPage?: number;
     cursor?: string;
     fields?: string[];
+    search?: string;
+    searchFields?: string[];
   },
   auth?: AuthContext
 ): Record<string, unknown>[] {
@@ -103,6 +105,25 @@ function listRecords(
         conditions.push(`"${key}" = ?`);
         params.push(coerced);
       }
+    }
+  }
+
+  // Full-text search: match against text columns using LIKE
+  if (options?.search) {
+    const searchTargets = options.searchFields?.length
+      ? options.searchFields
+      : getColumnNames(pool, collection).filter((col) => {
+          const type = getColumnTypes(pool, collection).get(col);
+          return type === "TEXT" || type === "DATETIME";
+        });
+    const searchConditions: string[] = [];
+    for (const field of searchTargets) {
+      validateIdentifier(field, "search field");
+      searchConditions.push(`"${field}" LIKE ?`);
+      params.push(`%${options.search}%`);
+    }
+    if (searchConditions.length > 0) {
+      conditions.push(`(${searchConditions.join(" OR ")})`);
     }
   }
 
