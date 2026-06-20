@@ -29,6 +29,8 @@ export function buildFilterExpression(expr: FilterExpression): SqlFragment {
         const frag = buildOperator(sqlField, op as FilterOperator, val);
         fragments.push(frag);
       }
+    } else if (value === null) {
+      fragments.push({ sql: `${sqlField} IS NULL`, params: [] });
     } else {
       fragments.push({ sql: `${sqlField} = ?`, params: [value] });
     }

@@ -42,7 +42,10 @@ export function buildQuery(
   }
 
   if (params.groupBy) {
-    sql += `, "${params.groupBy}"`;
+    const groups = Array.isArray(params.groupBy) ? params.groupBy : [params.groupBy];
+    for (const g of groups) {
+      sql += `, "${g}"`;
+    }
   }
 
   sql += ` FROM "${collection}"`;
@@ -84,7 +87,8 @@ export function buildQuery(
   // --- GROUP BY ---
 
   if (params.groupBy) {
-    sql += ` GROUP BY "${params.groupBy}"`;
+    const groups = Array.isArray(params.groupBy) ? params.groupBy : [params.groupBy];
+    sql += ` GROUP BY ${groups.map((g: string) => `"${g}"`).join(", ")}`;
   }
 
   // --- HAVING ---

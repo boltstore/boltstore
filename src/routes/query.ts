@@ -25,7 +25,8 @@ export function registerQueryRoutes(
     if (aggregate !== undefined && (typeof aggregate !== "object" || Array.isArray(aggregate))) return errorResponse("VALIDATION", "Field 'aggregate' must be an object with 'function', 'field', and optional 'alias'.", 400);
     if (aggregate && typeof aggregate.function !== "string") return errorResponse("VALIDATION", "Field 'aggregate.function' is required and must be a string.", 400);
     if (aggregate && aggregate.function && !["$count", "$sum", "$avg", "$min", "$max"].includes(aggregate.function)) return errorResponse("VALIDATION", `Invalid aggregate function "${aggregate.function}". Valid functions: $count, $sum, $avg, $min, $max.`, 400);
-    if (groupBy !== undefined && typeof groupBy !== "string") return errorResponse("VALIDATION", "Field 'groupBy' must be a string.", 400);
+    if (groupBy !== undefined && typeof groupBy !== "string" && !Array.isArray(groupBy)) return errorResponse("VALIDATION", "Field 'groupBy' must be a string or array of strings.", 400);
+    if (Array.isArray(groupBy) && groupBy.some((g: unknown) => typeof g !== "string")) return errorResponse("VALIDATION", "Field 'groupBy' entries must be strings.", 400);
 
     // Enforce API-key collection scopes
     if (auth.isApiKey) {

@@ -45,7 +45,7 @@ export interface QueryParams {
   search?: string;
   searchFields?: string[];
   aggregate?: AggregateSpec;
-  groupBy?: string;
+  groupBy?: string | string[];
   having?: FilterExpression;
 }
 
