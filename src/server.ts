@@ -27,6 +27,7 @@ import { registerAuthRoutes } from "./routes/auth";
 import { registerOAuthRoutes } from "./routes/oauth";
 import { registerApiKeyRoutes } from "./routes/api-keys";
 import { registerEventRoutes } from "./routes/events";
+import { registerSyncRoutes } from "./routes/sync";
 import { startTokenCleanup, stopTokenCleanup, type AuthConfig } from "./auth";
 import { resolveClientIp } from "./middleware/proxy";
 import { logAuditEvent, type AuditEvent } from "./audit";
@@ -193,6 +194,7 @@ export function createRouter(config: { manager?: DatabaseManager; auth?: AuthCon
     registerOAuthRoutes(router, manager, authCfg);
     registerApiKeyRoutes(router, manager, authCfg);
     registerEventRoutes(router, manager, authCfg);
+    registerSyncRoutes(router, manager, authCfg);
   }
   return router;
 }
