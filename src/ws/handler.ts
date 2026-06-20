@@ -1,5 +1,5 @@
 import type { Server, ServerWebSocket } from "bun";
-import type { WsUpgradeData, WsMessage, SubscribeMessage, UnsubscribeMessage } from "./types";
+import type { WsUpgradeData, WsMessage, SubscribeMessage, UnsubscribeMessage, RecordEvent } from "./types";
 import { createConnectionId, registerConnection, unregisterConnection, getConnectionById } from "./connection";
 import { addSubscription, removeSubscription, removeAllSubscriptions } from "./subscription";
 import { registerWsForBroadcast, unregisterWsForBroadcast } from "./broadcast";
@@ -7,6 +7,9 @@ import { authenticateWsUpgrade } from "./auth";
 import { DatabaseManager } from "../db/manager";
 import type { AuthConfig } from "../auth";
 import { apiKeyAllows } from "../admin/api-keys";
+import { listChangesSince } from "./changes";
+import { getRecord } from "../records/crud";
+import type { AuthContext } from "../middleware/auth";
 import { logger } from "../logger";
 
 export interface WsHandlerConfig {
@@ -16,6 +19,7 @@ export interface WsHandlerConfig {
 
 const PING_RATE_LIMIT_WINDOW_MS = 10_000;
 const MAX_PINGS_PER_WINDOW = 5;
+const MAX_REPLAY_CHANGES = 1000;
 
 function isSystemCollection(name?: string): boolean {
   return !!name && name.startsWith("_");
@@ -120,6 +124,52 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
         const response: Record<string, unknown> = { type: "subscribed", subscriptionId: sub.id };
         if (subMsg.localId) response.localId = subMsg.localId;
         ws.send(JSON.stringify(response));
+
+        // Replay missed changes since lastSeq
+        if (subMsg.lastSeq != null && manager && database && subMsg.collection) {
+          try {
+            const pool = manager.get(database);
+            const replayResult = listChangesSince(pool, {
+              cursor: subMsg.lastSeq,
+              collection: subMsg.collection,
+              limit: MAX_REPLAY_CHANGES,
+            });
+
+            for (const change of replayResult.changes) {
+              if (!data) continue;
+
+              // RLS filter: skip changes the subscriber can't read
+              if (!data.isAdmin && change.recordId && change.event !== "delete") {
+                try {
+                  const replayAuth: AuthContext = {
+                    principalId: data.userId || data.connectionId || "",
+                    email: data.email,
+                    isApiKey: !!data.apiKey,
+                    isAdmin: data.isAdmin,
+                  };
+                  getRecord(pool, change.collection, change.recordId, replayAuth);
+                } catch {
+                  continue;
+                }
+              }
+
+              const replayEvent: RecordEvent = {
+                type: "event",
+                event: change.event as "create" | "update" | "delete",
+                collection: change.collection,
+                database,
+                record: change.record,
+                previous: change.previous ?? undefined,
+                seq: change.seq,
+              };
+              ws.send(JSON.stringify(replayEvent));
+            }
+          } catch (err) {
+            logger.warn("Failed to replay changes on subscribe", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
         break;
       }
 

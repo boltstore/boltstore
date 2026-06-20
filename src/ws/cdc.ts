@@ -11,7 +11,14 @@ export function notifyRecordChange(
   previous?: Record<string, unknown>,
   pool?: DatabasePool,
   principalId?: string
-): void {
+): number | undefined {
+  let seq: number | undefined;
+
+  // Persist first to capture the rowid (seq) for real-time broadcasts
+  if (pool) {
+    seq = persistChange(pool, event, collection, record, previous, principalId);
+  }
+
   const recordEvent: RecordEvent = {
     type: "event",
     event,
@@ -19,11 +26,10 @@ export function notifyRecordChange(
     database,
     record,
     previous,
+    seq,
   };
 
   broadcastEvent(recordEvent, pool);
 
-  if (pool) {
-    persistChange(pool, event, collection, record, previous, principalId);
-  }
+  return seq;
 }

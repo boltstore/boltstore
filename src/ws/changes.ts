@@ -31,7 +31,7 @@ export function persistChange(
   record: Record<string, unknown>,
   previous?: Record<string, unknown>,
   principalId?: string
-): void {
+): number {
   bootstrapChangesTable(pool);
   const id = generateSecureId("chg");
   const recordId = (record.id as string) || null;
@@ -49,6 +49,8 @@ export function persistChange(
       principalId || null,
     ]
   );
+  const row = db.query("SELECT last_insert_rowid() as seq").get() as { seq: number };
+  return row.seq;
 }
 
 export function listChanges(
