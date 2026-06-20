@@ -40,6 +40,10 @@ export interface BoltstoreConfig {
   trustedProxies: string[];
   /** Maximum number of rows accepted by the import endpoint. Default: 100000. */
   maxImportRows: number;
+  /** Enable realtime WebSocket subscriptions. Default: false. */
+  enableRealtime: boolean;
+  /** Enable offline sync (push/pull/CDC). Default: false. */
+  enableSync: boolean;
 }
 
 const DEFAULT_CONFIG: BoltstoreConfig = {
@@ -60,6 +64,8 @@ const DEFAULT_CONFIG: BoltstoreConfig = {
   maxImportRows: parseInt(Bun.env.MAX_IMPORT_ROWS || "100000", 10) || 100000,
   queryTimeoutMs: parseInt(Bun.env.QUERY_TIMEOUT_MS || "0", 10) || 0,
   trustedProxies: [],
+  enableRealtime: false,
+  enableSync: false,
 };
 
 /**
@@ -153,6 +159,8 @@ function parseEnvVars(): Partial<BoltstoreConfig> {
   if (Bun.env.QUERY_TIMEOUT_MS) config.queryTimeoutMs = parseInt(Bun.env.QUERY_TIMEOUT_MS, 10);
   if (Bun.env.TRUSTED_PROXIES) config.trustedProxies = Bun.env.TRUSTED_PROXIES.split(",").map((s) => s.trim()).filter(Boolean);
   if (Bun.env.MAX_IMPORT_ROWS) config.maxImportRows = parseInt(Bun.env.MAX_IMPORT_ROWS, 10);
+  if (Bun.env.ENABLE_REALTIME === "true") config.enableRealtime = true;
+  if (Bun.env.ENABLE_SYNC === "true") config.enableSync = true;
 
   return config;
 }
@@ -201,6 +209,8 @@ function mapToConfig(parsed: Record<string, unknown>): Partial<BoltstoreConfig> 
   if (typeof parsed.queryTimeoutMs === "number") config.queryTimeoutMs = parsed.queryTimeoutMs;
   if (Array.isArray(parsed.trustedProxies)) config.trustedProxies = parsed.trustedProxies as string[];
   if (typeof parsed.maxImportRows === "number") config.maxImportRows = parsed.maxImportRows;
+  if (typeof parsed.enableRealtime === "boolean") config.enableRealtime = parsed.enableRealtime;
+  if (typeof parsed.enableSync === "boolean") config.enableSync = parsed.enableSync;
 
   return config;
 }

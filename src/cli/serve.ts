@@ -27,6 +27,8 @@ export async function serveCommand(): Promise<void> {
     requestTimeoutMs: config.requestTimeoutMs,
     maxBatchSize: config.maxBatchSize,
     trustedProxies: config.trustedProxies,
+    enableRealtime: config.enableRealtime,
+    enableSync: config.enableSync,
   });
 
   info(`Server running on http://localhost:${config.port}`);

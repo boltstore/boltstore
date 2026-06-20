@@ -51,6 +51,10 @@ export interface ServerConfig {
   maxImportRows?: number;
   /** Request handler timeout in milliseconds. 0 disables. Default: 30000. */
   requestTimeoutMs?: number;
+  /** Enable realtime WebSocket subscriptions. Default: false. */
+  enableRealtime?: boolean;
+  /** Enable offline sync (push/pull/CDC). Requires enableRealtime for push notifications. Default: false. */
+  enableSync?: boolean;
 }
 
 export interface ApiResponse {
@@ -162,10 +166,12 @@ function getRateLimitTier(pathname: string): "admin" | "auth" | "public" {
  * Create a router with all routes registered. Exported so the CLI can
  * list routes without starting the server.
  */
-export function createRouter(config: { manager?: DatabaseManager; auth?: AuthConfig; maxImportRows?: number }): Router {
+export function createRouter(config: { manager?: DatabaseManager; auth?: AuthConfig; maxImportRows?: number; enableRealtime?: boolean; enableSync?: boolean }): Router {
   const router = new Router();
   const manager = config.manager;
   const authCfg = config.auth || {};
+  const enableRealtime = config.enableRealtime ?? false;
+  const enableSync = config.enableSync ?? false;
 
   registerHealthRoutes(router, manager, authCfg);
   if (manager) {
@@ -183,8 +189,12 @@ export function createRouter(config: { manager?: DatabaseManager; auth?: AuthCon
     registerAuthRoutes(router, manager, authCfg);
     registerOAuthRoutes(router, manager, authCfg);
     registerApiKeyRoutes(router, manager, authCfg);
-    registerEventRoutes(router, manager, authCfg);
-    registerSyncRoutes(router, manager, authCfg);
+    if (enableRealtime) {
+      registerEventRoutes(router, manager, authCfg);
+    }
+    if (enableSync) {
+      registerSyncRoutes(router, manager, authCfg);
+    }
   }
   return router;
 }
@@ -201,6 +211,8 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
   const maxBodySize = config.maxBodySize ?? 1024 * 1024;
   const maxImportRows = config.maxImportRows ?? 100000;
   const requestTimeoutMs = config.requestTimeoutMs ?? 30000;
+  const enableRealtime = config.enableRealtime ?? false;
+  const enableSync = config.enableSync ?? false;
 
   if (corsConfig.origins.includes("*")) {
     logger.warn("CORS is configured to allow all origins (*). Ensure strong authentication is in place.", {
@@ -213,20 +225,28 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
     startTokenCleanup(manager.getMetaPool());
   }
 
-  // --- WebSocket handler ---
-  const wsHandler = createWebSocketHandler({ manager, auth: config.auth });
+  // Enable CDC (change data capture) if sync or realtime is active
+  if (enableRealtime || enableSync) {
+    const { enableCDC } = require("./ws/cdc");
+    enableCDC();
+  }
+
+  // --- WebSocket handler (only if realtime enabled) ---
+  const wsHandler = enableRealtime ? createWebSocketHandler({ manager, auth: config.auth }) : null;
 
   // --- Server creation ---
+
+  const wsConfig = wsHandler ? {
+    open: wsHandler.open,
+    message: wsHandler.message,
+    close: wsHandler.close,
+    drain: wsHandler.drain,
+  } : undefined;
 
   const server = Bun.serve<import("./ws/types").WsUpgradeData>({
     port: config.port,
 
-    websocket: {
-      open: wsHandler.open,
-      message: wsHandler.message,
-      close: wsHandler.close,
-      drain: wsHandler.drain,
-    },
+    ...(wsConfig ? { websocket: wsConfig } : {}),
 
     async fetch(request: Request): Promise<Response> {
       const requestId = generateRequestId();
@@ -299,6 +319,9 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         // --- WebSocket upgrade ---
         const upgradeHeader = request.headers.get("Upgrade");
         if (upgradeHeader?.toLowerCase() === "websocket") {
+          if (!enableRealtime) {
+            return errorResponse("NOT_FOUND", "WebSocket not available. Enable realtime in server config.", 404);
+          }
           const wsResult = await handleWsUpgrade(request, server, manager, config.auth || {});
           if (wsResult) return wsResult;
           return undefined as unknown as Response;

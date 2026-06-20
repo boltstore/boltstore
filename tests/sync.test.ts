@@ -27,7 +27,7 @@ beforeAll(async () => {
   const user = await createUserAndToken(pool, "syncuser@test.local");
   userToken = user.token;
   adminApiKey = await createAdminApiKey(manager.getMetaPool());
-  server = createServer({ port: TEST_PORT, manager, auth: testAuthConfig() });
+  server = createServer({ port: TEST_PORT, manager, auth: testAuthConfig(), enableSync: true });
 
   // Create test collections
   const createRes1 = await fetch(`http://localhost:${TEST_PORT}/api/admin/${syncDbId}/collections`, {

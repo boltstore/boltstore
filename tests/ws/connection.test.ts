@@ -27,7 +27,7 @@ beforeAll(async () => {
   const user = await createUserAndToken(pool, "wsuser@test.local");
   userToken = user.token;
   adminApiKey = await createAdminApiKey(manager.getMetaPool());
-  server = createServer({ port: TEST_PORT, manager, auth: testAuthConfig() });
+  server = createServer({ port: TEST_PORT, manager, auth: testAuthConfig(), enableRealtime: true });
 });
 
 afterAll(() => {

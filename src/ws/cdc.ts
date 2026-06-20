@@ -3,6 +3,13 @@ import { broadcastEvent } from "./broadcast";
 import { persistChange } from "./changes";
 import { DatabasePool } from "../db/pool";
 
+let cdcEnabled = false;
+
+/** Enable change data capture. Called by server when sync or realtime is enabled. */
+export function enableCDC(): void {
+  cdcEnabled = true;
+}
+
 export function notifyRecordChange(
   event: "create" | "update" | "delete",
   database: string,
@@ -12,6 +19,8 @@ export function notifyRecordChange(
   pool?: DatabasePool,
   principalId?: string
 ): number | undefined {
+  if (!cdcEnabled) return;
+
   let seq: number | undefined;
 
   // Persist first to capture the rowid (seq) for real-time broadcasts

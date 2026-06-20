@@ -66,6 +66,8 @@ function buildDefaults(jwtSecret: string) {
     queryTimeoutMs: 0,
     trustedProxies: [] as string[],
     maxImportRows: 100000,
+    enableRealtime: false,
+    enableSync: false,
   };
 }
 
@@ -96,6 +98,10 @@ requestTimeoutMs: ${cfg.requestTimeoutMs}
 maxBatchSize: ${cfg.maxBatchSize}
 queryTimeoutMs: ${cfg.queryTimeoutMs}
 trustedProxies:
+# Enable realtime WebSocket subscriptions (default: false)
+# enableRealtime: false
+# Enable offline sync with change tracking (default: false)
+# enableSync: false
 `;
 }
 

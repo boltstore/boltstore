@@ -38,6 +38,8 @@ try {
     requestTimeoutMs: config.requestTimeoutMs,
     maxBatchSize: config.maxBatchSize,
     trustedProxies: config.trustedProxies,
+    enableRealtime: config.enableRealtime,
+    enableSync: config.enableSync,
   });
 
   success(`Server running on http://localhost:${config.port}`);

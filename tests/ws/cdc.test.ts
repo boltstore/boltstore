@@ -27,7 +27,7 @@ beforeAll(async () => {
   const user = await createUserAndToken(pool, "cdcuser@test.local");
   userToken = user.token;
   adminApiKey = await createAdminApiKey(manager.getMetaPool());
-  server = createServer({ port: TEST_PORT, manager, auth: testAuthConfig() });
+  server = createServer({ port: TEST_PORT, manager, auth: testAuthConfig(), enableRealtime: true });
 
   // Create a test collection
   const createColRes = await fetch(`http://localhost:${TEST_PORT}/api/admin/${cdcTestId}/collections`, {

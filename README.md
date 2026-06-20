@@ -2,14 +2,14 @@
 
 **Boltstore** — A lightweight, self-hostable backend-as-a-service on SQLite + bun.js.
 
-Built for mobile apps that need offline sync, realtime updates, and managed authentication — without the complexity of managing a full cloud backend.
+Built for applications that need a simple REST API with optional realtime subscriptions and offline sync.
 
 ## Features
 
 - **SQLite via HTTP REST API** — Full CRUD, filtering, sorting, pagination, aggregation, FTS5, JSON extraction, and raw SQL
 - **Multi-database support** — One instance serves multiple apps, each with isolated SQLite databases
-- **Realtime WebSocket** — Live subscriptions on collection and record changes
-- **Offline sync** — Client-side sync with conflict resolution (last-write-wins, custom merge)
+- **Realtime WebSocket** — Live subscriptions on collection and record changes (⚠️ unstable, opt-in via `enableRealtime: true`)
+- **Offline sync** — Client-side sync with last-write-wins conflict resolution (⚠️ unstable, opt-in via `enableSync: true`)
 - **Authentication** — Email/password, JWT tokens, OAuth (future), Row-Level Security
 - **File storage** — Local filesystem and S3-compatible providers
 - **Hooks & extensions** — User-defined JavaScript functions for validation, auth, and business logic
@@ -78,6 +78,8 @@ PORT=3000 boltstore serve
 | `corsMethods` | `CORS_METHODS` | `GET,POST,PATCH,DELETE,OPTIONS` | Allowed CORS methods |
 | `corsHeaders` | `CORS_HEADERS` | `Content-Type,Authorization` | Allowed CORS headers |
 | `trustedProxies` | `TRUSTED_PROXIES` | `[]` | Trusted proxy IPs/CIDRs |
+| `enableRealtime` | `ENABLE_REALTIME` | `false` | Enable WebSocket subscriptions and SSE (⚠️ unstable, opt-in) |
+| `enableSync` | `ENABLE_SYNC` | `false` | Enable offline sync and change tracking (⚠️ unstable, opt-in) |
 
 ## Authentication
 

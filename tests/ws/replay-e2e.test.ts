@@ -34,6 +34,7 @@ beforeAll(async () => {
     manager,
     auth: { secret: "test-secret-key-for-jwt-signing-minimum-256-bits" },
     maxBodySize: 1048576,
+    enableRealtime: true,
   });
 
   await new Promise((r) => setTimeout(r, 300));
