@@ -130,7 +130,7 @@ export function registerSyncRoutes(router: Router, manager: DatabaseManager, aut
         }
 
         if (auth.isApiKey) {
-          const apiOp = op.event === "delete" ? "delete" : "write";
+          const apiOp = op.event === "delete" ? "delete" : (op.event === "create" ? "create" : "update");
           if (!apiKeyAllows(auth.apiKey!, params.database, apiOp, op.collection)) {
             results.push({ event: op.event, collection: op.collection, id: op.id ?? null, status: "error", error: "API key lacks permission." });
             continue;

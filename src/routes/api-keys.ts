@@ -13,6 +13,8 @@ import {
   listApiKeys,
   getApiKey,
   revokeApiKey,
+  type ApiKeyRole,
+  type ApiKeyOperation,
 } from "../admin/api-keys";
 import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
@@ -45,9 +47,9 @@ export function registerApiKeyRoutes(
       }
 
       const apiKey = await createApiKey(metaPool, name, {
-        role: role || "scoped",
+        role: (role || "scoped") as ApiKeyRole,
         allowedDatabases: allowed_databases,
-        allowedOperations: allowed_operations,
+        allowedOperations: allowed_operations as ApiKeyOperation[],
         collections,
       });
       logAuditEvent(auditFromRequest(req, {
