@@ -675,3 +675,134 @@ describe("raw SQL endpoint", () => {
     expect(names).toContain("Chair");
   });
 });
+
+describe("subquery in FROM", () => {
+  beforeEach(() => seed());
+
+  test("fromSubquery — generates wrapped SELECT with correct SQL", () => {
+    const { sql, bindings } = queryFromParams({
+      collection: "",
+      fromSubquery: {
+        alias: "p",
+        collection: "products",
+        query: {
+          collection: "products",
+          wheres: [{ type: "basic", field: "price", operator: "gt", value: 100, boolean: "and" } as any],
+          orders: [],
+        },
+      },
+    }, pool.read()).toSQL();
+    expect(sql).toContain('FROM (SELECT * FROM "products" WHERE "price" > ?) AS "p"');
+    expect(bindings).toContain(100);
+  });
+
+  test("fromSubquery — live query with filter", () => {
+    const db = pool.read();
+    const data = queryFromParams({
+      collection: "",
+      fromSubquery: {
+        alias: "p",
+        collection: "products",
+        query: {
+          collection: "products",
+          wheres: [{ type: "basic", field: "category", operator: "eq", value: "fruit", boolean: "and" } as any],
+          orders: [],
+        },
+      },
+      fields: ["name"],
+    }, db).get();
+    expect(data.length).toBe(2);
+    const names = data.map((r: any) => r.name);
+    expect(names).toContain("Apple");
+    expect(names).toContain("Banana");
+  });
+});
+
+describe("subquery in JOIN", () => {
+  beforeAll(() => {
+    const db = pool.write();
+    db.run(`DROP TABLE IF EXISTS "orders"`);
+    db.run(`CREATE TABLE "orders" (id TEXT PRIMARY KEY, product_id TEXT, status TEXT, total REAL, created_at TEXT, updated_at TEXT)`);
+    db.run(`INSERT INTO "orders" (id, product_id, status, total, created_at, updated_at) VALUES ('ord1', 'prod1', 'pending', 250, '2024-01-01', '2024-01-01')`);
+    db.run(`INSERT INTO "orders" (id, product_id, status, total, created_at, updated_at) VALUES ('ord2', 'prod2', 'shipped', 150, '2024-01-02', '2024-01-02')`);
+    db.run(`INSERT INTO "orders" (id, product_id, status, total, created_at, updated_at) VALUES ('ord3', 'prod3', 'delivered', 50, '2024-01-03', '2024-01-03')`);
+  });
+
+  beforeEach(() => seed());
+
+  test("subquery join — generates correct SQL", () => {
+    const qb = queryFromParams({
+      collection: "products",
+      joins: [{
+        type: "inner",
+        target: "o",
+        subquery: {
+          collection: "orders",
+          query: {
+            collection: "orders",
+            wheres: [{ type: "basic", field: "total", operator: "gt", value: 50, boolean: "and" } as any],
+            orders: [],
+          },
+        },
+        on: [{ left: "products.name", operator: "=", right: "o.status" }],
+      }],
+      fields: ["products.name"],
+    }, pool.read());
+    const { sql, bindings } = qb.toSQL();
+    expect(sql).toContain('INNER JOIN (SELECT * FROM "orders" WHERE "total" > ?) AS "o"');
+    expect(sql).toContain('"products"."name" = "o"."status"');
+    expect(bindings).toContain(50);
+  });
+
+  test("subquery join — left join with subquery filter", () => {
+    const qb = queryFromParams({
+      collection: "products",
+      joins: [{
+        type: "left",
+        target: "recent",
+        subquery: {
+          collection: "orders",
+          query: {
+            collection: "orders",
+            wheres: [{ type: "basic", field: "total", operator: "gte", value: 200, boolean: "and" } as any],
+            orders: [],
+          },
+        },
+        on: [{ left: "products.name", operator: "=", right: "recent.status" }],
+      }],
+      fields: ["products.name"],
+    }, pool.read());
+    const { sql, bindings } = qb.toSQL();
+    expect(sql).toContain('LEFT JOIN (SELECT * FROM "orders" WHERE "total" >= ?) AS "recent"');
+    expect(bindings).toContain(200);
+  });
+
+  test("subquery join — live data with join", () => {
+    const db = pool.read();
+    // Add an order that references a product for join matching
+    pool.write().run('INSERT INTO "orders" (id, product_id, status, total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ["join_test", "prod1", "fruit", 100, new Date().toISOString(), new Date().toISOString()]);
+    const qb = queryFromParams({
+      collection: "products",
+      joins: [{
+        type: "inner",
+        target: "o",
+        subquery: {
+          collection: "orders",
+          query: {
+            collection: "orders",
+            wheres: [{ type: "basic", field: "total", operator: "gt", value: 0, boolean: "and" } as any],
+            orders: [],
+          },
+        },
+        on: [{ left: "products.category", operator: "=", right: "o.status" }],
+      }],
+      fields: ["name"],
+    }, db);
+    const data = qb.get();
+    // Should match products where category = 'fruit' (Apple, Banana)
+    expect(data.length).toBe(2);
+    const names = data.map((r: any) => r.name).sort();
+    expect(names).toEqual(["Apple", "Banana"]);
+  });
+});

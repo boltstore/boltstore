@@ -306,13 +306,35 @@ export interface RLSFilter {
   params: unknown[];
 }
 
-function buildJoinClause(join: JoinClause, rlsFilters?: Map<string, RLSFilter>): string {
-  const target = quoteIdent(join.target);
+function buildJoinClause(join: JoinClause, bindings: unknown[], rlsFilters?: Map<string, RLSFilter>): string {
+  let targetRef: string;
 
-  const rls = rlsFilters?.get(join.target);
-  const targetRef = rls
-    ? `(SELECT * FROM ${target} WHERE ${rls.whereClause}) AS ${target}`
-    : target;
+  if (join.subquery) {
+    // Subquery join: INNER/LEFT JOIN (SELECT ...) AS alias ON ...
+    const innerFull = toFullState({
+      collection: join.subquery.query.collection,
+      wheres: join.subquery.query.wheres,
+      orders: join.subquery.query.orders,
+      limit: join.subquery.query.limit,
+      offset: join.subquery.query.offset,
+    });
+    if (innerFull.collection) {
+      const innerSql = generateSQL(innerFull, undefined, rlsFilters);
+      const alias = quoteIdent(join.target);
+      targetRef = `(${innerSql.sql}) AS ${alias}`;
+      bindings.push(...innerSql.bindings);
+    } else {
+      const alias = quoteIdent(join.target);
+      targetRef = `(SELECT 1) AS ${alias}`;
+    }
+  } else {
+    const target = quoteIdent(join.target);
+    const rls = rlsFilters?.get(join.target);
+    targetRef = rls
+      ? `(SELECT * FROM ${target} WHERE ${rls.whereClause}) AS ${target}`
+      : target;
+    if (rls) bindings.push(...rls.params);
+  }
 
   switch (join.type) {
     case "inner":
@@ -320,10 +342,7 @@ function buildJoinClause(join: JoinClause, rlsFilters?: Map<string, RLSFilter>):
     case "left":
       return `LEFT JOIN ${targetRef}`;
     case "cross":
-      const ref = rls
-        ? `(SELECT * FROM ${target} WHERE ${rls.whereClause}) AS ${target}`
-        : target;
-      return `CROSS JOIN ${ref}`;
+      return `CROSS JOIN ${targetRef}`;
     default:
       throw new Error(`Unknown join type: ${(join as JoinClause).type}`);
   }
@@ -423,16 +442,29 @@ export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Datab
   }
 
   // FROM
-  if (state.collection) {
+  if (state.fromSubquery) {
+    const fromFull = toFullState({
+      collection: state.fromSubquery.query.collection,
+      wheres: state.fromSubquery.query.wheres,
+      orders: state.fromSubquery.query.orders,
+      limit: state.fromSubquery.query.limit,
+      offset: state.fromSubquery.query.offset,
+    });
+    if (fromFull.collection) {
+      const innerSql = generateSQL(fromFull, undefined, rlsFilters);
+      const alias = quoteIdent(state.fromSubquery.alias);
+      parts.push(`FROM (${innerSql.sql}) AS ${alias}`);
+      bindings.push(...innerSql.bindings);
+    }
+  } else if (state.collection) {
     parts.push(`FROM ${quoteIdent(state.collection)}`);
   }
 
   // JOINs
   for (const join of state.joins) {
-    const rls = rlsFilters?.get(join.target);
-    const joinSql = buildJoinClause(join, rlsFilters) + compileJoinOn(join);
+    const joinSql = buildJoinClause(join, bindings, rlsFilters) + compileJoinOn(join);
     parts.push(joinSql);
-    if (rls) bindings.push(...rls.params);
+    // RLS bindings for regular joins handled inside buildJoinClause
   }
 
   // WHERE

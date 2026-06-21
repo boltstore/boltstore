@@ -225,9 +225,25 @@ function parseWithRelation(value: unknown): Record<string, boolean | import("@bo
 export function queryFromParams(params: QueryOptions, db: import("bun:sqlite").Database): ServerQueryBuilder {
   const qb = new ServerQueryBuilder(db);
 
-  if (!params.collection) throw new Error("Field 'collection' is required.");
-  validateIdentifier(params.collection, "collection name");
-  qb.from(params.collection);
+  if (params.fromSubquery) {
+    qb.state.collection = undefined;
+    qb.state.fromSubquery = {
+      alias: params.fromSubquery.alias,
+      collection: params.fromSubquery.collection,
+      query: {
+        collection: params.fromSubquery.query.collection,
+        wheres: params.fromSubquery.query.wheres || [],
+        orders: params.fromSubquery.query.orders || [],
+        limit: params.fromSubquery.query.limit,
+        offset: params.fromSubquery.query.offset,
+      },
+    };
+  } else if (params.collection) {
+    validateIdentifier(params.collection, "collection name");
+    qb.from(params.collection);
+  } else {
+    throw new Error("Field 'collection' or 'fromSubquery' is required.");
+  }
 
   if (params.filter) {
     const wheres = parseFilter(params.filter);
@@ -333,7 +349,7 @@ export function queryFromParams(params: QueryOptions, db: import("bun:sqlite").D
           validateIdentifier(c.right.replace(/\..*$/, ""), "join on right");
         }
       }
-      qb.state.joins.push({
+      const joinEntry: import("@boltstore/utils").JoinClause = {
         type: j.type || "inner",
         target: j.target,
         on: j.on?.map((c: any) => ({
@@ -341,7 +357,20 @@ export function queryFromParams(params: QueryOptions, db: import("bun:sqlite").D
           operator: c.operator || "=",
           right: c.right,
         })),
-      });
+      };
+      if (j.subquery) {
+        joinEntry.subquery = {
+          collection: j.subquery.collection,
+          query: {
+            collection: j.subquery.query?.collection,
+            wheres: j.subquery.query?.wheres || [],
+            orders: j.subquery.query?.orders || [],
+            limit: j.subquery.query?.limit,
+            offset: j.subquery.query?.offset,
+          },
+        };
+      }
+      qb.state.joins.push(joinEntry);
     }
   }
 
