@@ -19,6 +19,7 @@ const total = ref(0);
 const sortField = ref("");
 const sortDir = ref<"asc" | "desc">("asc");
 const filterText = ref("");
+const deleting = ref<number | null>(null);
 
 const totalPages = computed(() => Math.ceil(total.value / perPage.value));
 
@@ -72,12 +73,16 @@ async function sortBy(field: string) {
 }
 
 async function deleteRecord(id: number) {
+  if (deleting.value !== null) return;
   if (!confirm("Delete this record?")) return;
+  deleting.value = id;
   try {
     await apiRequest("DELETE", `/api/databases/${dbName.value}/tables/${tableName.value}/records/${id}`);
     await fetchRecords();
   } catch (e: any) {
     alert(e.message);
+  } finally {
+    deleting.value = null;
   }
 }
 </script>
@@ -113,7 +118,9 @@ async function deleteRecord(id: number) {
                 {{ row[col.name] ?? "—" }}
               </td>
               <td class="px-4 py-2.5 text-right">
-                <button @click="deleteRecord(row.id)" class="text-xs text-red-400 hover:text-red-300">Delete</button>
+                <button @click="deleteRecord(row.id)" :disabled="deleting !== null" class="text-xs text-red-400 hover:text-red-300 disabled:opacity-40">
+                  {{ deleting === row.id ? "Deleting..." : "Delete" }}
+                </button>
               </td>
             </tr>
             <tr v-if="records.length === 0">

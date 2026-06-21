@@ -9,8 +9,14 @@ const { state } = useConnection();
 
 const health = ref<any>({});
 const databases = ref<any[] | null>(null);
+const loadError = ref("");
 
 onMounted(async () => {
+  const timeoutId = setTimeout(() => {
+    if (databases.value === null) {
+      loadError.value = "Server unreachable. Is the backend running?";
+    }
+  }, 8000);
   try {
     const [healthData, dbs] = await Promise.all([
       apiRequest("GET", "/api/health"),
@@ -18,15 +24,50 @@ onMounted(async () => {
     ]);
     health.value = healthData;
     databases.value = dbs ?? [];
-  } catch {
-    // silent — metrics show "—" when data unavailable
+  } catch (e: any) {
+    loadError.value = e.message || "Failed to load data";
+  } finally {
+    clearTimeout(timeoutId);
+    if (!loadError.value && databases.value === null) {
+      databases.value = [];
+    }
   }
 });
+
+function retry() {
+  loadError.value = "";
+  health.value = {};
+  databases.value = null;
+  const timeoutId = setTimeout(() => {
+    if (databases.value === null) {
+      loadError.value = "Server unreachable. Is the backend running?";
+    }
+  }, 8000);
+  Promise.all([
+    apiRequest("GET", "/api/health"),
+    apiRequest("GET", "/api/databases"),
+  ]).then(([healthData, dbs]) => {
+    health.value = healthData;
+    databases.value = dbs ?? [];
+  }).catch((e: any) => {
+    loadError.value = e.message || "Failed to load data";
+  }).finally(() => {
+    clearTimeout(timeoutId);
+    if (!loadError.value && databases.value === null) {
+      databases.value = [];
+    }
+  });
+}
 </script>
 
 <template>
   <div>
     <h1 class="text-2xl font-semibold text-gray-100 mb-8">Overview</h1>
+
+    <div v-if="loadError && databases === null" class="mb-8 px-4 py-3 rounded-xl bg-red-950/50 border border-red-900/50 text-sm text-red-400 flex items-center gap-3">
+      <span class="flex-1">{{ loadError }}</span>
+      <button @click="retry" class="text-xs text-red-300 hover:text-red-200 underline">Retry</button>
+    </div>
 
     <!-- Metrics — always visible -->
     <div class="grid grid-cols-4 gap-4 mb-10">
@@ -82,7 +123,7 @@ onMounted(async () => {
       <button @click="router.push('/databases')" class="text-xs text-accent-400 hover:text-accent-300 transition-colors">View all</button>
     </div>
 
-    <div v-if="databases === null" class="space-y-2">
+    <div v-if="databases === null && !loadError" class="space-y-2">
       <div v-for="i in 3" :key="i" class="flex items-center justify-between px-4 py-3 rounded-lg bg-gray-900 border border-gray-800 animate-pulse">
         <div class="flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-gray-800" />
@@ -94,12 +135,12 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div v-else-if="databases.length === 0" class="text-center py-16">
+    <div v-else-if="databases?.length === 0" class="text-center py-16">
       <p class="text-sm text-gray-500 mb-2">No databases yet</p>
       <button @click="router.push('/databases')" class="text-sm text-accent-400 hover:text-accent-300">Create your first database</button>
     </div>
 
-    <div v-else class="space-y-2">
+    <div v-else-if="databases && databases.length > 0" class="space-y-2">
       <div v-for="db in databases" :key="db.name" @click="router.push(`/databases/${db.name}`)" class="flex items-center justify-between px-4 py-3 rounded-lg bg-gray-900 hover:bg-gray-800 border border-gray-800 transition-colors cursor-pointer">
         <div class="flex items-center gap-3">
           <div class="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center">

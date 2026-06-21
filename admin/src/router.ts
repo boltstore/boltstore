@@ -8,12 +8,8 @@ const routes = [
   {
     path: "/databases/:name",
     component: () => import("./views/DatabaseDetail.vue"),
-    children: [
-      { path: "sql", name: "SqlConsole", component: () => import("./views/SqlConsole.vue") },
-      { path: "settings", name: "DatabaseSettings", component: () => import("./views/DatabaseSettings.vue") },
-    ],
   },
-  { path: "/databases/:name/tables/:table", name: "TableRecords", component: () => import("./views/TableRecords.vue") },
+
   { path: "/activity", name: "ActivityLog", component: () => import("./views/ActivityLog.vue") },
 ];
 

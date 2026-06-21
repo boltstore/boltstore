@@ -23,10 +23,14 @@ function generateId(): string {
 export function registerActivityRoutes(router: Router, manager: DatabaseManager): void {
   router.get("/api/activity", async (req) => {
     if (!isAdminRequest(req, manager)) return jsonResponse({ data: [], meta: { total: 0 } });
+    const url = new URL(req.url);
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "20", 10) || 20, 1), 100);
+    const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0);
+    const total = (manager.getMetaPool().read().query("SELECT COUNT(*) as c FROM _activity_log").get() as any)?.c ?? 0;
     const rows = manager.getMetaPool().read().query(
-      "SELECT id, action, database_name, target, details, ip, created_at FROM _activity_log ORDER BY created_at DESC LIMIT 100"
-    ).all();
-    return jsonResponse({ data: rows, meta: { total: rows.length } });
+      "SELECT id, action, database_name, target, details, ip, created_at FROM _activity_log ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    ).all(limit, offset);
+    return jsonResponse({ data: rows, meta: { total, limit, offset } });
   });
 }
 
