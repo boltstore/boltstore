@@ -57,6 +57,8 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("ERROR", "Failed to rename database file.", 500);
     }
 
+    // Update child table references before renaming
+    metaPool.write().run("UPDATE _api_keys SET database_name = ? WHERE database_name = ?", [body.name, oldName]);
     metaPool.write().run("UPDATE _databases SET name = ?, file_path = ? WHERE name = ?", [body.name, newPath, oldName]);
     logActivity(manager, { action: "database.rename", database_name: oldName, details: { from: oldName, to: body.name }, ip: req.headers.get("x-forwarded-for") || undefined });
     return jsonResponse({ data: { name: body.name } });

@@ -42,7 +42,7 @@ function buildWhereClause(filter: Record<string, any>, params: any[]): string {
     }
   }
 
-  return clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+  return clauses.join(" AND ");
 }
 
 function buildSelectSQL(table: string, query: URLSearchParams): { sql: string; params: any[]; countSql: string } {
@@ -60,12 +60,11 @@ function buildSelectSQL(table: string, query: URLSearchParams): { sql: string; p
     if (filterParam) filter = JSON.parse(filterParam);
   } catch {}
   const where = buildWhereClause(filter, params);
-
-  // Search
+  const wherePrefix = where ? ` WHERE ${where}` : "";  // Search
   const search = query.get("search");
   let searchClause = "";
   if (search) {
-    searchClause = ` AND (${fields.length > 0 ? fields.map(f => `"${f}" LIKE ?`).join(" OR ") : `* LIKE ?`})`;
+    searchClause = `${where ? " AND" : " WHERE"} (${fields.length > 0 ? fields.map(f => `"${f}" LIKE ?`).join(" OR ") : `* LIKE ?`})`;
     params.push(`%${search}%`);
   }
 
@@ -86,8 +85,8 @@ function buildSelectSQL(table: string, query: URLSearchParams): { sql: string; p
   const limit = Math.min(parseInt(query.get("limit") || String(DEFAULT_LIMIT), 10), MAX_LIMIT);
   const offset = parseInt(query.get("offset") || "0", 10);
 
-  const sql = `SELECT ${selectExpr} FROM "${table}"${where}${searchClause}${orderBy} LIMIT ? OFFSET ?`;
-  const countSql = `SELECT COUNT(*) as total FROM "${table}"${where}${searchClause}`;
+  const sql = `SELECT ${selectExpr} FROM "${table}"${wherePrefix}${searchClause}${orderBy} LIMIT ? OFFSET ?`;
+  const countSql = `SELECT COUNT(*) as total FROM "${table}"${wherePrefix}${searchClause}`;
   params.push(limit, offset);
 
   return { sql, params, countSql };
