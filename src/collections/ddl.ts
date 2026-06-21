@@ -10,7 +10,7 @@
 
 import { DatabasePool } from "../db/pool";
 import {
-  ColumnDefinition,
+  type ColumnDefinition,
   SQLITE_TYPE_MAP,
   validateIdentifier,
   type ColumnType,
@@ -37,15 +37,23 @@ export function buildCreateTableSQL(name: string, columns: ColumnDefinition[]): 
     validateIdentifier(col.name, "column name");
     const sqlType = SQLITE_TYPE_MAP[col.type];
     let def = `"${col.name}" ${sqlType}`;
-    if (col.required) def += " NOT NULL";
-    if (col.default !== undefined) {
-      const dv = col.default;
-      if (dv === null) def += " DEFAULT NULL";
-      else if (typeof dv === "string") def += ` DEFAULT '${dv.replace(/'/g, "''")}'`;
-      else if (typeof dv === "boolean") def += ` DEFAULT ${dv ? 1 : 0}`;
-      else def += ` DEFAULT ${dv}`;
+
+    if (col.generated) {
+      const kind = col.generated.stored ? "STORED" : "VIRTUAL";
+      def += ` GENERATED ALWAYS AS (${col.generated.expression}) ${kind}`;
+    } else {
+      if (col.required) def += " NOT NULL";
+      if (col.defaultExpr !== undefined) {
+        def += ` DEFAULT (${col.defaultExpr})`;
+      } else if (col.default !== undefined) {
+        const dv = col.default;
+        if (dv === null) def += " DEFAULT NULL";
+        else if (typeof dv === "string") def += ` DEFAULT '${dv.replace(/'/g, "''")}'`;
+        else if (typeof dv === "boolean") def += ` DEFAULT ${dv ? 1 : 0}`;
+        else def += ` DEFAULT ${dv}`;
+      }
+      if (col.unique) def += " UNIQUE";
     }
-    if (col.unique) def += " UNIQUE";
     parts.push(def);
   }
 

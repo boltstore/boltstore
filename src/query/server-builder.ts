@@ -3,6 +3,7 @@ import { generateSQL, compileWheresNoSearch, type RLSFilter } from "./sql-genera
 import type { RLSResult } from "../rls";
 import { toBindings } from "../db/cast";
 import type { QueryResult } from "./types";
+import { resolveRelations } from "./resolve-relations";
 
 export class ServerQueryBuilder extends QueryBuilder {
   private db: import("bun:sqlite").Database;
@@ -31,7 +32,8 @@ export class ServerQueryBuilder extends QueryBuilder {
 
   get<T = Record<string, unknown>>(): T[] {
     const { sql, bindings } = this.toSQL();
-    return this.db.query(sql).all(...toBindings(bindings)) as T[];
+    const data = this.db.query(sql).all(...toBindings(bindings)) as Record<string, unknown>[];
+    return resolveRelations(this.state, this.db, data) as T[];
   }
 
   first<T = Record<string, unknown>>(): T | null {

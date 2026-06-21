@@ -82,6 +82,15 @@ export function createCollection(
         { status: 400 }
       );
     }
+
+    if (col.generated) {
+      if (typeof col.generated.expression !== "string" || !col.generated.expression) {
+        throw Object.assign(
+          new Error(`Generated column "${col.name}" must have an 'expression' string.`),
+          { status: 400 }
+        );
+      }
+    }
   }
 
   return pool.writeTransaction(() => {
@@ -348,17 +357,34 @@ export function updateCollection(
           );
         }
 
+        if (col.generated) {
+          if (typeof col.generated.expression !== "string" || !col.generated.expression) {
+            throw Object.assign(
+              new Error(`Generated column "${col.name}" must have an 'expression' string.`),
+              { status: 400 }
+            );
+          }
+        }
+
         const sqlType = SQLITE_TYPE_MAP[col.type];
         let def = `"${col.name}" ${sqlType}`;
-        if (col.required) def += " NOT NULL";
-        if (col.default !== undefined) {
-          const dv = col.default;
-          if (dv === null) def += " DEFAULT NULL";
-          else if (typeof dv === "string") def += ` DEFAULT '${dv.replace(/'/g, "''")}'`;
-          else if (typeof dv === "boolean") def += ` DEFAULT ${dv ? 1 : 0}`;
-          else def += ` DEFAULT ${dv}`;
+
+        if (col.generated) {
+          const kind = col.generated.stored ? "STORED" : "VIRTUAL";
+          def += ` GENERATED ALWAYS AS (${col.generated.expression}) ${kind}`;
+        } else {
+          if (col.required) def += " NOT NULL";
+          if (col.defaultExpr !== undefined) {
+            def += ` DEFAULT (${col.defaultExpr})`;
+          } else if (col.default !== undefined) {
+            const dv = col.default;
+            if (dv === null) def += " DEFAULT NULL";
+            else if (typeof dv === "string") def += ` DEFAULT '${dv.replace(/'/g, "''")}'`;
+            else if (typeof dv === "boolean") def += ` DEFAULT ${dv ? 1 : 0}`;
+            else def += ` DEFAULT ${dv}`;
+          }
+          if (col.unique) def += " UNIQUE";
         }
-        if (col.unique) def += " UNIQUE";
 
         db.run(`ALTER TABLE "${name}" ADD COLUMN ${def}`);
       }

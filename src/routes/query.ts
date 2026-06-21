@@ -112,4 +112,61 @@ export function registerQueryRoutes(
       throw err;
     }
   });
+
+  // Non-admin raw SQL endpoint — executes SELECT queries with RLS
+  router.post("/api/:database/query/sql", async (req, params) => {
+    const auth = await authenticateRequest(req, manager, params.database, authConfig);
+    if (auth instanceof Response) return auth;
+
+    const body = await req.json() as { sql?: string; params?: unknown[]; collection?: string };
+    if (!body.sql || typeof body.sql !== "string") {
+      return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
+    }
+
+    // Safety: only allow SELECT queries
+    const trimmed = body.sql.trim().toUpperCase();
+    if (!trimmed.startsWith("SELECT") && !trimmed.startsWith("WITH")) {
+      return errorResponse("VALIDATION", "Only SELECT queries are allowed.", 400);
+    }
+
+    const collection = body.collection || extractCollectionName(body.sql);
+    if (!collection) {
+      return errorResponse("VALIDATION", "Could not determine collection. Provide 'collection' field or use 'FROM \"collection\"' in SQL.", 400);
+    }
+
+    if (auth.isApiKey && isSystemCollection(collection)) {
+      return errorResponse("FORBIDDEN", "Cannot query system collections.", 403);
+    }
+
+    const pool = manager.get(params.database);
+    const rlsCtx = toRLSContext(auth);
+    const rls = rlsCtx ? applyRLS(pool, collection, "read", rlsCtx) : null;
+
+    let sql = body.sql;
+    const queryParams: unknown[] = body.params ?? [];
+
+    if (rls?.whereClause) {
+      // Inject RLS into the query by wrapping the table
+      const quoted = `"${collection}"`;
+      const rlsWrapped = `(SELECT * FROM ${quoted} WHERE ${rls.whereClause}) AS ${quoted}`;
+      // Replace FROM "collection" or FROM collection
+      sql = sql.replace(
+        new RegExp(`\\bFROM\\s+"?${collection}"?`, "i"),
+        `FROM ${rlsWrapped}`
+      );
+    }
+
+    try {
+      const db = pool.read();
+      const rows = db.query(sql).all(...queryParams as import("bun:sqlite").SQLQueryBindings[]) as Record<string, unknown>[];
+      return jsonResponse({ data: rows });
+    } catch (err: any) {
+      return errorResponse("QUERY_ERROR", err.message || "Query execution failed.", 400);
+    }
+  });
+}
+
+function extractCollectionName(sql: string): string | null {
+  const match = sql.match(/\bFROM\s+"?(\w+)"?\b/i);
+  return match ? match[1] : null;
 }

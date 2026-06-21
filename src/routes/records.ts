@@ -165,9 +165,10 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
     if (!body || typeof body !== "object" || Array.isArray(body)) return errorResponse("VALIDATION", "Request body must be a JSON object.", 400);
     const url = new URL(req.url);
     const returning = url.searchParams.get("returning")?.split(",").map(s => s.trim()).filter(Boolean);
+    const fromTables = url.searchParams.get("from")?.split(",").map(s => s.trim()).filter(Boolean).map(t => ({ table: t, on: "" })) || undefined;
     const pool = manager.get(params.database);
     const previous = getRecord(pool, params.collection, params.id, auth);
-    const record = updateRecord(pool, params.collection, params.id, body, auth, returning);
+    const record = updateRecord(pool, params.collection, params.id, body, auth, returning, fromTables);
     notifyRecordChange("update", params.database, params.collection, record, previous, pool, principalId(auth));
     return jsonResponse({ data: record });
   });

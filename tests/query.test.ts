@@ -509,3 +509,169 @@ describe("ON CONFLICT control", () => {
     expect(record).toHaveProperty("name", "NewItem");
   });
 });
+
+describe("inline subqueries in WHERE", () => {
+  beforeEach(() => seed());
+
+  test("$inSubquery — compile SQL", () => {
+    const { sql, bindings } = queryFromParams({
+      collection: "products",
+      filter: { category: { $inSubquery: { collection: "orders", field: "status", filter: { total: { $gt: 100 } } } } },
+    }, pool.read()).toSQL();
+    expect(sql).toContain('"category" IN (SELECT "status" FROM "orders" WHERE "total" > ?)');
+    expect(bindings).toContain(100);
+  });
+
+  test("$notInSubquery — compile SQL", () => {
+    const { sql } = queryFromParams({
+      collection: "products",
+      filter: { category: { $notInSubquery: { collection: "orders", field: "status" } } },
+    }, pool.read()).toSQL();
+    expect(sql).toContain('"category" NOT IN (SELECT "status" FROM "orders")');
+  });
+
+  test("$subqueryEq — scalar subquery with aggregate", () => {
+    const { sql } = queryFromParams({
+      collection: "products",
+      filter: { price: { $subqueryEq: { collection: "orders", aggregate: { function: "$avg", field: "total" } } } },
+    }, pool.read()).toSQL();
+    expect(sql).toContain('"price" = (SELECT AVG("total") FROM "orders")');
+  });
+
+  test("$subqueryGt — scalar comparison", () => {
+    const { sql } = queryFromParams({
+      collection: "products",
+      filter: { price: { $subqueryGt: { collection: "orders", aggregate: { function: "$max", field: "total" } } } },
+    }, pool.read()).toSQL();
+    expect(sql).toContain('"price" > (SELECT MAX("total") FROM "orders")');
+  });
+
+  test("$inSubquery — live query with existing data", () => {
+    const db = pool.write();
+    // Create a record that won't match via subquery check
+    const data = queryFromParams({
+      collection: "products",
+      filter: { name: { $inSubquery: { collection: "products", field: "name", filter: { price: { $gt: 50 } } } } },
+    }, db).get();
+    // Products with price > 50: Laptop (999), Desk (350), Mouse (25? no, 25 < 50), Chair (150)
+    // So: Laptop, Desk, Chair
+    expect(data.length).toBe(3);
+    const names = data.map((r: any) => r.name);
+    expect(names).toContain("Laptop");
+    expect(names).toContain("Desk");
+    expect(names).toContain("Chair");
+  });
+});
+
+describe("nested relation loading (with)", () => {
+  const CAT_COL = "categories_test";
+
+  beforeAll(() => {
+    const db = pool.write();
+    db.run(`CREATE TABLE IF NOT EXISTS "${CAT_COL}" (id TEXT PRIMARY KEY, name TEXT, slug TEXT)`);
+    db.run(`DELETE FROM "${CAT_COL}"`);
+    db.run(`INSERT INTO "${CAT_COL}" (id, name, slug) VALUES ('fruit', 'Fruit', 'fruit-slug'), ('electronics', 'Electronics', 'elec-slug'), ('furniture', 'Furniture', 'furn-slug'), ('drink', 'Drink', 'drink-slug')`);
+    // Add category_id to products if not exists
+    try { db.run(`ALTER TABLE "products" ADD COLUMN category_id TEXT`); } catch {}
+    db.run(`UPDATE "products" SET category_id = category`);
+    try { db.run(`INSERT OR IGNORE INTO "_collections" (id, name) VALUES ('${CAT_COL}', '${CAT_COL}')`); } catch {}
+  });
+
+  beforeEach(() => {
+    seed();
+    // Reset category_id from category
+    const db = pool.write();
+    db.run(`UPDATE "products" SET category_id = category`);
+  });
+
+  test("with — loads single related record", () => {
+    const db = pool.read();
+    const catCol = CAT_COL;
+    const data = queryFromParams({
+      collection: "products",
+      fields: ["name", "category_id"],
+      with: { [catCol]: { localKey: "category_id", collection: catCol } },
+    }, db).get();
+    const apple = data.find((r: any) => r.name === "Apple");
+    expect(apple).toBeDefined();
+    expect(apple[catCol]).toBeDefined();
+    expect(apple[catCol].name).toBe("Fruit");
+  });
+
+  test("with — returns null when no related record", () => {
+    const db = pool.read();
+    const catCol = CAT_COL;
+    pool.write().run(`UPDATE "products" SET category_id = 'nonexistent' WHERE name = 'Apple'`);
+    const data = queryFromParams({
+      collection: "products",
+      fields: ["name", "category_id"],
+      with: { [catCol]: { localKey: "category_id", collection: catCol } },
+    }, db).get();
+    const apple = data.find((r: any) => r.name === "Apple");
+    expect(apple[catCol]).toBeNull();
+  });
+
+  test("with — respects fields filter", () => {
+    const db = pool.read();
+    const catCol = CAT_COL;
+    const data = queryFromParams({
+      collection: "products",
+      fields: ["name", "category_id"],
+      with: { [catCol]: { localKey: "category_id", collection: catCol, fields: ["name"] } },
+    }, db).get();
+    const fruit = data.find((r: any) => r.name === "Apple");
+    expect(fruit[catCol]).toHaveProperty("name");
+    expect(fruit[catCol]).not.toHaveProperty("slug");
+  });
+
+  test("with — nested relation (author with posts)", () => {
+    const db = pool.read();
+    const catCol = CAT_COL;
+    const qb = queryFromParams({
+      collection: "products",
+      fields: ["name", "category_id"],
+      with: { [catCol]: { localKey: "category_id", collection: catCol, with: { products_in_cat: { collection: "products", localKey: "id", foreignKey: "category_id", fields: ["name"], multiple: true } } } },
+    }, db);
+    const data = qb.get();
+    const apple = data.find((r: any) => r.name === "Apple");
+    expect(apple[catCol]).toBeDefined();
+    expect(apple[catCol]).toHaveProperty("products_in_cat");
+    expect(apple[catCol].products_in_cat).toBeInstanceOf(Array);
+    expect(apple[catCol].products_in_cat.length).toBe(2);
+    const names = apple[catCol].products_in_cat.map((r: any) => r.name);
+    expect(names).toContain("Apple");
+    expect(names).toContain("Banana");
+  });
+});
+
+describe("raw SQL endpoint", () => {
+  beforeEach(() => seed());
+
+  test("executes a simple SELECT via raw SQL", () => {
+    const db = pool.read();
+    const rows = db.query('SELECT name, price FROM "products" WHERE category = ?').all("fruit") as Record<string, unknown>[];
+    expect(rows.length).toBe(2);
+    const names = rows.map((r) => r.name);
+    expect(names).toContain("Apple");
+    expect(names).toContain("Banana");
+  });
+
+  test("applies RLS-like WHERE via raw SQL", () => {
+    const db = pool.read();
+    const rlsWhere = "category = ?";
+    const rlsParams = ["fruit"];
+    const sql = `SELECT * FROM (SELECT * FROM "products" WHERE ${rlsWhere}) AS "products"`;
+    const rows = db.query(sql).all(...rlsParams) as Record<string, unknown>[];
+    expect(rows.length).toBe(2);
+    expect(rows.every((r) => r.category === "fruit")).toBe(true);
+  });
+
+  test("raw SQL with parameterized bindings", () => {
+    const db = pool.read();
+    const rows = db.query('SELECT name FROM "products" WHERE price > ? AND price < ?').all(100, 400) as Record<string, unknown>[];
+    expect(rows.length).toBe(2);
+    const names = rows.map((r) => r.name);
+    expect(names).toContain("Desk");
+    expect(names).toContain("Chair");
+  });
+});

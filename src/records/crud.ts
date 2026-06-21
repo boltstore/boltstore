@@ -1,5 +1,5 @@
 import { DatabasePool } from "../db/pool";
-import { generateSecureId } from "@boltstore/utils";
+import { generateSecureId, validateIdentifier } from "@boltstore/utils";
 import { toBindings } from "../db/cast";
 import { applyRLS, toRLSContext } from "../rls";
 import type { AuthContext } from "../middleware/auth";
@@ -122,6 +122,7 @@ function updateRecord(
   data: Record<string, unknown>,
   auth?: AuthContext,
   returning?: string[],
+  fromTables?: Array<{ table: string; on: string }>,
 ): Record<string, unknown> {
   const columns = getColumnNames(pool, collection);
   const columnSet = new Set(columns);
@@ -143,6 +144,12 @@ function updateRecord(
 
   const rlsCtx = auth ? toRLSContext(auth) : null;
   const rls = rlsCtx ? applyRLS(pool, collection, "write", rlsCtx) : null;
+
+  if (fromTables) {
+    for (const ft of fromTables) {
+      validateIdentifier(ft.table, "update from table");
+    }
+  }
 
   return pool.writeTransaction(() => {
     const db = pool.write();
@@ -178,7 +185,12 @@ function updateRecord(
     const setClauses = updates.map(([k]) => `"${k}" = ?`).join(", ");
     const values = [...updates.map(([, v]) => v), id];
 
-    let updateSql = `UPDATE "${collection}" SET ${setClauses} WHERE id=?`;
+    let updateSql = `UPDATE "${collection}" SET ${setClauses}`;
+    if (fromTables && fromTables.length > 0) {
+      const fromClauses = fromTables.map((f) => `"${f.table}"`).join(", ");
+      updateSql += ` FROM ${fromClauses}`;
+    }
+    updateSql += ` WHERE id=?`;
     if (rls?.whereClause) {
       updateSql += ` AND ${rls.whereClause}`;
       values.push(...rls.params);

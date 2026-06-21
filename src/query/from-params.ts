@@ -1,4 +1,4 @@
-import type { QueryOptions, Filter, FilterGroup, FilterCondition } from "@boltstore/utils";
+import type { QueryOptions, Filter, FilterGroup, FilterCondition, JoinSpec } from "@boltstore/utils";
 import { validateIdentifier } from "@boltstore/utils";
 import { ServerQueryBuilder } from "./server-builder";
 import type { WhereClause } from "@boltstore/utils";
@@ -91,7 +91,7 @@ function parseFilter(filter: Filter, depth = 0): WhereClause[] {
       // Operator syntax: { field: { $gt: 5 } }
       const ops = value as Record<string, unknown>;
       for (const [op, val] of Object.entries(ops)) {
-        const clause = parseOperatorClause(field, op, val);
+        const clause = parseOperatorClause(field, op, val, depth);
         if (clause) result.push(clause);
       }
     } else {
@@ -121,16 +121,24 @@ const OP_TO_CLAUSE: Record<string, { type: WhereClause["type"]; operator: string
   $glob: { type: "like", operator: "glob" },
   $between: { type: "between", operator: "between" },
   $notBetween: { type: "between", operator: "notBetween" },
+  $inSubquery: { type: "subquery", operator: "inSubquery" },
+  $notInSubquery: { type: "subquery", operator: "notInSubquery" },
+  $subqueryEq: { type: "subquery", operator: "subqueryEq" },
+  $subqueryNeq: { type: "subquery", operator: "subqueryNeq" },
+  $subqueryGt: { type: "subquery", operator: "subqueryGt" },
+  $subqueryGte: { type: "subquery", operator: "subqueryGte" },
+  $subqueryLt: { type: "subquery", operator: "subqueryLt" },
+  $subqueryLte: { type: "subquery", operator: "subqueryLte" },
 };
 
-function parseOperatorClause(field: string, op: string, value: unknown): WhereClause | null {
+function parseOperatorClause(field: string, op: string, value: unknown, depth = 0): WhereClause | null {
   // Field-level $not: { field: { $not: { $eq: val } } }
   if (op === "$not") {
     if (value && typeof value === "object" && !Array.isArray(value)) {
       const entries = Object.entries(value as Record<string, unknown>);
       if (entries.length === 1) {
         const [innerOp, innerVal] = entries[0];
-        const inner = parseOperatorClause(field, innerOp, innerVal);
+        const inner = parseOperatorClause(field, innerOp, innerVal, depth);
         if (inner) {
           return { type: "not", query: [inner], boolean: "and" };
         }
@@ -163,9 +171,55 @@ function parseOperatorClause(field: string, op: string, value: unknown): WhereCl
       return { type: "like", field, operator: mapping.operator as "like" | "glob", value: value as string, boolean: "and" };
     case "exists":
       return { type: "exists", field, operator: value ? "exists" : "notExists", boolean: "and" };
+    case "subquery": {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error(`Invalid subquery value for "${op}". Expected { collection, field?, filter?, aggregate? }.`);
+      }
+      const sq = value as Record<string, unknown>;
+      if (typeof sq.collection !== "string") {
+        throw new Error(`Subquery parameter "${op}" requires a 'collection' string field.`);
+      }
+      validateIdentifier(sq.collection, "subquery collection");
+      const innerFilter = sq.filter ? parseFilter(sq.filter as import("@boltstore/utils").Filter, depth + 1) : undefined;
+      return {
+        type: "subquery",
+        field,
+        operator: mapping.operator as any,
+        subqueryCollection: sq.collection,
+        subqueryField: typeof sq.field === "string" ? sq.field : undefined,
+        subqueryAggregate: sq.aggregate && typeof sq.aggregate === "object" ? sq.aggregate as { function: string; field?: string } : undefined,
+        subqueryFilter: innerFilter,
+        boolean: "and",
+      };
+    }
     default:
       return null;
   }
+}
+
+function parseWithRelation(value: unknown): Record<string, boolean | import("@boltstore/utils").WithRelation> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const result: Record<string, boolean | import("@boltstore/utils").WithRelation> = {};
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    if (val === true || val === false) {
+      result[key] = val as boolean;
+    } else if (val && typeof val === "object") {
+      const wr = val as Record<string, unknown>;
+      const rel: import("@boltstore/utils").WithRelation = {};
+      if (typeof wr.collection === "string") rel.collection = wr.collection;
+      if (typeof wr.localKey === "string") rel.localKey = wr.localKey;
+      if (typeof wr.foreignKey === "string") rel.foreignKey = wr.foreignKey;
+      if (wr.filter) rel.filter = wr.filter as import("@boltstore/utils").Filter;
+      if (Array.isArray(wr.fields)) rel.fields = wr.fields.map(String);
+      if (Array.isArray(wr.sort)) rel.sort = wr.sort as import("@boltstore/utils").SortSpec[];
+      if (typeof wr.limit === "number") rel.limit = wr.limit;
+      if (typeof wr.offset === "number") rel.offset = wr.offset;
+      if (typeof wr.multiple === "boolean") rel.multiple = wr.multiple;
+      if (wr.with) rel.with = parseWithRelation(wr.with);
+      result[key] = rel;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export function queryFromParams(params: QueryOptions, db: import("bun:sqlite").Database): ServerQueryBuilder {
@@ -196,6 +250,11 @@ export function queryFromParams(params: QueryOptions, db: import("bun:sqlite").D
 
   if (params.expand && params.expand.length > 0) {
     qb.expand(...params.expand);
+  }
+
+  if ((params as any).with) {
+    const parsed = parseWithRelation((params as any).with);
+    if (parsed) qb.with(parsed);
   }
 
   if (params.limit != null) qb.limit(params.limit);
@@ -255,8 +314,8 @@ export function queryFromParams(params: QueryOptions, db: import("bun:sqlite").D
   }
 
   // Joins — structured, reject raw SQL
-  const joins = (params as any).joins;
-  if (joins && Array.isArray(joins)) {
+  const joins = params.joins;
+  if (joins && joins.length > 0) {
     for (const j of joins) {
       validateIdentifier(j.target, "join target");
       if (j.on) {

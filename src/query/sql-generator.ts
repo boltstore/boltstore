@@ -21,6 +21,7 @@ interface PartialState {
   withs?: WithClause[];
   unions?: UnionClause[];
   windows?: BuilderState["windows"];
+  with?: BuilderState["with"];
 }
 
 function toFullState(partial: PartialState): BuilderState {
@@ -42,6 +43,7 @@ function toFullState(partial: PartialState): BuilderState {
     withs: partial.withs ?? [],
     unions: partial.unions ?? [],
     windows: partial.windows,
+    with: partial.with,
   };
 }
 
@@ -154,6 +156,50 @@ function compileWhereClause(clause: WhereClause, tableQualified?: boolean): SqlF
 
     case "raw": {
       return { sql: clause.sql, params: clause.bindings ?? [] };
+    }
+
+    case "subquery": {
+      const ident = sqlFieldRef(clause.field, tableQualified);
+      const target = quoteIdent(clause.subqueryCollection);
+      let subSql: string;
+      let subParams: unknown[] = [];
+
+      if (clause.subqueryFilter && clause.subqueryFilter.length > 0) {
+        const inner = compileWheresNoSearch(clause.subqueryFilter, tableQualified);
+        subSql = inner.sql;
+        subParams = inner.params;
+      } else {
+        subSql = "";
+      }
+
+      const whereClause = subSql ? ` WHERE ${subSql}` : "";
+
+      // IN / NOT IN subquery: field IN (SELECT subqueryField FROM target WHERE ...)
+      if (clause.operator === "inSubquery" || clause.operator === "notInSubquery") {
+        const selectField = clause.subqueryField ? quoteIdent(clause.subqueryField) : "*";
+        const op = clause.operator === "inSubquery" ? "IN" : "NOT IN";
+        return { sql: `${ident} ${op} (SELECT ${selectField} FROM ${target}${whereClause})`, params: subParams };
+      }
+
+      // Scalar subquery: field = (SELECT agg FROM target WHERE ...)
+      if (clause.subqueryAggregate) {
+        const fn = clause.subqueryAggregate.function.startsWith("$")
+          ? clause.subqueryAggregate.function.slice(1).toUpperCase()
+          : clause.subqueryAggregate.function.toUpperCase();
+        const aggTarget = clause.subqueryAggregate.field ? quoteIdent(clause.subqueryAggregate.field) : "*";
+        const scalarSql = `(SELECT ${fn}(${aggTarget}) FROM ${target}${whereClause})`;
+        subParams = [...subParams]; // ensure new array
+        switch (clause.operator) {
+          case "subqueryEq": return { sql: `${ident} = ${scalarSql}`, params: subParams };
+          case "subqueryNeq": return { sql: `${ident} != ${scalarSql}`, params: subParams };
+          case "subqueryGt": return { sql: `${ident} > ${scalarSql}`, params: subParams };
+          case "subqueryGte": return { sql: `${ident} >= ${scalarSql}`, params: subParams };
+          case "subqueryLt": return { sql: `${ident} < ${scalarSql}`, params: subParams };
+          case "subqueryLte": return { sql: `${ident} <= ${scalarSql}`, params: subParams };
+        }
+      }
+
+      throw new Error(`Invalid subquery clause: missing both field and aggregate.`);
     }
 
     default:

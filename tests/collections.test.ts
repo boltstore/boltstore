@@ -225,6 +225,66 @@ describe("createCollection", () => {
     expect(tagCol).toBeDefined();
     expect(String(tagCol!.dflt_value)).toBe("'draft'");
   });
+
+  test("supports defaultExpr for SQL expression defaults", () => {
+    createCollection(pool, "expr_defaults", [
+      { name: "ts", type: "DATETIME", defaultExpr: "CURRENT_TIMESTAMP" },
+      { name: "uuid", type: "TEXT", defaultExpr: "lower(hex(randomblob(16)))" },
+    ]);
+
+    const db = pool.read();
+    const rows = db.query('PRAGMA table_info("expr_defaults")').all() as Record<string, unknown>[];
+
+    const tsCol = rows.find((r) => r.name === "ts");
+    expect(tsCol).toBeDefined();
+    expect(String(tsCol!.dflt_value)).toBe("CURRENT_TIMESTAMP");
+
+    const uuidCol = rows.find((r) => r.name === "uuid");
+    expect(uuidCol).toBeDefined();
+    expect(String(uuidCol!.dflt_value)).toBe("lower(hex(randomblob(16)))");
+
+    // Insert row without explicit values and verify defaults are applied
+    const dbw = pool.write();
+    dbw.run('INSERT INTO "expr_defaults" (id, created_at, updated_at) VALUES (?, ?, ?)', ["exp1", new Date().toISOString(), new Date().toISOString()]);
+    const row = dbw.query('SELECT ts, uuid FROM "expr_defaults" WHERE id=?').get("exp1") as Record<string, unknown> | null;
+    expect(row).toBeDefined();
+    expect(String(row!.ts)).toBeTruthy();
+    expect(String(row!.uuid)).toBeTruthy();
+  });
+
+  test("supports generated columns (VIRTUAL and STORED)", () => {
+    createCollection(pool, "gen_cols", [
+      { name: "width", type: "INTEGER" },
+      { name: "height", type: "INTEGER" },
+      { name: "area", type: "INTEGER", generated: { expression: "width * height", stored: true } },
+      { name: "label", type: "TEXT", generated: { expression: "width || 'x' || height" } },
+    ]);
+
+    // Insert data and verify generated values
+    const dbw = pool.write();
+    dbw.run('INSERT INTO "gen_cols" (id, width, height, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+      ["gen1", 10, 20, new Date().toISOString(), new Date().toISOString()]);
+    const row = dbw.query('SELECT width, height, area, label FROM "gen_cols" WHERE id=?').get("gen1") as Record<string, unknown> | null;
+    expect(row).toBeDefined();
+    expect(Number(row!.width)).toBe(10);
+    expect(Number(row!.height)).toBe(20);
+    expect(Number(row!.area)).toBe(200);
+    expect(String(row!.label)).toBe("10x20");
+  });
+
+  test("rejects generated column without expression", () => {
+    try {
+      createCollection(pool, "bad_gen", [
+        { name: "w", type: "INTEGER" },
+        { name: "a", type: "INTEGER", generated: { expression: "" } as any },
+      ]);
+      expect.unreachable("Should have thrown");
+    } catch (err: unknown) {
+      const e = err as { message: string; status?: number };
+      expect(e.message).toContain("must have an 'expression' string");
+      expect(e.status).toBe(400);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
