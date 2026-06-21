@@ -203,6 +203,10 @@ export function queryFromParams(params: QueryOptions, db: import("bun:sqlite").D
 
   if (params.search) qb.search(params.search, params.searchFields);
 
+  if ((params as any).windows) {
+    qb.window((params as any).windows);
+  }
+
   if (params.aggregate) {
     qb.aggregate(params.aggregate);
   } else if ((params as any).multiAggregate) {

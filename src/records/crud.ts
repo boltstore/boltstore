@@ -16,6 +16,7 @@ function createRecord(
   data: Record<string, unknown>,
   auth?: AuthContext,
   returning?: string[],
+  onConflict?: "error" | "upsert" | "ignore",
 ): Record<string, unknown> {
   const columns = getColumnNames(pool, collection);
   const systemCols = new Set(["id", "created_at", "updated_at"]);
@@ -45,7 +46,7 @@ function createRecord(
   return pool.writeTransaction(() => {
     const db = pool.write();
 
-    if (data.id) {
+    if (data.id && (!onConflict || onConflict === "error")) {
       let checkSql = `SELECT 1 FROM "${collection}" WHERE id=?`;
       const checkParams: unknown[] = [data.id];
       if (rls?.whereClause) {
@@ -61,18 +62,23 @@ function createRecord(
       }
     }
 
+    let insertSql: string;
+    if (onConflict === "upsert") {
+      const updateCols = keys.filter((k) => k !== "id").map((k) => `"${k}" = excluded."${k}"`).join(", ");
+      insertSql = `INSERT INTO "${collection}" (${quotedKeys}) VALUES (${placeholders}) ON CONFLICT(id) DO UPDATE SET ${updateCols}`;
+    } else if (onConflict === "ignore") {
+      insertSql = `INSERT OR IGNORE INTO "${collection}" (${quotedKeys}) VALUES (${placeholders})`;
+    } else {
+      insertSql = `INSERT INTO "${collection}" (${quotedKeys}) VALUES (${placeholders})`;
+    }
+
     if (returning && returning.length > 0) {
       const returningCols = returning.map((c) => `"${c}"`).join(", ");
-      const row = db.query(
-        `INSERT INTO "${collection}" (${quotedKeys}) VALUES (${placeholders}) RETURNING ${returningCols}`
-      ).get(...toBindings(values));
+      const row = db.query(`${insertSql} RETURNING ${returningCols}`).get(...toBindings(values));
       return row as Record<string, unknown>;
     }
 
-    db.run(
-      `INSERT INTO "${collection}" (${quotedKeys}) VALUES (${placeholders})`,
-      toBindings(values)
-    );
+    db.run(insertSql, toBindings(values));
 
     const row = db.query(`SELECT * FROM "${collection}" WHERE id=?`).get(id);
     return row as Record<string, unknown>;

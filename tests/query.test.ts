@@ -399,6 +399,39 @@ describe("buildQuery (via toSQL)", () => {
     expect(sql).toContain("OFFSET ?");
     expect(bindings).toEqual([10, 20]);
   });
+
+  test("window function — SELECT * with ROW_NUMBER", () => {
+    const db = pool.write();
+    const { sql } = queryFromParams({
+      collection: "products",
+      windows: [{ function: "ROW_NUMBER", partitionBy: ["category"], orderBy: [{ field: "price", direction: "desc" }], alias: "rn" }],
+    }, db).toSQL();
+    expect(sql).toContain("SELECT *, ROW_NUMBER() OVER (PARTITION BY \"category\" ORDER BY \"price\" DESC) AS \"rn\"");
+  });
+
+  test("window function — round-trip via toParams", () => {
+    const builder = new ServerQueryBuilder(pool.write());
+    builder.from("products");
+    builder.window([{ function: "ROW_NUMBER", partitionBy: ["category"], orderBy: [{ field: "price", direction: "desc" }], alias: "rn" }]);
+    builder.select("name");
+    const params = builder.toParams();
+    expect((params as any).windows).toBeDefined();
+    expect((params as any).windows[0].function).toBe("ROW_NUMBER");
+    const rebuilt = queryFromParams(params, pool.read());
+    const { sql } = rebuilt.toSQL();
+    expect(sql).toContain("ROW_NUMBER() OVER (PARTITION BY \"category\" ORDER BY \"price\" DESC) AS \"rn\"");
+  });
+
+  test("window function — with fields", () => {
+    const db = pool.write();
+    const { sql } = queryFromParams({
+      collection: "products",
+      fields: ["name", "price"],
+      windows: [{ function: "RANK", partitionBy: ["category"], orderBy: [{ field: "price", direction: "desc" }], alias: "rank" }],
+    }, db).toSQL();
+    expect(sql).toContain('SELECT "name", "price"');
+    expect(sql).toContain('RANK() OVER (PARTITION BY "category" ORDER BY "price" DESC) AS "rank"');
+  });
 });
 
 describe("RETURNING field selection", () => {
@@ -422,5 +455,57 @@ describe("RETURNING field selection", () => {
     const result = deleteRecord(pool, "products", "banana", undefined, ["id", "name"]) as Record<string, unknown>;
     expect(result).toHaveProperty("id", "banana");
     expect(result).toHaveProperty("name");
+  });
+});
+
+describe("window functions", () => {
+  beforeEach(() => seed());
+
+  test("live ROW_NUMBER partition query", () => {
+    const db = pool.read();
+    const data = queryFromParams({
+      collection: "products",
+      fields: ["name", "category", "price"],
+      windows: [{ function: "ROW_NUMBER", partitionBy: ["category"], orderBy: [{ field: "price", direction: "desc" }], alias: "rn" }],
+    }, db).get();
+    const fruit = data.filter((r: any) => r.category === "fruit").sort((a: any, b: any) => a.rn - b.rn);
+    expect(fruit[0].rn).toBe(1);
+    expect(fruit[0].name).toBe("Apple");
+  });
+
+  test("live COUNT window without partition", () => {
+    const db = pool.read();
+    const data = queryFromParams({
+      collection: "products",
+      fields: ["category", "name"],
+      windows: [{ function: "COUNT", orderBy: [{ field: "name", direction: "asc" }], alias: "cnt" }],
+    }, db).get();
+    expect(data.length).toBe(7);
+    expect(data[0]).toHaveProperty("cnt");
+  });
+});
+
+describe("ON CONFLICT control", () => {
+  beforeEach(() => seed());
+
+  test("onConflict=error rejects duplicate (default)", () => {
+    expect(() => createRecord(pool, "products", { id: "apple", name: "Apple2", price: 999 }, undefined)).toThrow();
+  });
+
+  test("onConflict=ignore silences duplicate", () => {
+    const record = createRecord(pool, "products", { id: "apple", name: "Apple2", price: 999 }, undefined, undefined, "ignore");
+    expect(record).toHaveProperty("id", "apple");
+  });
+
+  test("onConflict=upsert updates existing record", () => {
+    const record = createRecord(pool, "products", { id: "apple", name: "Apple2", price: 999 }, undefined, ["id", "name", "price"], "upsert");
+    expect(record).toHaveProperty("id", "apple");
+    expect(record).toHaveProperty("name", "Apple2");
+    expect(record).toHaveProperty("price", 999);
+  });
+
+  test("onConflict=upsert without id creates normally", () => {
+    const record = createRecord(pool, "products", { name: "NewItem", price: 10 }, undefined, ["id", "name"], "upsert");
+    expect(record).toHaveProperty("name", "NewItem");
   });
 });

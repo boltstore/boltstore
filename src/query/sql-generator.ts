@@ -20,6 +20,7 @@ interface PartialState {
   joins?: JoinClause[];
   withs?: WithClause[];
   unions?: UnionClause[];
+  windows?: BuilderState["windows"];
 }
 
 function toFullState(partial: PartialState): BuilderState {
@@ -40,6 +41,7 @@ function toFullState(partial: PartialState): BuilderState {
     joins: partial.joins ?? [],
     withs: partial.withs ?? [],
     unions: partial.unions ?? [],
+    windows: partial.windows,
   };
 }
 
@@ -318,9 +320,12 @@ export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Datab
 
   // SELECT clause
   const isAggregate = (state.aggregate && state.aggregate.length > 0) || (state.groupBy && state.groupBy.length > 0);
+  const hasWindows = state.windows && state.windows.length > 0;
+
+  let selectCols: string[] = [];
 
   if (isAggregate && state.aggregate) {
-    const selectCols = state.aggregate.map((a) => {
+    selectCols = state.aggregate.map((a) => {
       const fn = a.function.startsWith("$") ? a.function.slice(1).toUpperCase() : a.function.toUpperCase();
       if (a.function === "$count" && (!a.field || a.field === "*")) {
         return a.alias ? `COUNT(*) AS ${quoteIdent(a.alias)}` : "COUNT(*)";
@@ -328,15 +333,39 @@ export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Datab
       const target = a.field ? quoteIdent(a.field) : "*";
       return a.alias ? `${fn}(${target}) AS ${quoteIdent(a.alias)}` : `${fn}(${target})`;
     });
-    parts.push(`SELECT ${selectCols.join(", ")}`);
   } else if (state.fields && state.fields.length > 0) {
-    const quoted = state.fields.map((f) => {
+    selectCols = state.fields.map((f) => {
       if (f.includes(".")) {
         return `json_extract(${quoteIdent(f.split(".")[0])}, '$.${f.split(".").slice(1).join(".")}') AS ${quoteIdent(f.replace(".", "_"))}`;
       }
       return quoteIdent(f);
     });
-    parts.push(`SELECT ${quoted.join(", ")}`);
+  }
+
+  if (hasWindows && state.windows) {
+    const noArgFns = new Set(["ROW_NUMBER", "RANK", "DENSE_RANK", "NTILE"]);
+    const windowCols = state.windows.map((w) => {
+      const over: string[] = [];
+      if (w.partitionBy && w.partitionBy.length > 0) {
+        over.push(`PARTITION BY ${w.partitionBy.map(quoteIdent).join(", ")}`);
+      }
+      if (w.orderBy && w.orderBy.length > 0) {
+        over.push(`ORDER BY ${w.orderBy.map((o) => `${quoteIdent(o.field)} ${o.direction.toUpperCase()}`).join(", ")}`);
+      }
+      const overClause = over.length > 0 ? ` OVER (${over.join(" ")})` : "";
+      const target = noArgFns.has(w.function) ? "" : (w.field ? quoteIdent(w.field) : "*");
+      const expr = `${w.function}(${target})${overClause}`;
+      return w.alias ? `${expr} AS ${quoteIdent(w.alias)}` : expr;
+    });
+    selectCols.push(...windowCols);
+  }
+
+  if (selectCols.length > 0) {
+    // If windows are the only select columns (no fields/aggregates), prepend *
+    if (hasWindows && state.windows && !state.fields && !state.aggregate) {
+      selectCols.unshift("*");
+    }
+    parts.push(`SELECT ${selectCols.join(", ")}`);
   } else {
     parts.push("SELECT *");
   }

@@ -65,8 +65,12 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
     if (!body || typeof body !== "object" || Array.isArray(body)) return errorResponse("VALIDATION", "Request body must be a JSON object.", 400);
     const url = new URL(req.url);
     const returning = url.searchParams.get("returning")?.split(",").map(s => s.trim()).filter(Boolean);
+    const onConflict = url.searchParams.get("onConflict") as "upsert" | "ignore" | "error" | undefined;
+    if (onConflict && !["upsert", "ignore", "error"].includes(onConflict)) {
+      return errorResponse("VALIDATION", "Invalid onConflict value. Must be 'upsert', 'ignore', or 'error'.", 400);
+    }
     const pool = manager.get(params.database);
-    const record = createRecord(pool, params.collection, body, auth, returning);
+    const record = createRecord(pool, params.collection, body, auth, returning, onConflict);
     notifyRecordChange("create", params.database, params.collection, record, undefined, pool, principalId(auth));
     return jsonResponse({ data: record }, 201);
   });
