@@ -65,4 +65,3 @@ function handleDisconnect() {
     </div>
   </aside>
 </template>
-

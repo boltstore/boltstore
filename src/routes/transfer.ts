@@ -51,7 +51,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
 
     const validName = /^[a-z0-9][a-z0-9_-]*$/;
     if (!validName.test(dbName)) {
-      return errorResponse("VALIDATION", "Database name must match ^[a-z0-9][a-z0-9_-]*$", 400);
+      return errorResponse("VALIDATION", "Use only lowercase letters, numbers, hyphens, and underscores, starting with a letter or number.", 400);
     }
 
     // Check for name conflict

@@ -1,5 +1,7 @@
 import { DatabasePool } from "./pool";
 
+export const SCHEMA_VERSION = 1;
+
 export interface DatabaseInfo {
   id: string;
   name: string;
@@ -77,6 +79,26 @@ export class DatabaseManager {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
+    db.run(`
+      CREATE TABLE IF NOT EXISTS _meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `);
+    // Ensure schema version is recorded
+    const existingVersion = db.query("SELECT value FROM _meta WHERE key = 'schema_version'").get() as { value: string } | null;
+    if (!existingVersion) {
+      db.run("INSERT OR IGNORE INTO _meta (key, value) VALUES ('schema_version', ?)", [String(SCHEMA_VERSION)]);
+    } else if (parseInt(existingVersion.value, 10) > SCHEMA_VERSION) {
+      throw new Error(`System database schema version ${existingVersion.value} is newer than server version ${SCHEMA_VERSION}. Upgrade the server to use this database.`);
+    }
+  }
+
+  getSchemaVersion(): number {
+    try {
+      const row = this.metaPool.read().query("SELECT value FROM _meta WHERE key = 'schema_version'").get() as { value: string } | null;
+      return row ? parseInt(row.value, 10) : 0;
+    } catch { return 0; }
   }
 
   get(name: string): DatabasePool {

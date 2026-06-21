@@ -17,7 +17,7 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const body = await req.json() as { name?: string };
     if (!body.name || !VALID_NAME.test(body.name)) {
-      return errorResponse("VALIDATION", "Database name must match ^[a-z0-9][a-z0-9_-]*$", 400);
+      return errorResponse("VALIDATION", "Use only lowercase letters, numbers, hyphens, and underscores, starting with a letter or number.", 400);
     }
     const info = manager.createDatabase(body.name);
     logActivity(manager, { action: "database.create", database_name: body.name, ip: req.headers.get("x-forwarded-for") || undefined });
@@ -42,7 +42,7 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const body = await req.json() as { name?: string };
     if (!body.name || !VALID_NAME.test(body.name)) {
-      return errorResponse("VALIDATION", "New name must match ^[a-z0-9][a-z0-9_-]*$", 400);
+      return errorResponse("VALIDATION", "Use only lowercase letters, numbers, hyphens, and underscores, starting with a letter or number.", 400);
     }
     const oldName = params.name;
 

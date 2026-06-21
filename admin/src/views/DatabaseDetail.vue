@@ -16,6 +16,8 @@ const loading = ref(true);
 const showCreate = ref(false);
 const creating = ref(false);
 const deleting = ref<string | null>(null);
+const showDeleteConfirm = ref(false);
+const deleteTarget = ref("");
 const newTable = ref({ name: "", columns: [{ name: "", type: "text" as const }] });
 
 const selectedTable = ref("");
@@ -139,17 +141,25 @@ function addColumn() {
   newTable.value.columns.push({ name: "", type: "text" as const });
 }
 
-async function deleteTable(name: string) {
+function confirmDeleteTable(name: string) {
   if (deleting.value) return;
-  deleting.value = name;
+  deleteTarget.value = name;
+  showDeleteConfirm.value = true;
+}
+
+async function executeDeleteTable() {
+  if (!deleteTarget.value || deleting.value) return;
+  deleting.value = deleteTarget.value;
+  showDeleteConfirm.value = false;
   try {
-    await apiRequest("DELETE", `/api/databases/${dbName.value}/tables/${name}`);
-    if (selectedTable.value === name) selectedTable.value = "";
+    await apiRequest("DELETE", `/api/databases/${dbName.value}/tables/${deleteTarget.value}`);
+    if (selectedTable.value === deleteTarget.value) selectedTable.value = "";
     await load();
   } catch (e: any) {
     alert(e.message);
   } finally {
     deleting.value = null;
+    deleteTarget.value = "";
   }
 }
 </script>
@@ -188,7 +198,7 @@ async function deleteTable(name: string) {
                 selectedTable === t ? 'bg-accent-500/10 text-accent-300' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
               ]">
               <span class="truncate min-w-0">{{ t }}</span>
-              <button @click.stop="deleteTable(t)" :disabled="deleting !== null"
+              <button @click.stop="confirmDeleteTable(t)" :disabled="deleting !== null"
                 class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 text-xs disabled:opacity-40 flex-shrink-0 ml-2">
                 {{ deleting === t ? "..." : "×" }}
               </button>
@@ -274,6 +284,18 @@ async function deleteTable(name: string) {
 
         <!-- Settings -->
         <DatabaseSettings v-else-if="view === 'settings'" />
+      </div>
+    </div>
+
+    <!-- Delete table confirmation modal -->
+    <div v-if="showDeleteConfirm" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showDeleteConfirm = false">
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm">
+        <h3 class="text-sm font-medium text-gray-200 mb-2">Delete Table</h3>
+        <p class="text-sm text-gray-400 mb-6">Are you sure you want to delete <span class="text-gray-200 font-medium">{{ deleteTarget }}</span>? This cannot be undone.</p>
+        <div class="flex gap-3 justify-end">
+          <button @click="showDeleteConfirm = false" class="btn-secondary">Cancel</button>
+          <button @click="executeDeleteTable" :disabled="deleting !== null" class="btn-primary bg-red-600 hover:bg-red-500">{{ deleting === deleteTarget ? "Deleting..." : "Delete" }}</button>
+        </div>
       </div>
     </div>
 

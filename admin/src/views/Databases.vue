@@ -11,10 +11,14 @@ const loading = ref(true);
 const showCreate = ref(false);
 const showImport = ref(false);
 const newName = ref("");
+const createError = ref("");
 const importFile = ref<File | null>(null);
 const importName = ref("");
 const importing = ref(false);
 const exporting = ref<string | null>(null);
+const showDeleteDb = ref(false);
+const deleteDbTarget = ref("");
+const deletingDb = ref(false);
 
 onMounted(load);
 
@@ -33,20 +37,32 @@ async function createDb() {
   try {
     await apiRequest("POST", "/api/databases", { name: newName.value });
     showCreate.value = false;
+    createError.value = "";
     newName.value = "";
     await load();
   } catch (e: any) {
-    alert(e.message);
+    createError.value = e.message;
   }
 }
 
-async function deleteDb(name: string) {
-  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+function confirmDeleteDb(name: string) {
+  if (deletingDb.value) return;
+  deleteDbTarget.value = name;
+  showDeleteDb.value = true;
+}
+
+async function executeDeleteDb() {
+  if (!deleteDbTarget.value || deletingDb.value) return;
+  deletingDb.value = true;
+  showDeleteDb.value = false;
   try {
-    await apiRequest("DELETE", `/api/databases/${name}`);
+    await apiRequest("DELETE", `/api/databases/${deleteDbTarget.value}`);
     await load();
   } catch (e: any) {
     alert(e.message);
+  } finally {
+    deletingDb.value = false;
+    deleteDbTarget.value = "";
   }
 }
 
@@ -116,7 +132,7 @@ async function exportDb(name: string) {
       <h1 class="text-2xl font-semibold text-gray-100">Databases</h1>
       <div class="flex gap-3">
         <button @click="showImport = true" :disabled="importing" class="btn-secondary">{{ importing ? "Importing..." : "Import" }}</button>
-        <button @click="showCreate = true" class="btn-primary">+ Create</button>
+        <button @click="showCreate = true; createError = ''; newName = ''" class="btn-primary">+ Create</button>
       </div>
     </div>
 
@@ -128,7 +144,7 @@ async function exportDb(name: string) {
       </div>
       <p class="text-sm text-gray-500 mb-1">No databases</p>
       <p class="text-xs text-gray-600 mb-4">Create your first database to get started</p>
-      <button @click="showCreate = true" class="btn-primary">Create Database</button>
+      <button @click="showCreate = true; createError = ''; newName = ''" class="btn-primary">Create Database</button>
     </div>
 
     <div v-else class="db-grid">
@@ -148,7 +164,7 @@ async function exportDb(name: string) {
               <svg v-if="exporting === db.name" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
               <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
             </button>
-            <button @click.stop="deleteDb(db.name)" title="Delete" class="icon-btn text-red-400 hover:text-red-300"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
+            <button @click.stop="confirmDeleteDb(db.name)" title="Delete" class="icon-btn text-red-400 hover:text-red-300"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
           </div>
         </div>
         <button @click="router.push(`/databases/${db.name}`)" class="w-full mt-2 text-xs px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors">Manage</button>
@@ -156,12 +172,13 @@ async function exportDb(name: string) {
     </div>
 
     <!-- Create Modal -->
-    <div v-if="showCreate" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showCreate = false">
+    <div v-if="showCreate" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showCreate = false; createError = ''; newName = ''">
       <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm">
         <h3 class="text-sm font-medium text-gray-200 mb-4">Create Database</h3>
-        <input v-model="newName" @keyup.enter="createDb" class="input mb-4" placeholder="my-database" autofocus />
+        <input v-model="newName" @keyup.enter="createDb" class="input mb-2" placeholder="my-database" autofocus />
+        <p v-if="createError" class="text-xs text-red-400 mb-4">{{ createError }}</p>
         <div class="flex gap-3 justify-end">
-          <button @click="showCreate = false" class="btn-secondary">Cancel</button>
+          <button @click="showCreate = false; createError = ''; newName = ''" class="btn-secondary">Cancel</button>
           <button @click="createDb" class="btn-primary">Create</button>
         </div>
       </div>
@@ -177,6 +194,18 @@ async function exportDb(name: string) {
         <div class="flex gap-3 justify-end">
           <button @click="showImport = false" class="btn-secondary">Cancel</button>
           <button @click="importDb" :disabled="importing" class="btn-primary">{{ importing ? "Importing..." : "Import" }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete database confirmation modal -->
+    <div v-if="showDeleteDb" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showDeleteDb = false">
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm">
+        <h3 class="text-sm font-medium text-gray-200 mb-2">Delete Database</h3>
+        <p class="text-sm text-gray-400 mb-6">Are you sure you want to delete <span class="text-gray-200 font-medium">{{ deleteDbTarget }}</span>? All data will be permanently removed.</p>
+        <div class="flex gap-3 justify-end">
+          <button @click="showDeleteDb = false" class="btn-secondary">Cancel</button>
+          <button @click="executeDeleteDb" :disabled="deletingDb" class="btn-primary bg-red-600 hover:bg-red-500">{{ deletingDb ? "Deleting..." : "Delete" }}</button>
         </div>
       </div>
     </div>

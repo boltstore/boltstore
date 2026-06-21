@@ -47,6 +47,13 @@ maxBodySize: 10              # Max request body size in MB (default 10)
 
 export async function initCommand(args: string[]): Promise<void> {
   const asJson = args.includes("--json");
+  const filename = asJson ? "boltstore.json" : "boltstore.yaml";
+
+  if (await Bun.file(filename).exists()) {
+    info(`${filename} already exists. Remove it first to regenerate.`);
+    return;
+  }
+
   const defaults = buildDefaults();
 
   if (asJson) {
