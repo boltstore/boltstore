@@ -2,6 +2,13 @@ import { Router } from "./router";
 import { logger, generateRequestId, flushLogger, stopLogger } from "./logger";
 import { applyCors, handlePreflight, type CorsConfig, defaultConfig as defaultCorsConfig } from "./middleware/cors";
 import { DatabaseManager } from "./db/manager";
+import { registerHealthRoutes } from "./routes/health";
+import { registerDatabaseRoutes } from "./routes/databases";
+import { registerApiKeyRoutes } from "./routes/keys";
+import { registerTableRoutes } from "./routes/tables";
+import { registerRecordRoutes } from "./routes/records";
+import { registerQueryRoutes } from "./routes/query";
+import { registerConfigRoutes } from "./routes/config";
 
 export interface ServerConfig {
   port: number;
@@ -26,7 +33,7 @@ export function jsonResponse(data: unknown, status = 200, headers?: Record<strin
   if (Buffer.byteLength(body, "utf8") > MAX_RESPONSE_SIZE) {
     return errorResponse(
       "RESPONSE_TOO_LARGE",
-      `Response body exceeds ${MAX_RESPONSE_SIZE} bytes. Use pagination at limit/offset.`,
+      `Response body exceeds ${MAX_RESPONSE_SIZE} bytes. Use limit/offset pagination.`,
       413
     );
   }
@@ -62,8 +69,24 @@ export function safeErrorResponse(err: unknown): Response {
   return errorResponse("INTERNAL_ERROR", "An unexpected error occurred.", 500);
 }
 
-export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve> {
+export function createRouter(config: { manager?: DatabaseManager }): Router {
   const router = new Router();
+  const manager = config.manager;
+
+  registerHealthRoutes(router, manager);
+  if (manager) {
+    registerDatabaseRoutes(router, manager);
+    registerApiKeyRoutes(router, manager);
+    registerTableRoutes(router, manager);
+    registerRecordRoutes(router, manager);
+    registerQueryRoutes(router, manager);
+    registerConfigRoutes(router, manager);
+  }
+  return router;
+}
+
+export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve> {
+  const router = createRouter(config);
   const corsConfig = config.cors || defaultCorsConfig;
   const maxBodySize = config.maxBodySize ?? 1024 * 1024;
   const requestTimeoutMs = config.requestTimeoutMs ?? 30000;
@@ -81,9 +104,8 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
 
       try {
         if (method === "OPTIONS") {
-          const origin = request.headers.get("Origin");
           logger.debug("CORS preflight", logMeta);
-          return handlePreflight(origin, corsConfig);
+          return handlePreflight(request.headers.get("Origin"), corsConfig);
         }
 
         const contentLength = request.headers.get("Content-Length");
