@@ -14,7 +14,8 @@ function createRecord(
   pool: DatabasePool,
   collection: string,
   data: Record<string, unknown>,
-  auth?: AuthContext
+  auth?: AuthContext,
+  returning?: string[],
 ): Record<string, unknown> {
   const columns = getColumnNames(pool, collection);
   const systemCols = new Set(["id", "created_at", "updated_at"]);
@@ -58,6 +59,14 @@ function createRecord(
           { status: 409 }
         );
       }
+    }
+
+    if (returning && returning.length > 0) {
+      const returningCols = returning.map((c) => `"${c}"`).join(", ");
+      const row = db.query(
+        `INSERT INTO "${collection}" (${quotedKeys}) VALUES (${placeholders}) RETURNING ${returningCols}`
+      ).get(...toBindings(values));
+      return row as Record<string, unknown>;
     }
 
     db.run(
@@ -105,7 +114,8 @@ function updateRecord(
   collection: string,
   id: string,
   data: Record<string, unknown>,
-  auth?: AuthContext
+  auth?: AuthContext,
+  returning?: string[],
 ): Record<string, unknown> {
   const columns = getColumnNames(pool, collection);
   const columnSet = new Set(columns);
@@ -168,6 +178,12 @@ function updateRecord(
       values.push(...rls.params);
     }
 
+    if (returning && returning.length > 0) {
+      const returningCols = returning.map((c) => `"${c}"`).join(", ");
+      const row = db.query(`${updateSql} RETURNING ${returningCols}`).get(...toBindings(values));
+      return row as Record<string, unknown>;
+    }
+
     db.run(updateSql, toBindings(values));
 
     const row = db.query(`SELECT * FROM "${collection}" WHERE id=?`).get(id);
@@ -179,14 +195,15 @@ function deleteRecord(
   pool: DatabasePool,
   collection: string,
   id: string,
-  auth?: AuthContext
-): void {
+  auth?: AuthContext,
+  returning?: string[],
+): Record<string, unknown> | void {
   getColumnNames(pool, collection);
 
   const rlsCtx = auth ? toRLSContext(auth) : null;
   const rls = rlsCtx ? applyRLS(pool, collection, "write", rlsCtx) : null;
 
-  pool.writeTransaction(() => {
+  return pool.writeTransaction(() => {
     const db = pool.write();
 
     let selectSql = `SELECT 1 FROM "${collection}" WHERE id=?`;
@@ -208,6 +225,12 @@ function deleteRecord(
     if (rls?.whereClause) {
       deleteSql += ` AND ${rls.whereClause}`;
       params.push(...rls.params);
+    }
+
+    if (returning && returning.length > 0) {
+      const returningCols = returning.map((c) => `"${c}"`).join(", ");
+      const row = db.query(`${deleteSql} RETURNING ${returningCols}`).get(...toBindings(params));
+      return row as Record<string, unknown>;
     }
 
     db.run(deleteSql, toBindings(params));

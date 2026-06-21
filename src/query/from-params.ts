@@ -50,6 +50,24 @@ function parseFilter(filter: Filter, depth = 0): WhereClause[] {
     return result;
   }
 
+  // Subquery exists / not exists at filter group level
+  const existsSub = (filter as Record<string, unknown>)["$subqueryExists"];
+  if (existsSub && typeof existsSub === "object" && existsSub !== null) {
+    const es = existsSub as { collection: string; filter?: import("@boltstore/utils").Filter };
+    validateIdentifier(es.collection, "subquery collection");
+    const inner = es.filter ? parseFilter(es.filter, depth + 1) : [];
+    result.push({ type: "exists", field: "", operator: "exists", subqueryCollection: es.collection, subqueryFilter: inner, boolean: "and" });
+    return result;
+  }
+  const notExistsSub = (filter as Record<string, unknown>)["$subqueryNotExists"];
+  if (notExistsSub && typeof notExistsSub === "object" && notExistsSub !== null) {
+    const nes = notExistsSub as { collection: string; filter?: import("@boltstore/utils").Filter };
+    validateIdentifier(nes.collection, "subquery collection");
+    const inner = nes.filter ? parseFilter(nes.filter, depth + 1) : [];
+    result.push({ type: "exists", field: "", operator: "notExists", subqueryCollection: nes.collection, subqueryFilter: inner, boolean: "and" });
+    return result;
+  }
+
   // Raw SQL passthrough (debug only, by checking for $raw)
   const raw = (filter as Record<string, unknown>)["$raw"];
   if (raw && typeof raw === "object" && raw !== null) {
@@ -106,6 +124,21 @@ const OP_TO_CLAUSE: Record<string, { type: WhereClause["type"]; operator: string
 };
 
 function parseOperatorClause(field: string, op: string, value: unknown): WhereClause | null {
+  // Field-level $not: { field: { $not: { $eq: val } } }
+  if (op === "$not") {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (entries.length === 1) {
+        const [innerOp, innerVal] = entries[0];
+        const inner = parseOperatorClause(field, innerOp, innerVal);
+        if (inner) {
+          return { type: "not", query: [inner], boolean: "and" };
+        }
+      }
+    }
+    throw new Error("Invalid field-level $not syntax. Expected { field: { $not: { $eq: val } } }");
+  }
+
   const mapping = OP_TO_CLAUSE[op];
   if (!mapping) throw new Error(`Unknown filter operator "${op}"`);
 

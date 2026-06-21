@@ -124,6 +124,16 @@ function compileWhereClause(clause: WhereClause, tableQualified?: boolean): SqlF
     }
 
     case "exists": {
+      if (clause.subqueryCollection) {
+        const target = quoteIdent(clause.subqueryCollection);
+        if (clause.subqueryFilter && clause.subqueryFilter.length > 0) {
+          const inner = compileWheresNoSearch(clause.subqueryFilter, tableQualified);
+          const op = clause.operator === "exists" ? "EXISTS" : "NOT EXISTS";
+          return { sql: `${op} (SELECT 1 FROM ${target} WHERE ${inner.sql})`, params: inner.params };
+        }
+        const op = clause.operator === "exists" ? "EXISTS" : "NOT EXISTS";
+        return { sql: `${op} (SELECT 1 FROM ${target})`, params: [] };
+      }
       const ident = sqlFieldRef(clause.field, tableQualified);
       return clause.operator === "exists"
         ? { sql: `${ident} IS NOT NULL`, params: [] }

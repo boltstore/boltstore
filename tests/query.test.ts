@@ -3,6 +3,7 @@ import { DatabaseManager } from "../src/db/manager";
 import { createCollection } from "../src/collections";
 import { queryFromParams, generateSQL } from "../src/query";
 import { ServerQueryBuilder } from "../src/query/server-builder";
+import { createRecord, updateRecord, deleteRecord } from "../src/records/crud";
 
 const TEST_DATA_DIR = "/tmp/boltstore_test_query";
 const TEST_APP = "queryapp";
@@ -157,6 +158,56 @@ describe("logical grouping", () => {
       collection: "products",
       filter: { $not: { category: "fruit" } },
     }, pool.read()).get();
+    expect(data.length).toBe(5);
+  });
+
+  test("$not — field-level negator", () => {
+    const data = queryFromParams({
+      collection: "products",
+      filter: { category: { $not: { $eq: "fruit" } } },
+    }, pool.read()).get();
+    expect(data.length).toBe(5);
+  });
+
+  test("$exists subquery — EXISTS (SELECT 1 FROM ...)", () => {
+    // Create an orders table with a record referencing a product
+    const db = pool.write();
+    db.run(`CREATE TABLE IF NOT EXISTS "orders" ("id" TEXT, "product_id" TEXT, "status" TEXT)`);
+    db.run(`INSERT INTO "orders" ("id", "product_id", "status") VALUES ('ord_1', 'laptop', 'shipped')`);
+    db.run(`INSERT INTO "orders" ("id", "product_id", "status") VALUES ('ord_2', 'desk', 'pending')`);
+
+    const data = queryFromParams({
+      collection: "products",
+      filter: { $subqueryExists: { collection: "orders" } },
+    }, pool.read()).get();
+    // All products since orders table has rows
+    expect(data.length).toBe(7);
+  });
+
+  test("$exists subquery — NOT EXISTS (SELECT 1 FROM ...)", () => {
+    const data = queryFromParams({
+      collection: "products",
+      filter: { $subqueryNotExists: { collection: "orders", filter: { status: "cancelled" } } },
+    }, pool.read()).get();
+    // NOT EXISTS (SELECT 1 FROM "orders" WHERE "status" = 'cancelled') → true since no cancelled orders
+    expect(data.length).toBe(7);
+  });
+
+  test("$exists subquery — with inner filter", () => {
+    const data = queryFromParams({
+      collection: "products",
+      filter: { $subqueryExists: { collection: "orders", filter: { status: "shipped" } } },
+    }, pool.read()).get();
+    // EXISTS (SELECT 1 FROM "orders" WHERE "status" = ?) → true because one shipped order exists
+    expect(data.length).toBe(7);
+  });
+
+  test("$not — field-level negator with $gt", () => {
+    const data = queryFromParams({
+      collection: "products",
+      filter: { price: { $not: { $gt: 300 } } },
+    }, pool.read()).get();
+    // NOT (price > 300) = price <= 300 → Apple (1.5), Banana (0.8), Mouse (25), Chair (150), Water (0.5) = 5
     expect(data.length).toBe(5);
   });
 
@@ -347,5 +398,29 @@ describe("buildQuery (via toSQL)", () => {
     expect(sql).toContain("LIMIT ?");
     expect(sql).toContain("OFFSET ?");
     expect(bindings).toEqual([10, 20]);
+  });
+});
+
+describe("RETURNING field selection", () => {
+  beforeEach(() => seed());
+
+  test("create with RETURNING selected fields", () => {
+    const record = createRecord(pool, "products", { name: "Cherry", price: 500, category: "fruit" }, undefined, ["id", "name"]);
+    expect(record).toHaveProperty("id");
+    expect(record).toHaveProperty("name", "Cherry");
+    expect(record).not.toHaveProperty("price");
+  });
+
+  test("update with RETURNING selected fields", () => {
+    const record = updateRecord(pool, "products", "apple", { price: 999 }, undefined, ["id", "price"]);
+    expect(record).toHaveProperty("id", "apple");
+    expect(record).toHaveProperty("price", 999);
+    expect(record).not.toHaveProperty("name");
+  });
+
+  test("delete with RETURNING selected fields", () => {
+    const result = deleteRecord(pool, "products", "banana", undefined, ["id", "name"]) as Record<string, unknown>;
+    expect(result).toHaveProperty("id", "banana");
+    expect(result).toHaveProperty("name");
   });
 });

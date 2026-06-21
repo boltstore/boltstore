@@ -63,8 +63,10 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
 
     const body = await req.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) return errorResponse("VALIDATION", "Request body must be a JSON object.", 400);
+    const url = new URL(req.url);
+    const returning = url.searchParams.get("returning")?.split(",").map(s => s.trim()).filter(Boolean);
     const pool = manager.get(params.database);
-    const record = createRecord(pool, params.collection, body, auth);
+    const record = createRecord(pool, params.collection, body, auth, returning);
     notifyRecordChange("create", params.database, params.collection, record, undefined, pool, principalId(auth));
     return jsonResponse({ data: record }, 201);
   });
@@ -157,9 +159,11 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
 
     const body = await req.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) return errorResponse("VALIDATION", "Request body must be a JSON object.", 400);
+    const url = new URL(req.url);
+    const returning = url.searchParams.get("returning")?.split(",").map(s => s.trim()).filter(Boolean);
     const pool = manager.get(params.database);
     const previous = getRecord(pool, params.collection, params.id, auth);
-    const record = updateRecord(pool, params.collection, params.id, body, auth);
+    const record = updateRecord(pool, params.collection, params.id, body, auth, returning);
     notifyRecordChange("update", params.database, params.collection, record, previous, pool, principalId(auth));
     return jsonResponse({ data: record });
   });
@@ -172,16 +176,20 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager, a
 
     const url = new URL(req.url);
     const shouldCascade = url.searchParams.get("cascade") === "true";
+    const returning = url.searchParams.get("returning")?.split(",").map(s => s.trim()).filter(Boolean);
     const pool = manager.get(params.database);
     const record = getRecord(pool, params.collection, params.id, auth);
     if (shouldCascade) {
       const cascadeResult = cascadeDelete(pool, params.collection, params.id, auth);
-      deleteRecord(pool, params.collection, params.id, auth);
+      deleteRecord(pool, params.collection, params.id, auth, returning);
       notifyRecordChange("delete", params.database, params.collection, record, undefined, pool, principalId(auth));
       return jsonResponse({ data: { deleted: true, cascade: cascadeResult.deleted, cascaded: true } });
     }
-    deleteRecord(pool, params.collection, params.id, auth);
+    const deleted = deleteRecord(pool, params.collection, params.id, auth, returning);
     notifyRecordChange("delete", params.database, params.collection, record, undefined, pool, principalId(auth));
+    if (returning && deleted) {
+      return jsonResponse({ data: deleted });
+    }
     return jsonResponse({ data: { deleted: true } });
   });
 
