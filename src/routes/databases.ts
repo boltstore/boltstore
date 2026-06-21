@@ -45,21 +45,34 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("VALIDATION", "New name must match ^[a-z0-9][a-z0-9_-]*$", 400);
     }
     const oldName = params.name;
+
+    // Move the database file using VACUUM INTO instead of filesystem rename
+    // to avoid file lock and foreign key constraint issues
     const metaPool = manager.getMetaPool();
     const row = metaPool.read().query("SELECT file_path FROM _databases WHERE name = ?").get(oldName) as { file_path: string } | null;
     if (!row) return errorResponse("NOT_FOUND", "Database not found.", 404);
 
     const newPath = row.file_path.replace(oldName, body.name);
-    const { renameSync } = require("node:fs");
+    const pool = manager.get(oldName);
+
     try {
-      renameSync(row.file_path, newPath);
-    } catch {
-      return errorResponse("ERROR", "Failed to rename database file.", 500);
+      pool.write().run(`VACUUM INTO '${newPath.replace(/'/g, "''")}'`);
+    } catch (err: any) {
+      return errorResponse("ERROR", err?.message || "Failed to copy database.", 500);
     }
 
-    // Update child table references before renaming
-    metaPool.write().run("UPDATE _api_keys SET database_name = ? WHERE database_name = ?", [body.name, oldName]);
-    metaPool.write().run("UPDATE _databases SET name = ?, file_path = ? WHERE name = ?", [body.name, newPath, oldName]);
+    // Use a transaction with deferred foreign keys so both updates succeed atomically
+    const metaWrite = metaPool.write();
+    metaWrite.run("BEGIN");
+    metaWrite.run("PRAGMA defer_foreign_keys = ON");
+    metaWrite.run("UPDATE _databases SET name = ?, file_path = ? WHERE name = ?", [body.name, newPath, oldName]);
+    metaWrite.run("UPDATE _api_keys SET database_name = ? WHERE database_name = ?", [body.name, oldName]);
+    metaWrite.run("COMMIT");
+
+    // Close old pool, remove old file
+    manager.closePool(oldName);
+    try { require("node:fs").rmSync(row.file_path); } catch {}
+
     logActivity(manager, { action: "database.rename", database_name: oldName, details: { from: oldName, to: body.name }, ip: req.headers.get("x-forwarded-for") || undefined });
     return jsonResponse({ data: { name: body.name } });
   });
