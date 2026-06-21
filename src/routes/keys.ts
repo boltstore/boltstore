@@ -26,14 +26,14 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
   const metaPool = manager.getMetaPool();
 
   router.get("/api/databases/:name/keys", async (req, params) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const db = metaPool.read();
     const keys = db.query("SELECT id, label, created_at, last_used_at FROM _api_keys WHERE database_name = ? ORDER BY created_at DESC").all(params.name);
     return jsonResponse({ data: keys });
   });
 
   router.post("/api/databases/:name/keys", async (req, params) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const body = await req.json() as { label?: string };
     if (!body.label || typeof body.label !== "string" || body.label.length < 1) {
       return errorResponse("VALIDATION", "Label is required.", 400);
@@ -53,7 +53,7 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
   });
 
   router.post("/api/databases/:name/keys/:keyId/rotate", async (req, params) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const key = generateApiKey();
     const hash = await hashKey(key);
 
@@ -68,7 +68,7 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
   });
 
   router.delete("/api/databases/:name/keys/:keyId", async (req, params) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const result = metaPool.write().run(
       "DELETE FROM _api_keys WHERE id = ? AND database_name = ?",
       [params.keyId, params.name]

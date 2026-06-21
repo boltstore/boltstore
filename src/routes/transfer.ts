@@ -8,7 +8,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
   const dataDir = manager.getDataDir();
 
   router.post("/api/databases/:name/export", async (req, params) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
 
     const pool = manager.get(params.name);
     const exportPath = `${dataDir}/${params.name}_export.db`;
@@ -35,7 +35,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
   });
 
   router.post("/api/databases/import", async (req) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
 
     const form = await req.formData();
     const fileField = form.get("file");
@@ -54,6 +54,13 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("VALIDATION", "Database name must match ^[a-z0-9][a-z0-9_-]*$", 400);
     }
 
+    // Check for name conflict
+    const metaPool = manager.getMetaPool();
+    const existing = metaPool.read().query("SELECT 1 FROM _databases WHERE name = ?").get(dbName);
+    if (existing) {
+      return errorResponse("CONFLICT", `Database "${dbName}" already exists.`, 409);
+    }
+
     const destPath = `${dataDir}/${dbName}.db`;
     const bytes = await fileField.bytes();
 
@@ -68,10 +75,12 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("ERROR", err.message || "Failed to write database file.", 500);
     }
 
+    // Register so manager.get() can find it, then validate integrity
     try {
-      const pool = manager.get(dbName);
+      const pool = manager.registerDatabase(dbName, destPath);
       pool.read().query("PRAGMA integrity_check").get();
     } catch {
+      // Clean up on failure
       try { require("node:fs").rmSync(destPath); } catch {}
       return errorResponse("VALIDATION", "Imported file failed integrity check.", 400);
     }

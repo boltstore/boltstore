@@ -23,6 +23,7 @@ try {
     const server = createServer({
       port: config.port,
       manager,
+      adminKey: config.adminKey,
       cors: {
         origins: config.corsOrigins,
         methods: config.corsMethods,

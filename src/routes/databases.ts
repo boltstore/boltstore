@@ -8,13 +8,13 @@ const VALID_NAME = /^[a-z0-9][a-z0-9_-]*$/;
 
 export function registerDatabaseRoutes(router: Router, manager: DatabaseManager): void {
   router.get("/api/databases", async (req) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const databases = manager.listDatabases();
     return jsonResponse({ data: databases });
   });
 
   router.post("/api/databases", async (req) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const body = await req.json() as { name?: string };
     if (!body.name || !VALID_NAME.test(body.name)) {
       return errorResponse("VALIDATION", "Database name must match ^[a-z0-9][a-z0-9_-]*$", 400);
@@ -25,11 +25,11 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
   });
 
   router.get("/api/databases/:name", async (req, params) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     try {
       const pool = manager.get(params.name);
       const db = pool.read();
-      const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_%' ORDER BY name").all() as { name: string }[];
+      const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name").all() as { name: string }[];
       const info = manager.listDatabases().find(d => d.name === params.name);
       if (!info) return errorResponse("NOT_FOUND", "Database not found.", 404);
       return jsonResponse({ data: { ...info, tables: tables.map(t => t.name) } });
@@ -39,7 +39,7 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
   });
 
   router.patch("/api/databases/:name", async (req, params) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const body = await req.json() as { name?: string };
     if (!body.name || !VALID_NAME.test(body.name)) {
       return errorResponse("VALIDATION", "New name must match ^[a-z0-9][a-z0-9_-]*$", 400);
@@ -78,7 +78,7 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
   });
 
   router.delete("/api/databases/:name", async (req, params) => {
-    if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     manager.deleteDatabase(params.name);
     logActivity(manager, { action: "database.delete", database_name: params.name, ip: req.headers.get("x-forwarded-for") || undefined });
     return jsonResponse({ data: { deleted: true } });

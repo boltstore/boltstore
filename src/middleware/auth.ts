@@ -1,8 +1,6 @@
 import { DatabaseManager } from "../db/manager";
 import { errorResponse } from "../server";
 
-const ADMIN_KEY_ENV = "BOLTSTORE_ADMIN_KEY";
-
 export interface AuthResult {
   authenticated: boolean;
   databaseName?: string;
@@ -11,12 +9,26 @@ export interface AuthResult {
   isAdmin: boolean;
 }
 
-export function isAdminRequest(request: Request): boolean {
+export function isAdminRequest(request: Request, manager?: DatabaseManager): boolean {
   const auth = request.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return false;
-  const key = auth.slice(7).trim();
-  const adminKey = Bun.env[ADMIN_KEY_ENV];
-  return !!adminKey && key === adminKey;
+  const token = auth.slice(7).trim();
+  if (!token) return false;
+
+  // Check admin key from config/env
+  if (Bun.env.BOLTSTORE_ADMIN_KEY && token === Bun.env.BOLTSTORE_ADMIN_KEY) return true;
+
+  // Check session token from _sessions table
+  if (manager) {
+    try {
+      const row = manager.getMetaPool().read()
+        .query("SELECT 1 FROM _sessions WHERE token = ?")
+        .get(token);
+      if (row) return true;
+    } catch {}
+  }
+
+  return false;
 }
 
 export async function authenticateApiKey(
@@ -34,9 +46,8 @@ export async function authenticateApiKey(
     return errorResponse("UNAUTHORIZED", "Missing API key.", 401);
   }
 
-  // Admin key check
-  const adminKey = Bun.env[ADMIN_KEY_ENV];
-  if (adminKey && providedKey === adminKey) {
+  // Admin check — admin key or session token can access any database
+  if (isAdminRequest(request, manager)) {
     return { authenticated: true, isAdmin: true, databaseName };
   }
 

@@ -10,6 +10,8 @@ import { registerRecordRoutes } from "./routes/records";
 import { registerQueryRoutes } from "./routes/query";
 import { registerConfigRoutes } from "./routes/config";
 import { registerTransferRoutes } from "./routes/transfer";
+import { registerAdminRoutes } from "./routes/admin";
+import { registerActivityRoutes } from "./routes/activity";
 
 export interface ServerConfig {
   port: number;
@@ -17,6 +19,8 @@ export interface ServerConfig {
   manager?: DatabaseManager;
   maxBodySize?: number;
   requestTimeoutMs?: number;
+  adminKey?: string;
+  devDashboardUrl?: string;
 }
 
 export interface ApiResponse {
@@ -70,7 +74,7 @@ export function safeErrorResponse(err: unknown): Response {
   return errorResponse("INTERNAL_ERROR", "An unexpected error occurred.", 500);
 }
 
-export function createRouter(config: { manager?: DatabaseManager }): Router {
+export function createRouter(config: { manager?: DatabaseManager; adminKey?: string }): Router {
   const router = new Router();
   const manager = config.manager;
 
@@ -83,14 +87,16 @@ export function createRouter(config: { manager?: DatabaseManager }): Router {
     registerQueryRoutes(router, manager);
     registerConfigRoutes(router, manager);
     registerTransferRoutes(router, manager);
+    registerAdminRoutes(router, manager, config.adminKey);
+    registerActivityRoutes(router, manager);
   }
   return router;
 }
 
 export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve> {
-  const router = createRouter(config);
+  const router = createRouter({ manager: config.manager, adminKey: config.adminKey });
   const corsConfig = config.cors || defaultCorsConfig;
-  const maxBodySize = config.maxBodySize ?? 1024 * 1024;
+  const maxBodySize = (config.maxBodySize ?? 10) * 1024 * 1024;
   const requestTimeoutMs = config.requestTimeoutMs ?? 30000;
 
   const server = Bun.serve({
@@ -102,6 +108,30 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
       const method = request.method;
       const pathname = url.pathname;
 
+      // Serve dashboard static files
+      if (pathname.startsWith("/dashboard")) {
+        const devUrl = config.devDashboardUrl;
+        if (devUrl) {
+          const targetUrl = devUrl + pathname + url.search;
+          try {
+            const upstream = await fetch(targetUrl, { method, headers: request.headers, body: request.body });
+            return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
+          } catch {
+            // fall through to static files if Vite dev server is unreachable
+          }
+        }
+        const filePath = pathname === "/dashboard" || pathname === "/dashboard/"
+          ? `${import.meta.dir}/../admin/dist/index.html`
+          : `${import.meta.dir}/../admin/dist${pathname.replace("/dashboard", "")}`;
+        const file = Bun.file(filePath);
+        const exists = await file.exists();
+        if (exists) return new Response(file);
+        // SPA fallback: serve index.html for all dashboard routes
+        const indexFile = Bun.file(`${import.meta.dir}/../admin/dist/index.html`);
+        if (await indexFile.exists()) return new Response(indexFile);
+        return errorResponse("NOT_FOUND", "Dashboard not built. Run 'cd admin && npm run build'.", 404);
+      }
+
       const logMeta = { request_id: requestId, method, path: pathname };
 
       try {
@@ -111,8 +141,8 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         }
 
         const contentLength = request.headers.get("Content-Length");
-        if (contentLength && parseInt(contentLength, 10) > maxBodySize) {
-          return errorResponse("PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBodySize} bytes limit.`, 413);
+        if (contentLength && parseInt(contentLength, 10) > maxBodySize && !pathname.startsWith("/api/databases/import")) {
+          return errorResponse("PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBodySize / 1024 / 1024}MB limit.`, 413);
         }
 
         let timeoutId: ReturnType<typeof setTimeout> | undefined;

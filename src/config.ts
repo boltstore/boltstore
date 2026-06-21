@@ -11,6 +11,7 @@ export interface BoltstoreConfig {
   maxBodySize: number;
   requestTimeoutMs: number;
   trustedProxies: string[];
+  adminKey?: string;
 }
 
 const DEFAULT_CONFIG: BoltstoreConfig = {
@@ -21,7 +22,7 @@ const DEFAULT_CONFIG: BoltstoreConfig = {
   corsMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   corsHeaders: ["Content-Type", "Authorization"],
   logLevel: "info",
-  maxBodySize: 1024 * 1024,
+  maxBodySize: 10, // MB
   requestTimeoutMs: 30000,
   trustedProxies: [],
 };
@@ -43,6 +44,9 @@ function parseCliArgs(): Partial<BoltstoreConfig> {
         break;
       case "--config":
         if (next) { i++; }
+        break;
+      case "--admin-key":
+        if (next) { config.adminKey = next; i++; }
         break;
       case "--log-level":
         if (next) { config.logLevel = next; i++; }
@@ -70,6 +74,7 @@ function parseEnvVars(): Partial<BoltstoreConfig> {
 
   if (Bun.env.PORT) config.port = parseInt(Bun.env.PORT, 10);
   if (Bun.env.DATABASE_PATH) config.databasePath = Bun.env.DATABASE_PATH;
+  if (Bun.env.BOLTSTORE_ADMIN_KEY) config.adminKey = Bun.env.BOLTSTORE_ADMIN_KEY;
   if (Bun.env.SERVER_TIMEZONE) config.serverTimezone = Bun.env.SERVER_TIMEZONE;
   if (Bun.env.CORS_ORIGINS) config.corsOrigins = Bun.env.CORS_ORIGINS.split(",").map((s) => s.trim());
   if (Bun.env.CORS_METHODS) config.corsMethods = Bun.env.CORS_METHODS.split(",").map((s) => s.trim());
@@ -100,6 +105,7 @@ async function parseConfigFile(filePath: string): Promise<Partial<BoltstoreConfi
 function mapToConfig(parsed: Record<string, unknown>): Partial<BoltstoreConfig> {
   const config: Partial<BoltstoreConfig> = {};
 
+  if (typeof parsed.adminKey === "string") config.adminKey = parsed.adminKey;
   if (typeof parsed.port === "number") config.port = parsed.port;
   if (typeof parsed.databasePath === "string") config.databasePath = parsed.databasePath;
   if (typeof parsed.logLevel === "string") config.logLevel = parsed.logLevel;

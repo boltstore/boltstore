@@ -1,4 +1,7 @@
+import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
+import { jsonResponse } from "../server";
+import { isAdminRequest } from "../middleware/auth";
 
 export interface ActivityEvent {
   action: string;
@@ -15,6 +18,16 @@ function generateId(): string {
   let id = "";
   for (let i = 0; i < 16; i++) id += chars[bytes[i] % chars.length];
   return "act_" + id;
+}
+
+export function registerActivityRoutes(router: Router, manager: DatabaseManager): void {
+  router.get("/api/activity", async (req) => {
+    if (!isAdminRequest(req, manager)) return jsonResponse({ data: [], meta: { total: 0 } });
+    const rows = manager.getMetaPool().read().query(
+      "SELECT id, action, database_name, target, details, ip, created_at FROM _activity_log ORDER BY created_at DESC LIMIT 100"
+    ).all();
+    return jsonResponse({ data: rows, meta: { total: rows.length } });
+  });
 }
 
 export function logActivity(manager: DatabaseManager, event: ActivityEvent): void {

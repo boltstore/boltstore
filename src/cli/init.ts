@@ -41,6 +41,7 @@ function renderYaml(cfg: ReturnType<typeof buildDefaults>): string {
 port: ${cfg.port}
 databasePath: ${cfg.databasePath}
 logLevel: ${cfg.logLevel}
+maxBodySize: 10              # Max request body size in MB (default 10)
 `;
 }
 

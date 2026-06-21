@@ -69,6 +69,14 @@ export class DatabaseManager {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
+    db.run(`
+      CREATE TABLE IF NOT EXISTS _sessions (
+        id TEXT PRIMARY KEY,
+        admin_id TEXT NOT NULL REFERENCES _admins(id),
+        token TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
   }
 
   get(name: string): DatabasePool {
@@ -102,6 +110,19 @@ export class DatabaseManager {
     this.appPools.set(name, pool);
 
     return { id: name, name, path, createdAt: now };
+  }
+
+  registerDatabase(name: string, filePath: string): DatabasePool {
+    const metaDb = this.metaPool.write();
+    const existing = metaDb.query("SELECT 1 FROM _databases WHERE name=?").get(name);
+    if (existing) {
+      throw Object.assign(new Error(`Database "${name}" already exists.`), { status: 409 });
+    }
+    const now = new Date().toISOString();
+    metaDb.run("INSERT INTO _databases (name, file_path, created_at) VALUES (?, ?, ?)", [name, filePath, now]);
+    const pool = new DatabasePool({ path: filePath });
+    this.appPools.set(name, pool);
+    return pool;
   }
 
   deleteDatabase(name: string): void {

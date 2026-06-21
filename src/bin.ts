@@ -10,6 +10,19 @@ const CLI_COMMANDS = new Set([
   "serve", "init", "help", "--help", "-h",
 ]);
 
+async function detectDevDashboard(): Promise<string | undefined> {
+  if (process.env.DEV_DASHBOARD_URL) return process.env.DEV_DASHBOARD_URL;
+  try {
+    const res = await fetch("http://localhost:5173/dashboard");
+    if (res.ok) {
+      info("Vite dev server detected — dashboard requests proxied to http://localhost:5173");
+      info("Open http://localhost:5173/dashboard in your browser for full HMR support");
+      return "http://localhost:5173";
+    }
+  } catch {}
+  return undefined;
+}
+
 try {
   if (command && CLI_COMMANDS.has(command)) {
     await runCli(process.argv.slice(2));
@@ -17,10 +30,14 @@ try {
     const config = await autoInitConfig();
     const manager = new DatabaseManager({ dataDir: config.databasePath });
 
+    const dashboardDevUrl = await detectDevDashboard();
+
     const server = createServer({
-      port: config.port,
-      manager,
-      cors: {
+    port: config.port,
+    manager,
+    adminKey: config.adminKey,
+    devDashboardUrl: dashboardDevUrl,
+    cors: {
         origins: config.corsOrigins,
         methods: config.corsMethods,
         headers: config.corsHeaders,
