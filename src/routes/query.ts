@@ -1,6 +1,6 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
-import { executeQuery, type QueryParams } from "../query";
+import { queryFromParams } from "../query/from-params";
 import { jsonResponse, errorResponse } from "../server";
 import { authenticateRequest, type AuthConfig } from "../middleware/auth";
 import { applyRLS, toRLSContext } from "../rls";
@@ -19,14 +19,9 @@ export function registerQueryRoutes(
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
 
-    const { collection, filter, sort, fields, limit, offset, search, searchFields, aggregate, groupBy, having } = await req.json();
+    const body = await req.json();
+    const collection = body.collection;
     if (!collection || typeof collection !== "string") return errorResponse("VALIDATION", "Field 'collection' is required.", 400);
-    if (search !== undefined && typeof search !== "string") return errorResponse("VALIDATION", "Field 'search' must be a string.", 400);
-    if (aggregate !== undefined && (typeof aggregate !== "object" || Array.isArray(aggregate))) return errorResponse("VALIDATION", "Field 'aggregate' must be an object with 'function', 'field', and optional 'alias'.", 400);
-    if (aggregate && typeof aggregate.function !== "string") return errorResponse("VALIDATION", "Field 'aggregate.function' is required and must be a string.", 400);
-    if (aggregate && aggregate.function && !["$count", "$sum", "$avg", "$min", "$max"].includes(aggregate.function)) return errorResponse("VALIDATION", `Invalid aggregate function "${aggregate.function}". Valid functions: $count, $sum, $avg, $min, $max.`, 400);
-    if (groupBy !== undefined && typeof groupBy !== "string" && !Array.isArray(groupBy)) return errorResponse("VALIDATION", "Field 'groupBy' must be a string or array of strings.", 400);
-    if (Array.isArray(groupBy) && groupBy.some((g: unknown) => typeof g !== "string")) return errorResponse("VALIDATION", "Field 'groupBy' entries must be strings.", 400);
 
     // Enforce API-key collection scopes
     if (auth.isApiKey) {
@@ -40,29 +35,40 @@ export function registerQueryRoutes(
       }
     }
 
-    const queryParams: QueryParams = {};
-    if (filter) queryParams.filter = filter;
-    if (sort) {
-      const entries = Array.isArray(sort) ? sort : [sort];
-      queryParams.sort = entries.map((s: any) => {
-        if (typeof s === "string") return s;
-        return `${s.field}:${s.direction || "asc"}`;
-      });
-    }
-    if (fields) queryParams.fields = fields;
-    if (limit !== undefined) queryParams.limit = limit;
-    if (offset !== undefined) queryParams.offset = offset;
-    if (search) queryParams.search = search;
-    if (searchFields) queryParams.searchFields = searchFields;
-    if (aggregate) queryParams.aggregate = aggregate;
-    if (groupBy) queryParams.groupBy = groupBy;
-    if (having) queryParams.having = having;
     const pool = manager.get(params.database);
-
     const rlsCtx = toRLSContext(auth);
     const rls = rlsCtx ? applyRLS(pool, collection, "read", rlsCtx) : null;
 
-    const result = executeQuery(pool.read(), collection, queryParams, undefined, undefined, rls);
-    return jsonResponse({ data: result.data, meta: result.meta });
+    try {
+      const db = pool.read();
+      const qb = queryFromParams(body, db);
+      qb.applyRLS(rls);
+
+      // Check if pagination was requested via query params
+      const url = new URL(req.url);
+      const pageParam = url.searchParams.get("page");
+      const perPageParam = url.searchParams.get("per_page");
+
+      if (pageParam && perPageParam) {
+        const page = parseInt(pageParam, 10);
+        const perPage = parseInt(perPageParam, 10);
+        const result = qb.paginate(page, perPage);
+        return jsonResponse({ data: result.data, meta: result.meta });
+      }
+
+      const data = qb.get();
+      return jsonResponse({ data, meta: {} });
+    } catch (err: any) {
+      if (err.message?.startsWith("CTE nesting depth")) {
+        return errorResponse("VALIDATION", err.message, 400);
+      }
+      if (err.message?.startsWith("Filter nesting")) {
+        return errorResponse("VALIDATION", err.message, 400);
+      }
+      if (err.message?.startsWith("Raw SQL strings in join")) {
+        return errorResponse("VALIDATION", err.message, 400);
+      }
+      throw err;
+    }
   });
 }
