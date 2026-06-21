@@ -9,6 +9,7 @@ import { registerTableRoutes } from "./routes/tables";
 import { registerRecordRoutes } from "./routes/records";
 import { registerQueryRoutes } from "./routes/query";
 import { registerConfigRoutes } from "./routes/config";
+import { registerTransferRoutes } from "./routes/transfer";
 
 export interface ServerConfig {
   port: number;
@@ -81,6 +82,7 @@ export function createRouter(config: { manager?: DatabaseManager }): Router {
     registerRecordRoutes(router, manager);
     registerQueryRoutes(router, manager);
     registerConfigRoutes(router, manager);
+    registerTransferRoutes(router, manager);
   }
   return router;
 }

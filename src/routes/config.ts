@@ -2,6 +2,7 @@ import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
 import { isAdminRequest } from "../middleware/auth";
+import { logActivity } from "./activity";
 
 export function registerConfigRoutes(router: Router, manager: DatabaseManager): void {
   const metaPool = manager.getMetaPool();
@@ -24,6 +25,7 @@ export function registerConfigRoutes(router: Router, manager: DatabaseManager): 
     const updated = { ...current, ...body };
 
     metaPool.write().run("UPDATE _databases SET config = ? WHERE name = ?", [JSON.stringify(updated), params.name]);
+    logActivity(manager, { action: "database.config.update", database_name: params.name, ip: req.headers.get("x-forwarded-for") || undefined });
     return jsonResponse({ data: updated });
   });
 }

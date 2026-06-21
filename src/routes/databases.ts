@@ -2,6 +2,7 @@ import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
 import { isAdminRequest } from "../middleware/auth";
+import { logActivity } from "./activity";
 
 const VALID_NAME = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -19,6 +20,7 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("VALIDATION", "Database name must match ^[a-z0-9][a-z0-9_-]*$", 400);
     }
     const info = manager.createDatabase(body.name);
+    logActivity(manager, { action: "database.create", database_name: body.name, ip: req.headers.get("x-forwarded-for") || undefined });
     return jsonResponse({ data: info }, 201);
   });
 
@@ -38,12 +40,32 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
 
   router.patch("/api/databases/:name", async (req, params) => {
     if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
-    return errorResponse("NOT_IMPLEMENTED", "Database rename not yet implemented.", 501);
+    const body = await req.json() as { name?: string };
+    if (!body.name || !VALID_NAME.test(body.name)) {
+      return errorResponse("VALIDATION", "New name must match ^[a-z0-9][a-z0-9_-]*$", 400);
+    }
+    const oldName = params.name;
+    const metaPool = manager.getMetaPool();
+    const row = metaPool.read().query("SELECT file_path FROM _databases WHERE name = ?").get(oldName) as { file_path: string } | null;
+    if (!row) return errorResponse("NOT_FOUND", "Database not found.", 404);
+
+    const newPath = row.file_path.replace(oldName, body.name);
+    const { renameSync } = require("node:fs");
+    try {
+      renameSync(row.file_path, newPath);
+    } catch {
+      return errorResponse("ERROR", "Failed to rename database file.", 500);
+    }
+
+    metaPool.write().run("UPDATE _databases SET name = ?, file_path = ? WHERE name = ?", [body.name, newPath, oldName]);
+    logActivity(manager, { action: "database.rename", database_name: oldName, details: { from: oldName, to: body.name }, ip: req.headers.get("x-forwarded-for") || undefined });
+    return jsonResponse({ data: { name: body.name } });
   });
 
   router.delete("/api/databases/:name", async (req, params) => {
     if (!isAdminRequest(req)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     manager.deleteDatabase(params.name);
+    logActivity(manager, { action: "database.delete", database_name: params.name, ip: req.headers.get("x-forwarded-for") || undefined });
     return jsonResponse({ data: { deleted: true } });
   });
 }
