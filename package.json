@@ -1,8 +1,8 @@
 {
   "name": "boltstore",
-  "version": "0.7.6",
+  "version": "0.8.0",
   "private": false,
-  "description": "Boltstore server — lightweight backend with realtime sync",
+  "description": "Boltstore server — managed SQLite databases with HTTP API",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -20,9 +20,6 @@
     "compile:macos": "bun build --compile --target=bun-darwin-arm64 --outfile=dist/boltstore ./src/entry.ts",
     "compile:windows": "bun build --compile --target=bun-windows-x64 --outfile=dist/boltstore.exe ./src/entry.ts",
     "prepublish": "bun run build"
-  },
-  "dependencies": {
-    "@boltstore/utils": "^0.7.6"
   },
   "license": "MIT",
   "repository": {
