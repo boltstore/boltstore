@@ -231,9 +231,9 @@ export function setRLS(
  * to end-user principals.
  */
 export function toRLSContext(auth: AuthContext): RLSContext | null {
-  if (auth.isApiKey) return null;
-  if (!auth.email) return null;
-  return { userId: auth.principalId, email: auth.email };
+  if (!auth.principalId) return null;
+  if (!auth.email && !auth.isApiKey) return null;
+  return { userId: auth.principalId, email: auth.email || "" };
 }
 
 /**

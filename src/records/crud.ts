@@ -19,6 +19,7 @@ function createRecord(
   onConflict?: "error" | "upsert" | "ignore",
 ): Record<string, unknown> {
   const columns = getColumnNames(pool, collection);
+  const columnSet = new Set(columns);
   const systemCols = new Set(["id", "created_at", "updated_at"]);
 
   const rlsCtx = auth ? toRLSContext(auth) : null;
@@ -35,6 +36,7 @@ function createRecord(
 
   for (const key of Object.keys(data)) {
     if (systemCols.has(key)) continue;
+    if (!columnSet.has(key)) continue;
     record[key] = data[key];
   }
 
@@ -73,6 +75,7 @@ function createRecord(
     }
 
     if (returning && returning.length > 0) {
+      for (const c of returning) validateIdentifier(c, "returning column");
       const returningCols = returning.map((c) => `"${c}"`).join(", ");
       const row = db.query(`${insertSql} RETURNING ${returningCols}`).get(...toBindings(values));
       return row as Record<string, unknown>;
@@ -197,6 +200,7 @@ function updateRecord(
     }
 
     if (returning && returning.length > 0) {
+      for (const c of returning) validateIdentifier(c, "returning column");
       const returningCols = returning.map((c) => `"${c}"`).join(", ");
       const row = db.query(`${updateSql} RETURNING ${returningCols}`).get(...toBindings(values));
       return row as Record<string, unknown>;
@@ -246,6 +250,7 @@ function deleteRecord(
     }
 
     if (returning && returning.length > 0) {
+      for (const c of returning) validateIdentifier(c, "returning column");
       const returningCols = returning.map((c) => `"${c}"`).join(", ");
       const row = db.query(`${deleteSql} RETURNING ${returningCols}`).get(...toBindings(params));
       return row as Record<string, unknown>;

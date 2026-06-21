@@ -146,19 +146,25 @@ export function registerQueryRoutes(
     const queryParams: unknown[] = body.params ?? [];
 
     if (rls?.whereClause) {
-      // Inject RLS into the query by wrapping the table
+      // Inject RLS by wrapping the table reference in the FROM clause
       const quoted = `"${collection}"`;
       const rlsWrapped = `(SELECT * FROM ${quoted} WHERE ${rls.whereClause}) AS ${quoted}`;
-      // Replace FROM "collection" or FROM collection
+      // Escape collection name for regex special characters
+      const escaped = collection.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Replace the first FROM "collection" or FROM collection at word boundary
       sql = sql.replace(
-        new RegExp(`\\bFROM\\s+"?${collection}"?`, "i"),
+        new RegExp(`\\b(FROM)\\s+"?${escaped}"?\\b`, "i"),
         `FROM ${rlsWrapped}`
       );
     }
 
     try {
       const db = pool.read();
-      const rows = db.query(sql).all(...queryParams as import("bun:sqlite").SQLQueryBindings[]) as Record<string, unknown>[];
+      // Apply a safety limit to prevent memory exhaustion
+      const trimmed = sql.trim().toUpperCase();
+      const hasLimit = trimmed.includes("LIMIT");
+      const finalSql = hasLimit ? sql : sql.replace(/\s*;*\s*$/, "") + " LIMIT 10000";
+      const rows = db.query(finalSql).all(...queryParams as import("bun:sqlite").SQLQueryBindings[]) as Record<string, unknown>[];
       return jsonResponse({ data: rows });
     } catch (err: any) {
       return errorResponse("QUERY_ERROR", err.message || "Query execution failed.", 400);

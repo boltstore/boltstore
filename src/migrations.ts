@@ -8,6 +8,7 @@
  */
 
 import { DatabasePool } from "./db/pool";
+import { resolveSafePath } from "@boltstore/utils";
 
 /** A single migration record. */
 export interface Migration {

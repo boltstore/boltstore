@@ -16,7 +16,8 @@ function batchRecords(
   operations: { action: "create" | "update" | "delete"; id?: string; data?: Record<string, unknown> }[],
   auth?: AuthContext
 ): { created: number; updated: number; deleted: number } {
-  getColumnNames(pool, collection);
+  const columns = getColumnNames(pool, collection);
+  const columnSet = new Set(columns);
 
   const rlsCtx = auth ? toRLSContext(auth) : null;
   const rls = rlsCtx ? applyRLS(pool, collection, "write", rlsCtx) : null;
@@ -67,6 +68,7 @@ function batchRecords(
           };
           for (const [k, v] of Object.entries(data)) {
             if (k === "id" || k === "created_at" || k === "updated_at") continue;
+            if (!columnSet.has(k)) continue;
             record[k] = v;
           }
           const keys = Object.keys(record);
@@ -105,6 +107,7 @@ function batchRecords(
           const userUpdates: [string, unknown][] = [];
           for (const [k, v] of Object.entries(op.data)) {
             if (immutable.has(k)) continue;
+            if (!columnSet.has(k)) continue;
             userUpdates.push([k, v]);
           }
           if (userUpdates.length === 0) continue;

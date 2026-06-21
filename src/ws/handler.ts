@@ -105,6 +105,30 @@ export function createWebSocketHandler(config: WsHandlerConfig) {
         return;
       }
 
+      // Handle auth message (token sent after connection instead of in URL)
+      if (msg.type === "auth" && database && !data?.userId) {
+        const token = (msg as Record<string, unknown>).token as string | undefined;
+        if (token && manager && authConfig) {
+          const fakeUrl = new URL(`http://localhost/ws?token=${encodeURIComponent(token)}&db=${encodeURIComponent(database)}`);
+          authenticateWsUpgrade(fakeUrl, manager, authConfig).then((result) => {
+            if (!(result instanceof Response) && ws.data) {
+              ws.data.userId = result.userId;
+              ws.data.email = result.email;
+              ws.data.isAdmin = result.isAdmin;
+              if (result.apiKey) ws.data.apiKey = result.apiKey;
+              ws.send(JSON.stringify({ type: "authenticated", userId: result.userId }));
+            } else {
+              ws.send(JSON.stringify({ type: "error", code: "AUTH_FAILED", message: "Authentication failed." }));
+            }
+          }).catch(() => {
+            ws.send(JSON.stringify({ type: "error", code: "AUTH_FAILED", message: "Authentication failed." }));
+          });
+        } else {
+          ws.send(JSON.stringify({ type: "error", code: "AUTH_FAILED", message: "Authentication failed." }));
+        }
+        return;
+      }
+
       switch (msg.type) {
       case "subscribe": {
         const subMsg = msg as unknown as SubscribeMessage;

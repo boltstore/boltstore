@@ -59,7 +59,7 @@ function sqlFieldRef(field: string, tableQualified?: boolean): string {
       return parts.map(quoteIdent).join(".");
     }
     const root = quoteIdent(parts[0]);
-    const path = parts.slice(1).join(".");
+    const path = parts.slice(1).join(".").replace(/'/g, "''");
     return `json_extract(${root}, '$.${path}')`;
   }
   return quoteIdent(field);
@@ -401,7 +401,8 @@ export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Datab
   } else if (state.fields && state.fields.length > 0) {
     selectCols = state.fields.map((f) => {
       if (f.includes(".")) {
-        return `json_extract(${quoteIdent(f.split(".")[0])}, '$.${f.split(".").slice(1).join(".")}') AS ${quoteIdent(f.replace(".", "_"))}`;
+        const subpath = f.split(".").slice(1).join(".").replace(/'/g, "''");
+        return `json_extract(${quoteIdent(f.split(".")[0])}, '$.${subpath}') AS ${quoteIdent(f.replace(".", "_"))}`;
       }
       return quoteIdent(f);
     });

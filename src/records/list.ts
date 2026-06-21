@@ -64,7 +64,7 @@ function listRecords(
   }
 
   const selectCols = options?.fields?.length
-    ? options.fields.map((f) => `"${f}"`).join(", ")
+    ? options.fields.map((f) => { validateIdentifier(f, "select field"); return `"${f}"`; }).join(", ")
     : "*";
 
   let sql = `SELECT ${selectCols} FROM "${collection}"`;
@@ -169,7 +169,7 @@ function buildListSql(
 ): { sql: string; params: unknown[] } {
   validateIdentifier(collection, "collection name");
   const selectCols = options?.fields?.length
-    ? options.fields.map((f) => `"${f}"`).join(", ")
+    ? options.fields.map((f) => { validateIdentifier(f, "select field"); return `"${f}"`; }).join(", ")
     : "*";
   let sql = `SELECT ${selectCols} FROM "${collection}"`;
   const params: unknown[] = [];

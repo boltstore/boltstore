@@ -126,6 +126,8 @@ export function createCollection(
     // Create the actual table
     const sql = buildCreateTableSQL(name, columns);
     db.run(sql);
+    // Auto-index on created_at for default sort performance
+    try { db.run(`CREATE INDEX IF NOT EXISTS "idx_${name}_created_at" ON "${name}"("created_at")`); } catch {}
     invalidateSchemaCache(pool, name);
 
     // Store metadata
@@ -372,6 +374,12 @@ export function updateCollection(
               { status: 400 }
             );
           }
+          if (col.generated.expression.includes(";")) {
+            throw Object.assign(new Error(`Generated column "${col.name}" expression must not contain semicolons.`), { status: 400 });
+          }
+          if (/\b(DROP|DELETE|INSERT|UPDATE|ALTER|ATTACH|DETACH|VACUUM|REINDEX|REPLACE)\b/i.test(col.generated.expression)) {
+            throw Object.assign(new Error(`Generated column "${col.name}" expression must not contain write-operation keywords.`), { status: 400 });
+          }
         }
 
         const sqlType = SQLITE_TYPE_MAP[col.type];
@@ -383,6 +391,12 @@ export function updateCollection(
         } else {
           if (col.required) def += " NOT NULL";
           if (col.defaultExpr !== undefined) {
+            if (col.defaultExpr.includes(";")) {
+              throw Object.assign(new Error(`Default expression for column "${col.name}" must not contain semicolons.`), { status: 400 });
+            }
+            if (/\b(DROP|DELETE|INSERT|UPDATE|ALTER|ATTACH|DETACH|VACUUM|REINDEX|REPLACE)\b/i.test(col.defaultExpr)) {
+              throw Object.assign(new Error(`Default expression for column "${col.name}" must not contain write-operation keywords.`), { status: 400 });
+            }
             def += ` DEFAULT (${col.defaultExpr})`;
           } else if (col.default !== undefined) {
             const dv = col.default;

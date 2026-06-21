@@ -16,6 +16,17 @@ import {
   type ColumnType,
 } from "@boltstore/utils";
 
+const DDL_BLOCKED_KEYWORDS = /\b(DROP|DELETE|INSERT|UPDATE|ALTER|ATTACH|DETACH|VACUUM|REINDEX|REPLACE|CREATE)\b/i;
+
+function validateDdlExpr(expr: string, label: string): void {
+  if (expr.includes(";")) {
+    throw Object.assign(new Error(`${label} must not contain semicolons.`), { status: 400 });
+  }
+  if (DDL_BLOCKED_KEYWORDS.test(expr)) {
+    throw Object.assign(new Error(`${label} must not contain write-operation keywords.`), { status: 400 });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -39,11 +50,13 @@ export function buildCreateTableSQL(name: string, columns: ColumnDefinition[]): 
     let def = `"${col.name}" ${sqlType}`;
 
     if (col.generated) {
+      validateDdlExpr(col.generated.expression, `Generated column "${col.name}" expression`);
       const kind = col.generated.stored ? "STORED" : "VIRTUAL";
       def += ` GENERATED ALWAYS AS (${col.generated.expression}) ${kind}`;
     } else {
       if (col.required) def += " NOT NULL";
       if (col.defaultExpr !== undefined) {
+        validateDdlExpr(col.defaultExpr, `Default expression for column "${col.name}"`);
         def += ` DEFAULT (${col.defaultExpr})`;
       } else if (col.default !== undefined) {
         const dv = col.default;

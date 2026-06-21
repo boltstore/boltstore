@@ -403,7 +403,9 @@ describe("importData — CSV", () => {
     expect(result.imported).toBe(2);
 
     const records = listRecords(pool, "quoted_csv");
-    expect(records[0].desc).toBe("A, B, and C");
+    const descs = records.map((r: any) => r.desc);
+    expect(descs).toContain("A, B, and C");
+    expect(descs).toContain("Simple desc");
   });
 });
 

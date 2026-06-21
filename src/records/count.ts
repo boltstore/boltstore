@@ -1,4 +1,5 @@
 import { DatabasePool } from "../db/pool";
+import { validateIdentifier } from "@boltstore/utils";
 import { toBindings } from "../db/cast";
 import { applyRLS, toRLSContext } from "../rls";
 import type { AuthContext } from "../middleware/auth";
@@ -26,6 +27,7 @@ function countRecords(
 
   if (filter && Object.keys(filter).length > 0) {
     for (const [k, v] of Object.entries(filter)) {
+      validateIdentifier(k, "filter field");
       if (v === null || v === undefined) continue;
       if (typeof v === "object" && !Array.isArray(v)) {
         throw Object.assign(new Error(`Filter value for "${k}" must be a scalar or array.`), { status: 400 });

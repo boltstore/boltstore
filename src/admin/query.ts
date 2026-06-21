@@ -154,20 +154,33 @@ export function executeWriteQuery(
     throw Object.assign(new Error(err), { status: 403 });
   }
 
-  // Validate system table protection
+  // Validate system table protection — block all writes to system tables, not just DDL
+  const tableMatch = sql.match(
+    /(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM|DROP\s+TABLE|ALTER\s+TABLE|DROP\s+INDEX|DROP\s+VIEW|DROP\s+TRIGGER|CREATE\s+(?:TABLE|INDEX|VIEW|TRIGGER))\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?['"]?(\w+)['"]?/i
+  );
+  if (tableMatch) {
+    const tableName = tableMatch[1].toLowerCase();
+    if (PROTECTED_TABLES.includes(tableName) || tableName.startsWith("sqlite_") || tableName.startsWith("_")) {
+      const err = `Cannot modify system table "${tableName}" via raw SQL endpoint.`;
+      if (ctx) auditRawWrite(pool, ctx, sql, false, err);
+      throw Object.assign(new Error(err), { status: 403 });
+    }
+  }
+
+  // Also check BLOCKED_PATTERNS for destructive operations
+  // (system table protection is handled above; this catches edge cases where
+  // the regex above didn't extract a table name but a blocked pattern was found)
   for (const pattern of BLOCKED_PATTERNS) {
-    const match = sql.match(pattern);
-    if (match) {
-      const tableMatch = sql.match(
+    if (sql.match(pattern)) {
+      // Only block if we couldn't determine the target table — otherwise the
+      // system table check above already handled it.
+      const tableCheck = sql.match(
         /(?:DROP\s+TABLE|ALTER\s+TABLE|DROP\s+INDEX|DROP\s+VIEW|DROP\s+TRIGGER)\s+(?:IF\s+EXISTS\s+)?['"]?(\w+)['"]?/i
       );
-      if (tableMatch) {
-        const tableName = tableMatch[1].toLowerCase();
-        if (PROTECTED_TABLES.includes(tableName) || tableName.startsWith("sqlite_") || tableName.startsWith("_")) {
-          const err = `Cannot perform destructive operation on system table "${tableName}".`;
-          if (ctx) auditRawWrite(pool, ctx, sql, false, err);
-          throw Object.assign(new Error(err), { status: 403 });
-        }
+      if (!tableCheck) {
+        const err = `Blocked statement pattern not allowed without a recognized table reference.`;
+        if (ctx) auditRawWrite(pool, ctx, sql, false, err);
+        throw Object.assign(new Error(err), { status: 403 });
       }
     }
   }

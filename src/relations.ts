@@ -15,6 +15,32 @@ import type { AuthContext } from "./middleware/auth";
 /** Maximum recursion depth for nested expansion. */
 const MAX_EXPAND_DEPTH = 2;
 
+// Relation metadata cache (30s TTL, same pattern as schema-cache)
+const RELATION_CACHE_TTL_MS = 30_000;
+const relationCache = new WeakMap<DatabasePool, Map<string, { data: Record<string, RelationDefinition>; expiresAt: number }>>();
+
+function getCachedRelations(pool: DatabasePool, collection: string): Record<string, RelationDefinition> | undefined {
+  const poolCache = relationCache.get(pool);
+  if (!poolCache) return undefined;
+  const entry = poolCache.get(collection);
+  if (!entry || Date.now() > entry.expiresAt) return undefined;
+  return entry.data;
+}
+
+function setCachedRelations(pool: DatabasePool, collection: string, data: Record<string, RelationDefinition>): void {
+  let poolCache = relationCache.get(pool);
+  if (!poolCache) {
+    poolCache = new Map();
+    relationCache.set(pool, poolCache);
+  }
+  poolCache.set(collection, { data, expiresAt: Date.now() + RELATION_CACHE_TTL_MS });
+}
+
+function invalidateRelationCache(pool: DatabasePool, collection: string): void {
+  const poolCache = relationCache.get(pool);
+  if (poolCache) poolCache.delete(collection);
+}
+
 /** Metadata for a single relation field. */
 export interface RelationDefinition {
   /** The column in this collection that holds the foreign key. */
@@ -69,13 +95,19 @@ function resolveTargetCollection(pool: DatabasePool, parentCollection: string, f
 
 /** Load explicit relation definitions for a collection from metadata. */
 export function getRelations(pool: DatabasePool, collection: string): Record<string, RelationDefinition> {
+  // Check cache first
+  const cached = getCachedRelations(pool, collection);
+  if (cached !== undefined) return cached;
+
   try {
     const db = pool.read();
     const meta = db
       .query("SELECT relations_json FROM _collections WHERE name = ?")
       .get(collection) as { relations_json?: string } | null;
     if (meta?.relations_json) {
-      return JSON.parse(meta.relations_json) as Record<string, RelationDefinition>;
+      const data = JSON.parse(meta.relations_json) as Record<string, RelationDefinition>;
+      setCachedRelations(pool, collection, data);
+      return data;
     }
   } catch {
     // ignore
@@ -96,6 +128,8 @@ export function setRelations(
     // Column may already exist.
   }
   db.run("UPDATE _collections SET relations_json = ? WHERE name = ?", [JSON.stringify(relations), collection]);
+  // Invalidate cache so subsequent reads pick up the change
+  invalidateRelationCache(pool, collection);
 }
 
 /**

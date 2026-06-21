@@ -3,6 +3,7 @@ import { DatabaseManager } from "../db/manager";
 import { listMigrations, applyMigrations, rollbackLastMigration } from "../migrations";
 import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
+import { resolveSafePath } from "@boltstore/utils";
 
 export function registerMigrationRoutes(
   router: Router,
@@ -28,6 +29,7 @@ export function registerMigrationRoutes(
     try {
       const { migrationDir } = await req.json();
       if (!migrationDir || typeof migrationDir !== "string") return errorResponse("VALIDATION", "Field 'migrationDir' is required.", 400);
+      if (migrationDir.includes("..")) return errorResponse("VALIDATION", "Path traversal detected in migrationDir.", 400);
       const pool = manager.get(params.database);
       const result = await applyMigrations(pool, migrationDir);
       logAuditEvent(auditFromRequest(req, {

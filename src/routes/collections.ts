@@ -4,6 +4,7 @@ import { createCollection, listCollections, getCollection, updateCollection, del
 import { type ColumnDefinition } from "@boltstore/utils";
 import { jsonResponse, errorResponse, safeErrorResponse, logAuditEvent, auditFromRequest } from "../server";
 import { authenticateRequest, requireAdmin, type AuthConfig } from "../middleware/auth";
+import { apiKeyAllows, operationForMethod } from "../admin/api-keys";
 import type { RelationDefinition } from "../relations";
 
 interface RequestRelation {
@@ -71,13 +72,30 @@ export function registerCollectionRoutes(
   manager: DatabaseManager,
   authConfig: AuthConfig
 ): void {
+  function checkCollectionScope(auth: Awaited<ReturnType<typeof authenticateRequest>>, database: string, collection: string, method: string): Response | null {
+    if (auth instanceof Response || !auth.isApiKey) return null;
+    if (auth.apiKey?.permissions.role === "admin") return null;
+    const op = operationForMethod(method);
+    if (!apiKeyAllows(auth.apiKey!, database, op, collection)) {
+      return errorResponse("FORBIDDEN", `API key lacks permission for collection "${collection}".`, 403);
+    }
+    return null;
+  }
+
   router.get("/api/:database/collections", async (req, params) => {
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
 
     try {
       const pool = manager.get(params.database);
-      return jsonResponse({ data: listCollections(pool) });
+      const collections = listCollections(pool);
+      // Filter by API key scope
+      if (auth.isApiKey && auth.apiKey?.permissions.role !== "admin") {
+        const op = operationForMethod(req.method);
+        const allowed = collections.filter((c) => apiKeyAllows(auth.apiKey!, params.database, op, c.name));
+        return jsonResponse({ data: allowed });
+      }
+      return jsonResponse({ data: collections });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to list collections";
       return errorResponse("COLLECTIONS_ERROR", message, (err as { status?: number }).status || 500);
@@ -87,6 +105,8 @@ export function registerCollectionRoutes(
   router.get("/api/:database/collections/:collection", async (req, params) => {
     const auth = await authenticateRequest(req, manager, params.database, authConfig);
     if (auth instanceof Response) return auth;
+    const scopeErr = checkCollectionScope(auth, params.database, params.collection, req.method);
+    if (scopeErr) return scopeErr;
 
     try {
       const pool = manager.get(params.database);
