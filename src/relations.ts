@@ -21,8 +21,16 @@ export interface RelationDefinition {
   field: string;
   /** The target collection (table) that records reference. */
   foreignCollection: string;
-  /** Whether deleting a record in this collection cascades to children (Phase 1 feature). */
+  /** Whether deleting a record in this collection cascades to children. */
   cascadeDelete?: boolean;
+  /** Relation cardinality: hasOne, hasMany, belongsTo, or manyToMany. */
+  type?: "hasOne" | "hasMany" | "belongsTo" | "manyToMany";
+  /** Junction table name for many-to-many relations. */
+  through?: string;
+  /** FK column in junction table pointing to the local collection (for many-to-many). */
+  localKey?: string;
+  /** FK column in junction table pointing to the target collection (for many-to-many). */
+  foreignKey?: string;
 }
 
 /** Resolve a target collection for an expand field using relation metadata first, then heuristic. */

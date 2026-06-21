@@ -806,3 +806,48 @@ describe("subquery in JOIN", () => {
     expect(names).toEqual(["Apple", "Banana"]);
   });
 });
+
+describe("many-to-many relations (through)", () => {
+  beforeAll(() => {
+    const db = pool.write();
+    db.run(`DROP TABLE IF EXISTS "students"`);
+    db.run(`DROP TABLE IF EXISTS "courses"`);
+    db.run(`DROP TABLE IF EXISTS "enrollments"`);
+    db.run(`CREATE TABLE "students" (id TEXT PRIMARY KEY, name TEXT)`);
+    db.run(`CREATE TABLE "courses" (id TEXT PRIMARY KEY, title TEXT)`);
+    db.run(`CREATE TABLE "enrollments" (id TEXT PRIMARY KEY, student_id TEXT, course_id TEXT)`);
+    db.run(`INSERT INTO "students" (id, name) VALUES ('s1', 'Alice'), ('s2', 'Bob')`);
+    db.run(`INSERT INTO "courses" (id, title) VALUES ('c1', 'Math'), ('c2', 'Science'), ('c3', 'Art')`);
+    db.run(`INSERT INTO "enrollments" (id, student_id, course_id) VALUES ('e1', 's1', 'c1'), ('e2', 's1', 'c2'), ('e3', 's2', 'c2'), ('e4', 's2', 'c3')`);
+  });
+
+  test("many-to-many via through — loads related records through junction table", () => {
+    const db = pool.read();
+    const data = queryFromParams({
+      collection: "students",
+      with: { courses: { collection: "courses", through: "enrollments", localKey: "student_id", foreignKey: "course_id" } },
+    }, db).get();
+    expect(data.length).toBe(2);
+    const alice = data.find((r: any) => r.id === "s1");
+    expect(alice.courses).toBeInstanceOf(Array);
+    expect(alice.courses.length).toBe(2);
+    const titles = alice.courses.map((c: any) => c.title).sort();
+    expect(titles).toEqual(["Math", "Science"]);
+    const bob = data.find((r: any) => r.id === "s2");
+    expect(bob.courses.length).toBe(2);
+    const bobTitles = bob.courses.map((c: any) => c.title).sort();
+    expect(bobTitles).toEqual(["Art", "Science"]);
+  });
+
+  test("many-to-many — respects fields filter", () => {
+    const db = pool.read();
+    const data = queryFromParams({
+      collection: "students",
+      with: { courses: { collection: "courses", through: "enrollments", localKey: "student_id", foreignKey: "course_id", fields: ["title"] } },
+    }, db).get();
+    const alice = data.find((r: any) => r.id === "s1");
+    expect(alice.courses.length).toBe(2);
+    expect(alice.courses[0]).toHaveProperty("title");
+    expect(alice.courses[0]).toHaveProperty("id");
+  });
+});

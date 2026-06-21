@@ -407,6 +407,13 @@ export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Datab
     });
   }
 
+  if (state.selectExprs && state.selectExprs.length > 0) {
+    for (const e of state.selectExprs) {
+      selectCols.push(e.expr);
+      if (e.bindings) bindings.push(...e.bindings);
+    }
+  }
+
   if (hasWindows && state.windows) {
     const noArgFns = new Set(["ROW_NUMBER", "RANK", "DENSE_RANK", "NTILE"]);
     const windowCols = state.windows.map((w) => {
@@ -427,9 +434,12 @@ export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Datab
 
   if (selectCols.length > 0) {
     // If windows are the only select columns (no fields/aggregates), prepend *
-    if (hasWindows && state.windows && !state.fields && !state.aggregate) {
+    if (hasWindows && state.windows && !state.fields && !state.aggregate && !state.selectExprs) {
       selectCols.unshift("*");
     }
+    parts.push(`SELECT ${selectCols.join(", ")}`);
+  } else if (state.selectExprs && state.selectExprs.length > 0) {
+    // selectExprs without any fields/aggregates — just use the exprs
     parts.push(`SELECT ${selectCols.join(", ")}`);
   } else {
     parts.push("SELECT *");
@@ -492,10 +502,19 @@ export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Datab
   }
 
   // ORDER BY
+  const orderParts: string[] = [];
   if (!isAggregate && state.orders.length > 0) {
-    const orderParts = state.orders.map((o: OrderClause) => {
-      return `${quoteIdent(o.field)} ${o.direction === "desc" ? "DESC" : "ASC"}`;
-    });
+    for (const o of state.orders) {
+      orderParts.push(`${quoteIdent(o.field)} ${o.direction === "desc" ? "DESC" : "ASC"}`);
+    }
+  }
+  if (state.orderByExprs && state.orderByExprs.length > 0) {
+    for (const e of state.orderByExprs) {
+      orderParts.push(e.expr);
+      if (e.bindings) bindings.push(...e.bindings);
+    }
+  }
+  if (orderParts.length > 0) {
     parts.push(`ORDER BY ${orderParts.join(", ")}`);
   }
 

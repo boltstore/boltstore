@@ -285,6 +285,25 @@ describe("createCollection", () => {
       expect(e.status).toBe(400);
     }
   });
+
+  test("supports relation metadata with cardinality type", () => {
+    const result = createCollection(pool, "posts_with_rels", [
+      { name: "title", type: "TEXT" },
+      { name: "author_id", type: "TEXT" },
+      { name: "category_id", type: "TEXT" },
+    ], {
+      relations: {
+        author: { field: "author_id", foreignCollection: "users", type: "belongsTo" },
+        comments: { field: "id", foreignCollection: "comments", type: "hasMany", localKey: "post_id", foreignKey: "id" },
+        categories: { field: "id", foreignCollection: "categories", type: "manyToMany", through: "post_categories", localKey: "post_id", foreignKey: "category_id" },
+      },
+    });
+
+    expect(result.relations).toBeDefined();
+    expect(result.relations!.author).toMatchObject({ field: "author_id", foreignCollection: "users", type: "belongsTo" });
+    expect(result.relations!.comments).toMatchObject({ field: "id", foreignCollection: "comments", type: "hasMany", localKey: "post_id" });
+    expect(result.relations!.categories).toMatchObject({ field: "id", foreignCollection: "categories", type: "manyToMany", through: "post_categories" });
+  });
 });
 
 // ---------------------------------------------------------------------------

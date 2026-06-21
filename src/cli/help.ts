@@ -23,6 +23,9 @@ export const HELP = `
    db:backup --db <database-id>           Create a backup snapshot
    db:restore <file> --db <database-id>   Restore from a backup file
    
+   types --db <id>                  Generate TypeScript types from collection schemas
+   types --db <id> --output <file>  Write generated types to a file
+   
    routes                  List all API routes grouped by access tier
    status                  Display server health and stats
 

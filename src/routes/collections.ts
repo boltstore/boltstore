@@ -13,6 +13,9 @@ interface RequestRelation {
   cascade?: boolean;
   targetField?: string;
   type?: string;
+  through?: string;
+  localKey?: string;
+  foreignKey?: string;
 }
 
 /**
@@ -29,6 +32,10 @@ function normalizeRelations(requestRelations: unknown): Record<string, RelationD
       field: rel.field,
       foreignCollection: rel.target,
       cascadeDelete: rel.cascadeDelete ?? rel.cascade ?? false,
+      type: rel.type as RelationDefinition["type"],
+      through: rel.through,
+      localKey: rel.localKey,
+      foreignKey: rel.foreignKey,
     };
   }
   return Object.keys(result).length > 0 ? result : undefined;

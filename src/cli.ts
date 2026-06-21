@@ -10,6 +10,7 @@ import { backupCommand, restoreCommand } from "./cli/backup";
 import { statusCommand } from "./cli/status";
 import { routesCommand } from "./cli/routes";
 import { benchCommand } from "./cli/bench";
+import { typesCommand } from "./cli/types";
 
 
 export async function runCli(args: string[]): Promise<void> {
@@ -63,6 +64,10 @@ export async function runCli(args: string[]): Promise<void> {
 
     case "db:restore":
       await restoreCommand(args);
+      break;
+
+    case "types":
+      await typesCommand(args);
       break;
 
     case "routes":

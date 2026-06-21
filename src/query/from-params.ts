@@ -1,7 +1,18 @@
-import type { QueryOptions, Filter, FilterGroup, FilterCondition, JoinSpec } from "@boltstore/utils";
+import type { QueryOptions, Filter, FilterGroup, FilterCondition, JoinSpec, SqlExpr } from "@boltstore/utils";
 import { validateIdentifier } from "@boltstore/utils";
 import { ServerQueryBuilder } from "./server-builder";
 import type { WhereClause } from "@boltstore/utils";
+
+const SQL_BLOCKED_KEYWORDS = /\b(DROP|DELETE|INSERT|UPDATE|ALTER|CREATE|ATTACH|DETACH|VACUUM|REINDEX|REPLACE)\b/i;
+
+function validateSqlExpr(expr: SqlExpr): void {
+  if (expr.expr.includes(";")) {
+    throw new Error("SQL expressions must not contain semicolons.");
+  }
+  if (SQL_BLOCKED_KEYWORDS.test(expr.expr)) {
+    throw new Error("SQL expressions must not contain write-operation keywords.");
+  }
+}
 
 const WHERE_NESTING_MAX = 10;
 
@@ -215,6 +226,7 @@ function parseWithRelation(value: unknown): Record<string, boolean | import("@bo
       if (typeof wr.limit === "number") rel.limit = wr.limit;
       if (typeof wr.offset === "number") rel.offset = wr.offset;
       if (typeof wr.multiple === "boolean") rel.multiple = wr.multiple;
+      if (typeof wr.through === "string") rel.through = wr.through;
       if (wr.with) rel.with = parseWithRelation(wr.with);
       result[key] = rel;
     }
@@ -296,6 +308,20 @@ export function queryFromParams(params: QueryOptions, db: import("bun:sqlite").D
   if (params.having) {
     const havingClauses = parseFilter(params.having);
     qb.state.having = havingClauses;
+  }
+
+  if (params.selectExprs && params.selectExprs.length > 0) {
+    for (const e of params.selectExprs) {
+      validateSqlExpr(e as SqlExpr);
+    }
+    qb.state.selectExprs = params.selectExprs as SqlExpr[];
+  }
+
+  if (params.orderByExprs && params.orderByExprs.length > 0) {
+    for (const e of params.orderByExprs) {
+      validateSqlExpr(e as SqlExpr);
+    }
+    qb.state.orderByExprs = params.orderByExprs as SqlExpr[];
   }
 
   // CTEs — structured format, validated carefully

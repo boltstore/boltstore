@@ -156,7 +156,15 @@ export function createCollection(
       relations: options?.relations ? Object.fromEntries(
         Object.entries(options.relations).map(([k, v]) => [
           k,
-          { field: v.field, foreignCollection: v.foreignCollection, cascadeDelete: v.cascadeDelete },
+          {
+            field: v.field,
+            foreignCollection: v.foreignCollection,
+            cascadeDelete: v.cascadeDelete,
+            type: v.type,
+            through: v.through,
+            localKey: v.localKey,
+            foreignKey: v.foreignKey,
+          },
         ])
       ) : undefined,
       conflictStrategy,
@@ -194,10 +202,10 @@ export function listCollections(pool: DatabasePool): CollectionInfo[] {
       schema = [];
     }
 
-    let relations: Record<string, { field: string; foreignCollection: string; cascadeDelete?: boolean }> | undefined;
+    let relations: Record<string, import("@boltstore/utils").CollectionRelation> | undefined;
     if (row.relations_json) {
       try {
-        relations = JSON.parse(String(row.relations_json));
+        relations = JSON.parse(String(row.relations_json)) as Record<string, import("@boltstore/utils").CollectionRelation>;
       } catch {
       }
     }
@@ -267,10 +275,10 @@ export function getCollection(pool: DatabasePool, name: string): CollectionInfo 
   const countRow = db.query(`SELECT COUNT(*) as cnt FROM "${name}"`).get() as { cnt?: number } | null;
   const recordCount = countRow?.cnt ?? 0;
 
-  let relations: Record<string, { field: string; foreignCollection: string; cascadeDelete?: boolean }> | undefined;
+  let relations: Record<string, import("@boltstore/utils").CollectionRelation> | undefined;
   if (metaRow?.relations_json) {
     try {
-      relations = JSON.parse(metaRow.relations_json);
+      relations = JSON.parse(metaRow.relations_json) as Record<string, import("@boltstore/utils").CollectionRelation>;
     } catch {
     }
   }
