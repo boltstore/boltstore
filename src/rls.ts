@@ -99,7 +99,7 @@ function getCachedPolicyRules(pool: DatabasePool, collection: string): PolicyCac
 }
 
 /** Invalidate the cached policy for a collection. Called by setRLS(). */
-export function invalidateRLSCache(pool: DatabasePool, collection?: string): void {
+function invalidateRLSCache(pool: DatabasePool, collection?: string): void {
   const cache = policyCache.get(pool);
   if (!cache) return;
   if (collection) {

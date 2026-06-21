@@ -48,10 +48,23 @@ function quoteIdent(name: string): string {
   return `"${name}"`;
 }
 
-function compileWhereClause(clause: WhereClause): SqlFragment {
+function sqlFieldRef(field: string, tableQualified?: boolean): string {
+  if (field.includes(".")) {
+    const parts = field.split(".");
+    if (tableQualified) {
+      return parts.map(quoteIdent).join(".");
+    }
+    const root = quoteIdent(parts[0]);
+    const path = parts.slice(1).join(".");
+    return `json_extract(${root}, '$.${path}')`;
+  }
+  return quoteIdent(field);
+}
+
+function compileWhereClause(clause: WhereClause, tableQualified?: boolean): SqlFragment {
   switch (clause.type) {
     case "basic": {
-      const ident = quoteIdent(clause.field);
+      const ident = sqlFieldRef(clause.field, tableQualified);
       switch (clause.operator) {
         case "eq":
           return clause.value === null
@@ -79,7 +92,7 @@ function compileWhereClause(clause: WhereClause): SqlFragment {
     }
 
     case "in": {
-      const ident = quoteIdent(clause.field);
+      const ident = sqlFieldRef(clause.field, tableQualified);
       if (!Array.isArray(clause.value) || clause.value.length === 0) {
         return clause.operator === "in"
           ? { sql: "1 = 0", params: [] }
@@ -91,39 +104,39 @@ function compileWhereClause(clause: WhereClause): SqlFragment {
     }
 
     case "null": {
-      const ident = quoteIdent(clause.field);
+      const ident = sqlFieldRef(clause.field, tableQualified);
       return clause.operator === "null"
         ? { sql: `${ident} IS NULL`, params: [] }
         : { sql: `${ident} IS NOT NULL`, params: [] };
     }
 
     case "between": {
-      const ident = quoteIdent(clause.field);
+      const ident = sqlFieldRef(clause.field, tableQualified);
       const [lo, hi] = clause.value;
       const op = clause.operator === "between" ? "BETWEEN" : "NOT BETWEEN";
       return { sql: `${ident} ${op} ? AND ?`, params: [lo, hi] };
     }
 
     case "like": {
-      const ident = quoteIdent(clause.field);
+      const ident = sqlFieldRef(clause.field, tableQualified);
       const op = clause.operator === "like" ? "LIKE" : "GLOB";
       return { sql: `${ident} ${op} ?`, params: [clause.value] };
     }
 
     case "exists": {
-      const ident = quoteIdent(clause.field);
+      const ident = sqlFieldRef(clause.field, tableQualified);
       return clause.operator === "exists"
         ? { sql: `${ident} IS NOT NULL`, params: [] }
         : { sql: `${ident} IS NULL`, params: [] };
     }
 
     case "nested": {
-      const compiled = compileWheresNoSearch(clause.query);
+      const compiled = compileWheresNoSearch(clause.query, tableQualified);
       return { sql: `(${compiled.sql})`, params: compiled.params };
     }
 
     case "not": {
-      const inner = compileWheresNoSearch(clause.query);
+      const inner = compileWheresNoSearch(clause.query, tableQualified);
       return { sql: `NOT (${inner.sql})`, params: inner.params };
     }
 
@@ -136,7 +149,7 @@ function compileWhereClause(clause: WhereClause): SqlFragment {
   }
 }
 
-export function compileWheresNoSearch(wheres: WhereClause[]): SqlFragment {
+export function compileWheresNoSearch(wheres: WhereClause[], tableQualified?: boolean): SqlFragment {
   if (wheres.length === 0) return { sql: "1 = 1", params: [] };
   const groups: string[] = [];
   const allParams: unknown[] = [];
@@ -150,7 +163,7 @@ export function compileWheresNoSearch(wheres: WhereClause[]): SqlFragment {
   };
 
   for (const w of wheres) {
-    const part = compileWhereClause(w);
+    const part = compileWhereClause(w, tableQualified);
     if (w.boolean === "or") {
       flushAnd();
       groups.push(part.sql);
@@ -172,12 +185,13 @@ function compileWheres(
   searchFields?: string[],
   db?: import("bun:sqlite").Database,
   collection?: string,
+  tableQualified?: boolean,
 ): SqlFragment {
   const parts: SqlFragment[] = [];
   const allParams: unknown[] = [];
 
   if (wheres.length > 0) {
-    const whereFrag = compileWheresNoSearch(wheres);
+    const whereFrag = compileWheresNoSearch(wheres, tableQualified);
     parts.push(whereFrag);
     allParams.push(...whereFrag.params);
   }
@@ -229,15 +243,29 @@ function regexToLike(pattern: string): string {
   return result;
 }
 
-function buildJoinClause(join: JoinClause): string {
+export interface RLSFilter {
+  whereClause: string;
+  params: unknown[];
+}
+
+function buildJoinClause(join: JoinClause, rlsFilters?: Map<string, RLSFilter>): string {
   const target = quoteIdent(join.target);
+
+  const rls = rlsFilters?.get(join.target);
+  const targetRef = rls
+    ? `(SELECT * FROM ${target} WHERE ${rls.whereClause}) AS ${target}`
+    : target;
+
   switch (join.type) {
     case "inner":
-      return `INNER JOIN ${target}`;
+      return `INNER JOIN ${targetRef}`;
     case "left":
-      return `LEFT JOIN ${target}`;
+      return `LEFT JOIN ${targetRef}`;
     case "cross":
-      return `CROSS JOIN ${target}`;
+      const ref = rls
+        ? `(SELECT * FROM ${target} WHERE ${rls.whereClause}) AS ${target}`
+        : target;
+      return `CROSS JOIN ${ref}`;
     default:
       throw new Error(`Unknown join type: ${(join as JoinClause).type}`);
   }
@@ -258,7 +286,7 @@ export interface GeneratedQuery {
   bindings: unknown[];
 }
 
-export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Database): GeneratedQuery {
+export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Database, rlsFilters?: Map<string, RLSFilter>): GeneratedQuery {
   const bindings: unknown[] = [];
   const parts: string[] = [];
 
@@ -316,14 +344,17 @@ export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Datab
 
   // JOINs
   for (const join of state.joins) {
-    const joinSql = buildJoinClause(join) + compileJoinOn(join);
+    const rls = rlsFilters?.get(join.target);
+    const joinSql = buildJoinClause(join, rlsFilters) + compileJoinOn(join);
     parts.push(joinSql);
+    if (rls) bindings.push(...rls.params);
   }
 
   // WHERE
+  const hasJoins = state.joins.length > 0;
   const search = state.search;
   const searchFields = state.searchFields;
-  const whereFrag = compileWheres(state.wheres, search, searchFields, db, state.collection);
+  const whereFrag = compileWheres(state.wheres, search, searchFields, db, state.collection, hasJoins);
   if (whereFrag.sql) {
     parts.push(`WHERE ${whereFrag.sql}`);
     bindings.push(...whereFrag.params);
@@ -336,7 +367,7 @@ export function generateSQL(state: BuilderState, db?: import("bun:sqlite").Datab
 
   // HAVING
   if (state.having && state.having.length > 0) {
-    const havingFrag = compileWheresNoSearch(state.having);
+    const havingFrag = compileWheresNoSearch(state.having, hasJoins);
     if (havingFrag.sql && havingFrag.sql !== "1 = 1") {
       parts.push(`HAVING ${havingFrag.sql}`);
       bindings.push(...havingFrag.params);

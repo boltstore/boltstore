@@ -239,4 +239,4 @@ function buildPaginationMeta(
   return meta;
 }
 
-export { listRecords, buildListSql, buildPaginationMeta, ListRecordsResult, PaginationMetaOptions };
+export { listRecords, buildListSql, buildPaginationMeta };

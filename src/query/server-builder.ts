@@ -1,23 +1,32 @@
 import { QueryBuilder } from "@boltstore/utils";
-import { generateSQL, compileWheresNoSearch } from "./sql-generator";
+import { generateSQL, compileWheresNoSearch, type RLSFilter } from "./sql-generator";
 import type { RLSResult } from "../rls";
 import { toBindings } from "../db/cast";
 import type { QueryResult } from "./types";
 
 export class ServerQueryBuilder extends QueryBuilder {
   private db: import("bun:sqlite").Database;
+  private rlsFilters: Map<string, RLSFilter>;
 
   constructor(db: import("bun:sqlite").Database, state?: import("@boltstore/utils").BuilderState) {
     super(state);
     this.db = db;
+    this.rlsFilters = new Map();
   }
 
   clone(): ServerQueryBuilder {
-    return new ServerQueryBuilder(this.db, this.cloneState(this.state));
+    const cloned = new ServerQueryBuilder(this.db, this.cloneState(this.state));
+    cloned.rlsFilters = new Map(this.rlsFilters);
+    return cloned;
+  }
+
+  setRLSFilters(filters: Map<string, RLSFilter>): this {
+    this.rlsFilters = filters;
+    return this;
   }
 
   toSQL(): { sql: string; bindings: unknown[] } {
-    return generateSQL(this.state, this.db);
+    return generateSQL(this.state, this.db, this.rlsFilters);
   }
 
   get<T = Record<string, unknown>>(): T[] {

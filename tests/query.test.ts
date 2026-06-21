@@ -1,14 +1,8 @@
-/**
- * Tests for the query builder and execution.
- *
- * @module tests/query
- */
-
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from "bun:test";
 import { DatabaseManager } from "../src/db/manager";
 import { createCollection } from "../src/collections";
-import { buildQuery, executeQuery } from "../src/query";
-import type { QueryParams } from "../src/query";
+import { queryFromParams, generateSQL } from "../src/query";
+import { ServerQueryBuilder } from "../src/query/server-builder";
 
 const TEST_DATA_DIR = "/tmp/boltstore_test_query";
 const TEST_APP = "queryapp";
@@ -28,14 +22,13 @@ beforeAll(() => {
   const { id: dbId } = manager.createDatabase(TEST_APP);
   pool = manager.get(dbId);
 
-  // Create a test collection with varied field types
   createCollection(pool, "products", [
     { name: "name", type: "TEXT" },
     { name: "price", type: "REAL" },
     { name: "category", type: "TEXT" },
     { name: "in_stock", type: "BOOLEAN", default: true },
     { name: "quantity", type: "INTEGER", default: 0 },
-    { name: "tags", type: "TEXT" }, // JSON string for json_extract tests
+    { name: "tags", type: "TEXT" },
   ]);
 });
 
@@ -69,214 +62,154 @@ function seed() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Filter operators
-// ---------------------------------------------------------------------------
-
 describe("filter operators", () => {
   beforeEach(() => seed());
 
   test("$eq — equality", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { category: { $eq: "fruit" } },
-    });
+    const data = queryFromParams({ collection: "products", filter: { category: { $eq: "fruit" } } }, pool.read()).get();
     expect(data.length).toBe(2);
     expect(data.map((r: Record<string, unknown>) => r.name)).toContain("Apple");
     expect(data.map((r: Record<string, unknown>) => r.name)).toContain("Banana");
   });
 
   test("$neq — not equal", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { category: { $neq: "fruit" } },
-    });
+    const data = queryFromParams({ collection: "products", filter: { category: { $neq: "fruit" } } }, pool.read()).get();
     expect(data.length).toBe(5);
     expect(data.map((r: Record<string, unknown>) => r.name)).not.toContain("Apple");
   });
 
   test("$gt / $gte — greater than", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { price: { $gt: 200 } },
-    });
-    // Laptop (999) and Desk (350)
+    const data = queryFromParams({ collection: "products", filter: { price: { $gt: 200 } } }, pool.read()).get();
     expect(data.length).toBe(2);
-    const { data: d2 } = executeQuery(pool.read(), "products", {
-      filter: { price: { $gte: 350 } },
-    });
+
+    const d2 = queryFromParams({ collection: "products", filter: { price: { $gte: 350 } } }, pool.read()).get();
     expect(d2.length).toBe(2);
   });
 
   test("$lt / $lte — less than", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { price: { $lt: 1 } },
-    });
-    // Banana (0.8), Water (0.5)
+    const data = queryFromParams({ collection: "products", filter: { price: { $lt: 1 } } }, pool.read()).get();
     expect(data.length).toBe(2);
   });
 
   test("$in — in array", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { category: { $in: ["fruit", "drink"] } },
-    });
+    const data = queryFromParams({ collection: "products", filter: { category: { $in: ["fruit", "drink"] } } }, pool.read()).get();
     expect(data.length).toBe(3);
   });
 
   test("$nin — not in array", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { category: { $nin: ["fruit", "drink"] } },
-    });
+    const data = queryFromParams({ collection: "products", filter: { category: { $nin: ["fruit", "drink"] } } }, pool.read()).get();
     expect(data.length).toBe(4);
   });
 
   test("$contains — substring match", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { name: { $contains: "ap" } },
-    });
-    // Apple, Laptop
+    const data = queryFromParams({ collection: "products", filter: { name: { $contains: "ap" } } }, pool.read()).get();
     expect(data.length).toBe(2);
   });
 
   test("$startsWith", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { name: { $startsWith: "B" } },
-    });
+    const data = queryFromParams({ collection: "products", filter: { name: { $startsWith: "B" } } }, pool.read()).get();
     expect(data.length).toBe(1);
   });
 
   test("$endsWith", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { name: { $endsWith: "e" } },
-    });
-    // Apple, Mouse
+    const data = queryFromParams({ collection: "products", filter: { name: { $endsWith: "e" } } }, pool.read()).get();
     expect(data.length).toBe(2);
   });
 
   test("$exists — IS NOT NULL / IS NULL", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { quantity: { $exists: true } },
-    });
+    const data = queryFromParams({ collection: "products", filter: { quantity: { $exists: true } } }, pool.read()).get();
     expect(data.length).toBe(7);
 
-    const { data: d2 } = executeQuery(pool.read(), "products", {
-      filter: { quantity: { $exists: false } },
-    });
+    const d2 = queryFromParams({ collection: "products", filter: { quantity: { $exists: false } } }, pool.read()).get();
     expect(d2.length).toBe(0);
   });
 
   test("$regexp — pattern matching (LIKE fallback)", () => {
-    // regexToLike translates ^B.* → B%
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { name: { $regexp: "^B.*" } },
-    });
+    const data = queryFromParams({ collection: "products", filter: { name: { $regexp: "^B.*" } } }, pool.read()).get();
     const names = data.map((r: Record<string, unknown>) => r.name);
     expect(names).toContain("Banana");
-    // The LIKE fallback is anchored — ^B matches names starting with B
     expect(data.length).toBe(1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Logical grouping
-// ---------------------------------------------------------------------------
 
 describe("logical grouping", () => {
   beforeEach(() => seed());
 
   test("$and — all conditions must match", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: {
-        $and: [
-          { category: "fruit" },
-          { price: { $gt: 0.9 } },
-        ],
-      },
-    });
+    const data = queryFromParams({
+      collection: "products",
+      filter: { $and: [{ category: "fruit" }, { price: { $gt: 0.9 } }] },
+    }, pool.read()).get();
     expect(data.length).toBe(1);
     expect((data[0] as Record<string, unknown>).name).toBe("Apple");
   });
 
   test("$or — any condition matches", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: {
-        $or: [
-          { category: "drink" },
-          { name: { $contains: "top" } },
-        ],
-      },
-    });
-    // Water, Laptop
+    const data = queryFromParams({
+      collection: "products",
+      filter: { $or: [{ category: "drink" }, { name: { $contains: "top" } }] },
+    }, pool.read()).get();
     expect(data.length).toBe(2);
   });
 
   test("$not — negate a condition", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: {
-        $not: { category: "fruit" },
-      },
-    });
+    const data = queryFromParams({
+      collection: "products",
+      filter: { $not: { category: "fruit" } },
+    }, pool.read()).get();
     expect(data.length).toBe(5);
   });
 
   test("nested $and + $or", () => {
-    const { data } = executeQuery(pool.read(), "products", {
+    const data = queryFromParams({
+      collection: "products",
       filter: {
         $and: [
           { in_stock: 1 },
-          {
-            $or: [
-              { category: "fruit" },
-              { price: { $gt: 300 } },
-            ],
-          },
+          { $or: [{ category: "fruit" }, { price: { $gt: 300 } }] },
         ],
       },
-    });
-    // Fruits (both in stock) + Desk (350, in stock) = 3
+    }, pool.read()).get();
     expect(data.length).toBe(3);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Sorting
-// ---------------------------------------------------------------------------
 
 describe("sorting", () => {
   beforeEach(() => seed());
 
   test("single field sort ascending", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      sort: ["price:asc"],
-    });
-    expect(data[0].name).toBe("Water");   // 0.5
-    expect(data[1].name).toBe("Banana");   // 0.8
-    expect(data[data.length - 1].name).toBe("Laptop"); // 999
+    const data = queryFromParams({
+      collection: "products",
+      sort: [{ field: "price", direction: "asc" }],
+    }, pool.read()).get();
+    expect(data[0].name).toBe("Water");
+    expect(data[1].name).toBe("Banana");
+    expect(data[data.length - 1].name).toBe("Laptop");
   });
 
   test("multi-field sort", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      sort: ["category:asc", "price:desc"],
-    });
-    // Within same category, highest price first
-    expect(data[0].name).toBe("Water");   // drink
-    const electronics = data.filter((r: Record<string, unknown>) => r.category === "electronics");
-    expect(electronics[0].name).toBe("Laptop"); // 999 > 25
+    const data = queryFromParams({
+      collection: "products",
+      sort: [{ field: "category", direction: "asc" }, { field: "price", direction: "desc" }],
+    }, pool.read()).get<Record<string, unknown>>();
+    expect(data[0].name).toBe("Water");
+    const electronics = data.filter((r) => r.category === "electronics");
+    expect(electronics[0].name).toBe("Laptop");
     expect(electronics[1].name).toBe("Mouse");
   });
 });
-
-// ---------------------------------------------------------------------------
-// Field selection (projection)
-// ---------------------------------------------------------------------------
 
 describe("field selection", () => {
   beforeEach(() => seed());
 
   test("returns only specified fields", () => {
-    const { data } = executeQuery(pool.read(), "products", {
+    const data = queryFromParams({
+      collection: "products",
       fields: ["name", "price"],
-      sort: ["price:asc"],
-    });
+      sort: [{ field: "price", direction: "asc" }],
+    }, pool.read()).get<Record<string, unknown>>();
     expect(data.length).toBeGreaterThan(0);
-    const row = data[0] as Record<string, unknown>;
+    const row = data[0];
     expect(row.name).toBeDefined();
     expect(row.price).toBeDefined();
     expect(row.category).toBeUndefined();
@@ -284,43 +217,40 @@ describe("field selection", () => {
   });
 
   test("json_extract field selection", () => {
-    const { data } = executeQuery(pool.read(), "products", {
+    const data = queryFromParams({
+      collection: "products",
       fields: ["name", "tags.color"],
       filter: { category: "fruit" },
-    });
+    }, pool.read()).get<Record<string, unknown>>();
     expect(data.length).toBe(2);
-    const apple = data.find((r: Record<string, unknown>) => r.name === "Apple") as Record<string, unknown>;
+    const apple = data.find((r) => r.name === "Apple")!;
     expect(apple.tags_color).toBeDefined();
     expect(apple.tags_color).toBe("red");
   });
 });
 
-// ---------------------------------------------------------------------------
-// Pagination
-// ---------------------------------------------------------------------------
-
 describe("pagination", () => {
   beforeEach(() => seed());
 
   test("offset pagination with limit and offset", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      sort: ["price:asc"],
-      limit: 3,
-      offset: 0,
-    });
-    expect(data.length).toBe(3);
-    expect(data[0].name).toBe("Water");
+    const qb = queryFromParams({
+      collection: "products",
+      sort: [{ field: "price", direction: "asc" }],
+    }, pool.read());
+    const page1 = qb.clone().limit(3).offset(0).get();
+    expect(page1.length).toBe(3);
+    expect(page1[0].name).toBe("Water");
 
-    const page2 = executeQuery(pool.read(), "products", {
-      sort: ["price:asc"],
-      limit: 3,
-      offset: 3,
-    });
-    expect(page2.data.length).toBe(3);
+    const page2 = qb.clone().limit(3).offset(3).get();
+    expect(page2.length).toBe(3);
   });
 
   test("page/per_page returns pagination metadata", () => {
-    const result = executeQuery(pool.read(), "products", { sort: ["price:asc"] }, 1, 3);
+    const qb = queryFromParams({
+      collection: "products",
+      sort: [{ field: "price", direction: "asc" }],
+    }, pool.read());
+    const result = qb.paginate(1, 3);
     expect(result.data.length).toBe(3);
     expect(result.meta.page).toBe(1);
     expect(result.meta.per_page).toBe(3);
@@ -329,93 +259,68 @@ describe("pagination", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Aggregates
-// ---------------------------------------------------------------------------
-
 describe("aggregates", () => {
   beforeEach(() => seed());
 
   test("$count", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      aggregate: { function: "$count" },
-    });
+    const data = queryFromParams({ collection: "products", aggregate: { function: "$count" } }, pool.read()).get<Record<string, unknown>>();
     expect(data[0]["COUNT(*)"]).toBe(7);
   });
 
   test("$sum", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      aggregate: { function: "$sum", field: "quantity" },
-    });
+    const data = queryFromParams({ collection: "products", aggregate: { function: "$sum", field: "quantity" } }, pool.read()).get<Record<string, unknown>>();
     // 100 + 200 + 0 + 50 + 10 + 20 + 500 = 880
-    expect(data[0]["SUM(\"quantity\")"]).toBe(880);
+    expect(data[0]['SUM("quantity")']).toBe(880);
   });
 
   test("$avg", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      aggregate: { function: "$avg", field: "price" },
-    });
-    const avg = data[0]["AVG(\"price\")"] as number;
-    // (1.5 + 0.8 + 999 + 25 + 350 + 150 + 0.5) / 7 ≈ 218.11
+    const data = queryFromParams({ collection: "products", aggregate: { function: "$avg", field: "price" } }, pool.read()).get<Record<string, unknown>>();
+    const avg = data[0]['AVG("price")'] as number;
     expect(avg).toBeGreaterThan(200);
     expect(avg).toBeLessThan(220);
   });
 
   test("$min / $max", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      aggregate: { function: "$min", field: "price" },
-    });
-    expect(data[0]["MIN(\"price\")"]).toBe(0.5);
+    const data = queryFromParams({ collection: "products", aggregate: { function: "$min", field: "price" } }, pool.read()).get<Record<string, unknown>>();
+    expect(data[0]['MIN("price")']).toBe(0.5);
 
-    const { data: d2 } = executeQuery(pool.read(), "products", {
-      aggregate: { function: "$max", field: "price" },
-    });
-    expect(d2[0]["MAX(\"price\")"]).toBe(999);
+    const d2 = queryFromParams({ collection: "products", aggregate: { function: "$max", field: "price" } }, pool.read()).get<Record<string, unknown>>();
+    expect(d2[0]['MAX("price")']).toBe(999);
   });
 
   test("with alias", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      aggregate: { function: "$count", alias: "total_products" },
-    });
+    const data = queryFromParams({ collection: "products", aggregate: { function: "$count", alias: "total_products" } }, pool.read()).get<Record<string, unknown>>();
     expect(data[0].total_products).toBe(7);
   });
 
   test("groupBy with having", () => {
-    const { data } = executeQuery(pool.read(), "products", {
+    const data = queryFromParams({
+      collection: "products",
       aggregate: { function: "$count", alias: "cnt" },
       groupBy: "category",
       having: { cnt: { $gt: 1 } },
-    });
-    // "fruit" has 2, "electronics" has 2, "furniture" has 2 → 3 groups
+    }, pool.read()).get<Record<string, unknown>>();
+    // "fruit":2, "electronics":2, "furniture":2 → 3 groups
     expect(data.length).toBe(3);
   });
 });
-
-// ---------------------------------------------------------------------------
-// JSON field access in filters
-// ---------------------------------------------------------------------------
 
 describe("JSON field access", () => {
   beforeEach(() => seed());
 
   test("filter by nested JSON field", () => {
-    const { data } = executeQuery(pool.read(), "products", {
-      filter: { "tags.color": "red" },
-    });
+    const data = queryFromParams({ collection: "products", filter: { "tags.color": "red" } }, pool.read()).get<Record<string, unknown>>();
     expect(data.length).toBe(1);
-    expect((data[0] as Record<string, unknown>).name).toBe("Apple");
+    expect(data[0].name).toBe("Apple");
   });
 });
 
-// ---------------------------------------------------------------------------
-// buildQuery (unit tests)
-// ---------------------------------------------------------------------------
-
-describe("buildQuery", () => {
+describe("buildQuery (via toSQL)", () => {
   test("generates parameterized SQL", () => {
-    const { sql, bindings } = buildQuery("products", {
+    const { sql, bindings } = queryFromParams({
+      collection: "products",
       filter: { name: { $eq: "Apple" }, price: { $gt: 1 } },
-    });
+    }, pool.read()).toSQL();
     expect(sql).toContain("SELECT *");
     expect(sql).toContain('FROM "products"');
     expect(sql).toContain("WHERE");
@@ -426,17 +331,19 @@ describe("buildQuery", () => {
   });
 
   test("builds sort clause", () => {
-    const { sql } = buildQuery("products", {
-      sort: ["price:desc", "name:asc"],
-    });
+    const { sql } = queryFromParams({
+      collection: "products",
+      sort: [{ field: "price", direction: "desc" }, { field: "name", direction: "asc" }],
+    }, pool.read()).toSQL();
     expect(sql).toContain('ORDER BY "price" DESC, "name" ASC');
   });
 
   test("builds LIMIT and OFFSET", () => {
-    const { sql, bindings } = buildQuery("products", {
+    const { sql, bindings } = queryFromParams({
+      collection: "products",
       limit: 10,
       offset: 20,
-    });
+    }, pool.read()).toSQL();
     expect(sql).toContain("LIMIT ?");
     expect(sql).toContain("OFFSET ?");
     expect(bindings).toEqual([10, 20]);

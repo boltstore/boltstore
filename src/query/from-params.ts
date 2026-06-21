@@ -1,7 +1,7 @@
 import type { QueryOptions, Filter, FilterGroup, FilterCondition } from "@boltstore/utils";
 import { validateIdentifier } from "@boltstore/utils";
 import { ServerQueryBuilder } from "./server-builder";
-import type { WhereClause, WhereBoolean } from "@boltstore/utils";
+import type { WhereClause } from "@boltstore/utils";
 
 const WHERE_NESTING_MAX = 10;
 
@@ -28,14 +28,18 @@ function parseFilter(filter: Filter, depth = 0): WhereClause[] {
   }
 
   if (fg.$or && Array.isArray(fg.$or)) {
+    const orClauses: WhereClause[] = [];
     for (const sub of fg.$or) {
       const subClauses = parseFilter(sub, depth + 1);
       if (subClauses.length === 1) {
         subClauses[0].boolean = "or";
-        result.push(subClauses[0]);
+        orClauses.push(subClauses[0]);
       } else if (subClauses.length > 1) {
-        result.push({ type: "nested", query: subClauses, boolean: "or" });
+        orClauses.push({ type: "nested", query: subClauses, boolean: "or" });
       }
+    }
+    if (orClauses.length > 0) {
+      result.push({ type: "nested", query: orClauses, boolean: "and" });
     }
     return result;
   }
@@ -58,7 +62,9 @@ function parseFilter(filter: Filter, depth = 0): WhereClause[] {
   for (const [field, value] of Object.entries(filter)) {
     if (field.startsWith("$")) continue; // skip $raw, $and, $or, $not (already handled)
 
-    validateIdentifier(field, "filter field");
+    // Allow dotted paths for JSON fields: "tags.color" → validate "tags"
+    const fieldRoot = field.includes(".") ? field.split(".")[0] : field;
+    validateIdentifier(fieldRoot, "filter field");
     const fc = filter as FilterCondition;
 
     if (value === null) {
