@@ -1,12 +1,14 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
-import { authenticateApiKey } from "../middleware/auth";
+import { authenticateApiKey, checkDbCors } from "../middleware/auth";
 
 export function registerQueryRoutes(router: Router, manager: DatabaseManager): void {
   router.post("/api/databases/:db/query", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const body = await req.json() as { sql?: string; params?: any[] };
     if (!body.sql || typeof body.sql !== "string") {

@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
-import { authenticateApiKey, isAdminRequest } from "../middleware/auth";
+import { authenticateApiKey, checkDbCors } from "../middleware/auth";
 
 const VALID_TABLE_NAME = /^[a-z_][a-z0-9_]*$/i;
 const VALID_COLUMN_NAME = /^[a-z_][a-z0-9_]*$/i;
@@ -34,6 +34,8 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
   router.get("/api/databases/:db/tables", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const pool = manager.get(params.db);
     const db = pool.read();
@@ -44,6 +46,8 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
   router.post("/api/databases/:db/tables", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const body = await req.json() as { name?: string; columns?: ColumnDef[] };
     if (!body.name || !VALID_TABLE_NAME.test(body.name)) {
@@ -70,6 +74,8 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
   router.get("/api/databases/:db/tables/:table", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const pool = manager.get(params.db);
     const db = pool.read();
@@ -83,6 +89,8 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
   router.patch("/api/databases/:db/tables/:table", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const body = await req.json() as { add_columns?: ColumnDef[]; drop_columns?: string[]; rename_column?: { from: string; to: string } };
     const pool = manager.get(params.db);
@@ -116,6 +124,8 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
   router.delete("/api/databases/:db/tables/:table", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const pool = manager.get(params.db);
     pool.write().run(`DROP TABLE IF EXISTS "${params.table}"`);

@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
-import { authenticateApiKey } from "../middleware/auth";
+import { authenticateApiKey, checkDbCors } from "../middleware/auth";
 
 const MAX_LIMIT = 1000;
 const DEFAULT_LIMIT = 50;
@@ -97,6 +97,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
   router.post("/api/databases/:db/tables/:table/records", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const body = await req.json();
     const pool = manager.get(params.db);
@@ -127,6 +129,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
   router.get("/api/databases/:db/tables/:table/records", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const url = new URL(req.url);
     const query = url.searchParams;
@@ -149,6 +153,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
   router.get("/api/databases/:db/tables/:table/records/:id", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const pool = manager.get(params.db);
     const row = pool.read().query(`SELECT rowid, * FROM "${params.table}" WHERE rowid = ?`).get(params.id);
@@ -159,6 +165,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
   router.patch("/api/databases/:db/tables/:table/records/:id", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const body = await req.json() as Record<string, any>;
     const keys = Object.keys(body);
@@ -181,6 +189,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
   router.delete("/api/databases/:db/tables/:table/records/:id", async (req, params) => {
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
 
     const pool = manager.get(params.db);
     pool.write().run(`DELETE FROM "${params.table}" WHERE rowid = ?`, [params.id]);

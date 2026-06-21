@@ -37,7 +37,7 @@ export async function authenticateApiKey(
   // Admin key check
   const adminKey = Bun.env[ADMIN_KEY_ENV];
   if (adminKey && providedKey === adminKey) {
-    return { authenticated: true, isAdmin: true };
+    return { authenticated: true, isAdmin: true, databaseName };
   }
 
   // Look up key hash in system database
@@ -58,4 +58,27 @@ export async function authenticateApiKey(
   db.run("UPDATE _api_keys SET last_used_at = datetime('now') WHERE id = ?", [row.id]);
 
   return { authenticated: true, databaseName, keyId: row.id, label: row.label, isAdmin: false };
+}
+
+export function checkDbCors(request: Request, manager: DatabaseManager, databaseName: string): Response | null {
+  const origin = request.headers.get("Origin");
+  if (!origin) return null;
+
+  try {
+    const row = manager.getMetaPool().read()
+      .query("SELECT config FROM _databases WHERE name = ?")
+      .get(databaseName) as { config: string } | null;
+    if (!row) return null;
+
+    const config = JSON.parse(row.config);
+    const origins: string[] = config.cors_origins;
+
+    if (!origins || origins.length === 0) return null;
+    if (origins.includes("*")) return null;
+    if (origins.includes(origin)) return null;
+
+    return errorResponse("FORBIDDEN", `Origin "${origin}" is not allowed for this database.`, 403);
+  } catch {
+    return null;
+  }
 }
