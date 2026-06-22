@@ -68,6 +68,7 @@
           :total="totalRecords"
           :offset="recordOffset"
           :limit="recordLimit"
+          :timing="recordTiming"
           @delete-selected="handleDelete"
           @update:rows="handleUpdateRows"
           @refresh="loadRecords"
@@ -91,36 +92,42 @@
       <div class="bg-bolt-card border border-border-default rounded-lg overflow-hidden mb-4">
         <div class="px-4 py-2 border-b border-border-default flex items-center gap-2">
           <span class="text-xs font-medium text-text-primary">SQL Console</span>
-          <button class="btn-primary btn-sm flex items-center gap-1 ml-auto">
+          <button class="btn-primary btn-sm flex items-center gap-1 ml-auto" :disabled="sqlRunning" @click="runQuery">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            Run
+            {{ sqlRunning ? 'Running...' : 'Run' }}
           </button>
         </div>
         <textarea
           class="input-field w-full h-40 resize-none font-mono text-sm leading-relaxed"
           spellcheck="false"
-          :value="defaultSql"
+          v-model="sqlQuery"
+          @keydown.ctrl.enter="runQuery"
+          @keydown.meta.enter="runQuery"
         ></textarea>
       </div>
-      <div class="bg-bolt-card border border-border-default rounded-lg overflow-hidden">
+      <div v-if="sqlError" class="bg-bolt-card border border-red-500/20 rounded-lg p-4">
+        <div class="text-xs text-red-400 font-mono whitespace-pre-wrap">{{ sqlError }}</div>
+      </div>
+      <div v-if="sqlResult !== null" class="bg-bolt-card border border-border-default rounded-lg overflow-hidden">
         <div class="px-4 py-2 border-b border-border-default bg-bolt-elevated">
-          <span class="text-xs text-text-muted">Result (2 rows) · 17ms</span>
+          <span class="text-xs text-text-muted">{{ sqlResultText }}</span>
         </div>
         <div class="overflow-x-auto">
-          <table class="data-table">
+          <table class="data-table" v-if="sqlColumns.length > 0">
             <thead>
               <tr>
-                <th v-for="col in tableColumns" :key="col.key">{{ col.label }}</th>
+                <th v-for="col in sqlColumns" :key="col">{{ col }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(row, i) in sqlResult" :key="i">
-                <td v-for="col in tableColumns" :key="col.key">
-                  <span class="font-mono text-xs">{{ row[col.key] }}</span>
+                <td v-for="col in sqlColumns" :key="col">
+                  <span class="font-mono text-xs">{{ row[col] === null ? 'null' : row[col] }}</span>
                 </td>
               </tr>
             </tbody>
           </table>
+          <div v-else class="px-4 py-8 text-center text-xs text-text-muted">Query executed successfully. No rows returned.</div>
         </div>
       </div>
     </div>
@@ -572,6 +579,7 @@ async function loadRecords() {
   if (!selectedTable.value) return
   loadingRecords.value = true
   dataError.value = ""
+  const start = performance.now()
   try {
     const res = await api.listRecords(dbName.value, selectedTable.value, {
       limit: recordLimit,
@@ -589,6 +597,7 @@ async function loadRecords() {
         type: typeof res.data[0][key] === "number" ? "integer" : "text",
       }))
     }
+    recordTiming.value = Math.round(performance.now() - start)
   } catch (e: unknown) {
     dataError.value = e instanceof Error ? e.message : "Failed to load records"
   } finally {
@@ -654,14 +663,41 @@ const recordOffset = ref(0)
 const recordLimit = 50
 const recordSort = ref("")
 const recordFilter = ref("")
+const recordTiming = ref(0)
 const dataError = ref("")
 
-const defaultSql = "SELECT * FROM crawler_sources WHERE job_selector IS NOT NULL;"
+const sqlQuery = ref("SELECT * FROM ")
+const sqlResult = ref<Record<string, unknown>[] | null>(null)
+const sqlColumns = ref<string[]>([])
+const sqlError = ref("")
+const sqlRunning = ref(false)
+const sqlResultText = ref("")
 
-const sqlResult = [
-  { id: 2, name: "Concentrix", url: "https://jobs.concentrix.com", job_selector: "script#jobsData", title_selector: null, link_selector: null },
-  { id: 5, name: "Foundever", url: "https://jobs.foundever.com", job_selector: "tr.data-row", title_selector: "a.jobTitle-link", link_selector: "a.jobTitle-link" },
-]
+async function runQuery() {
+  if (!sqlQuery.value.trim()) return
+  sqlRunning.value = true
+  sqlError.value = ""
+  sqlResult.value = null
+  const start = performance.now()
+  try {
+    const res = await api.executeQuery(dbName.value, sqlQuery.value)
+    if (res.data) {
+      sqlResult.value = res.data
+      sqlColumns.value = res.data.length > 0 ? Object.keys(res.data[0]) : []
+      const ms = Math.round(performance.now() - start)
+      sqlResultText.value = `${res.data.length} row${res.data.length !== 1 ? 's' : ''} · ${ms}ms`
+    } else {
+      sqlResult.value = []
+      sqlColumns.value = []
+      const ms = Math.round(performance.now() - start)
+      sqlResultText.value = `${res.meta?.changes ?? 0} row(s) affected · ${ms}ms`
+    }
+  } catch (e: unknown) {
+    sqlError.value = e instanceof Error ? e.message : "Query failed"
+  } finally {
+    sqlRunning.value = false
+  }
+}
 
 const schemaTables = [
   {
