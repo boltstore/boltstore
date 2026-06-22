@@ -41,29 +41,39 @@
     <div v-show="activeTab === 'data'" class="flex flex-col md:flex-row gap-4">
       <div class="w-56 shrink-0">
         <div class="flex items-center gap-2 mb-3">
-          <input type="text" class="input-field text-xs py-2" placeholder="Search tables..." style="font-family:Inter">
+          <input type="text" class="input-field text-xs py-2" placeholder="Search tables..." style="font-family:Inter" v-model="tableSearch">
         </div>
         <div class="space-y-0.5">
+          <div v-if="filteredTables.length === 0 && !loadingTables" class="px-2 py-3 text-xs text-text-muted">No tables found.</div>
           <div
-            v-for="t in tables"
+            v-for="t in filteredTables"
             :key="t.name"
             class="flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors"
             :class="t.name === selectedTable ? 'text-text-primary bg-bolt-hover' : 'text-text-secondary hover:bg-bolt-hover'"
-            @click="selectedTable = t.name"
+            @click="selectTable(t.name)"
           >
             <svg class="w-3.5 h-3.5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
             {{ t.name }}
-            <span class="ml-auto text-[10px] text-text-muted">{{ t.count }}</span>
+            <span class="ml-auto text-[10px] text-text-muted">{{ t.count || '' }}</span>
           </div>
         </div>
       </div>
 
       <div class="flex-1 min-w-0">
+        <p v-if="dataError" class="text-xs text-red-400 mb-2">{{ dataError }}</p>
         <DataTable
+          :key="selectedTable"
           :columns="tableColumns"
           :rows="dataRows"
+          :total="totalRecords"
+          :offset="recordOffset"
+          :limit="recordLimit"
           @delete-selected="handleDelete"
-          @update:rows="dataRows = $event"
+          @update:rows="handleUpdateRows"
+          @refresh="loadRecords"
+          @page-change="goToPage"
+          @sort-change="onSortChange"
+          @filter-change="onFilterChange"
         >
           <template #toolbar-extra>
             <button class="btn-primary btn-sm flex items-center gap-1" @click="showAddDrawer = true">
@@ -296,11 +306,10 @@
             :placeholder="field.placeholder"
             v-model="field.value"
           >
-          <p v-if="field.hint" class="hint">{{ field.hint }}</p>
         </div>
       </template>
       <template #footer>
-        <button class="btn-primary w-full">Save Record</button>
+        <button class="btn-primary w-full" @click="saveRecord">Save Record</button>
       </template>
     </Drawer>
 
@@ -351,7 +360,7 @@
         </div>
         <div class="flex items-center justify-end gap-2">
           <button class="btn-ghost btn-sm" @click="showDeleteModal = false">Cancel</button>
-          <button class="btn-primary btn-sm bg-red-600 hover:bg-red-500 border-red-500/50" @click="showDeleteModal = false">Delete</button>
+          <button class="btn-primary btn-sm bg-red-600 hover:bg-red-500 border-red-500/50" @click="confirmDeleteRecords">Delete</button>
         </div>
       </div>
     </div>
@@ -467,7 +476,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, h, computed, onMounted, onUnmounted } from "vue"
+import { ref, h, computed, watch, onMounted, onUnmounted } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import AppLayout from "../components/layout/AppLayout.vue"
 import DataTable, { type ColumnDef } from "../components/ui/DataTable.vue"
@@ -476,9 +485,9 @@ import { api, type ApiKeyInfo } from "../api/client"
 
 const route = useRoute()
 const router = useRouter()
-const dbName = route.params.name as string
+const dbName = computed(() => route.params.name as string)
 const activeTab = computed(() => route.params.tab as string || "data")
-const selectedTable = ref("crawler_sources")
+const selectedTable = ref(route.params.table as string || "")
 const showAddDrawer = ref(false)
 const showSchemaDrawer = ref(false)
 const showDeleteModal = ref(false)
@@ -494,6 +503,7 @@ const newKeyValue = ref("")
 const dbConfig = ref<Record<string, unknown>>({})
 const apiKeys = ref<{ id: string; name: string; key: string; lastUsed: string }[]>([])
 const groupSaved = ref(false)
+const deletingRows = ref<number[]>([])
 
 function onKeyDown(e: KeyboardEvent) {
   if (e.key !== "Escape") return
@@ -506,6 +516,113 @@ function onKeyDown(e: KeyboardEvent) {
 
 onMounted(() => window.addEventListener("keydown", onKeyDown, { capture: true }))
 onUnmounted(() => window.removeEventListener("keydown", onKeyDown, { capture: true }))
+
+watch(selectedTable, (table) => {
+  recordOffset.value = 0
+  recordSort.value = ""
+  recordFilter.value = ""
+  if (table) loadRecords()
+})
+
+watch(() => route.params.table, (table) => {
+  if (table && selectedTable.value !== table) {
+    tableColumns.value = []
+    dataRows.value = []
+    selectedTable.value = table as string
+  }
+})
+
+watch(dbName, () => {
+  selectedTable.value = ""
+  tables.value = []
+  tableColumns.value = []
+  dataRows.value = []
+  loadConfig()
+  loadKeys()
+  loadTables()
+})
+
+async function loadTables() {
+  loadingTables.value = true
+  dataError.value = ""
+  try {
+    const res = await api.listTables(dbName.value)
+    tables.value = res.data.map(name => ({ name, count: 0 }))
+    if (tables.value.length > 0 && !selectedTable.value) {
+      selectTable(tables.value[0].name)
+    } else if (selectedTable.value) {
+      loadRecords()
+    }
+  } catch (e: unknown) {
+    dataError.value = e instanceof Error ? e.message : "Failed to load tables"
+  } finally {
+    loadingTables.value = false
+  }
+}
+
+function selectTable(name: string) {
+  if (selectedTable.value === name) return
+  tableColumns.value = []
+  dataRows.value = []
+  selectedTable.value = name
+  router.push(`/databases/${dbName.value}/${activeTab.value}/${name}`)
+}
+
+async function loadRecords() {
+  if (!selectedTable.value) return
+  loadingRecords.value = true
+  dataError.value = ""
+  try {
+    const res = await api.listRecords(dbName.value, selectedTable.value, {
+      limit: recordLimit,
+      offset: recordOffset.value,
+      sort: recordSort.value || undefined,
+      filter: recordFilter.value || undefined,
+    })
+    dataRows.value = res.data
+    totalRecords.value = res.meta?.total ?? 0
+    if (res.data.length > 0 && tableColumns.value.length === 0) {
+      const keys = Object.keys(res.data[0]).filter(k => k !== "rowid")
+      tableColumns.value = keys.map(key => ({
+        key,
+        label: key,
+        type: typeof res.data[0][key] === "number" ? "integer" : "text",
+      }))
+    }
+  } catch (e: unknown) {
+    dataError.value = e instanceof Error ? e.message : "Failed to load records"
+  } finally {
+    loadingRecords.value = false
+  }
+}
+
+function goToPage(offset: number) {
+  recordOffset.value = offset
+  loadRecords()
+}
+
+function onSortChange(column: string | null, asc: boolean) {
+  recordSort.value = column ? `${asc ? "+" : "-"}${column}` : ""
+  recordOffset.value = 0
+  loadRecords()
+}
+
+function onFilterChange(filters: { column: string; operator: string; value: string }[]) {
+  const active = filters.filter(f => f.value)
+  if (active.length === 0) {
+    recordFilter.value = ""
+  } else {
+    const obj: Record<string, Record<string, string>> = {}
+    for (const f of active) {
+      const op = f.operator === "contains" ? "$like" : f.operator === "equals" ? "$eq" : f.operator === "starts with" ? "$like" : "$eq"
+      const val = f.operator === "contains" ? `%${f.value}%` : f.operator === "starts with" ? `${f.value}%` : f.value
+      obj[f.column] = { [op]: val }
+    }
+    recordFilter.value = JSON.stringify(obj)
+  }
+  recordOffset.value = 0
+  loadRecords()
+}
 
 function icon(path: string) {
   return () => h('svg', { class: 'w-3.5 h-3.5', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' }, [
@@ -521,65 +638,23 @@ const tabs = [
   { id: "settings", label: "Settings", icon: icon("M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z") },
 ]
 
-const tables = [
-  { name: "crawler_sources", count: "40" },
-  { name: "jobs", count: "1,248" },
-  { name: "users", count: "89" },
-]
-
-const tableColumns: ColumnDef[] = [
-  { key: "id", label: "id", type: "integer" },
-  { key: "name", label: "name", type: "text" },
-  { key: "url", label: "url", type: "text" },
-  { key: "job_selector", label: "job_selector", type: "text" },
-  { key: "title_selector", label: "title_selector", type: "text" },
-  { key: "link_selector", label: "link_selector", type: "text" },
-]
-
-const rawData: Record<string, unknown>[] = [
-  { id: 1, name: "TDCX", url: "https://www.tdcx.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 2, name: "Concentrix", url: "https://jobs.concentrix.com", job_selector: "script#jobsData", title_selector: null, link_selector: null },
-  { id: 3, name: "Teleperformance", url: "https://www.tp.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 4, name: "Sutherland", url: "https://www.jobs.sutherland.com", job_selector: null, title_selector: null, link_selector: null },
-  { id: 5, name: "Foundever", url: "https://jobs.foundever.com", job_selector: "tr.data-row", title_selector: "a.jobTitle-link", link_selector: "a.jobTitle-link" },
-  { id: 6, name: "TaskUs", url: "https://jobs.taskus.com", job_selector: null, title_selector: null, link_selector: null },
-  { id: 7, name: "Accenture", url: "https://www.accenture.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 8, name: "Alorica", url: "https://jobs.alorica.com", job_selector: null, title_selector: null, link_selector: null },
-  { id: 9, name: "Webhelp", url: "https://jobs.webhelp.com", job_selector: null, title_selector: null, link_selector: null },
-  { id: 10, name: "Genpact", url: "https://www.genpact.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 11, name: "IBM Services", url: "https://www.ibm.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 12, name: "WNS Global", url: "https://www.wns.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 13, name: "Firstsource", url: "https://www.firstsource.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 14, name: "Hinduja Global", url: "https://www.hgs.cx/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 15, name: "Transcom", url: "https://www.transcom.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 16, name: "VXI Global", url: "https://www.vxiglobal.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 17, name: "24-7 Intouch", url: "https://www.24-7intouch.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 18, name: "Qualfon", url: "https://www.qualfon.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 19, name: "Startek", url: "https://www.startek.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 20, name: "Sitel Group", url: "https://www.sitel.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 21, name: "Arvato", url: "https://www.arvato.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 22, name: "EXL Service", url: "https://www.exlservice.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 23, name: "Infosys BPM", url: "https://www.infosys.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 24, name: "Wipro BPO", url: "https://careers.wipro.com", job_selector: null, title_selector: null, link_selector: null },
-  { id: 25, name: "Tech Mahindra", url: "https://www.techmahindra.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 26, name: "Cognizant", url: "https://www.cognizant.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 27, name: "Capita", url: "https://www.capita.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 28, name: "CGI Group", url: "https://www.cgi.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 29, name: "Atento", url: "https://www.atento.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 30, name: "Comdata", url: "https://www.comdata.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 31, name: "Minacs", url: "https://www.minacs.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 32, name: "Iberia Inf", url: "https://www.iberia.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 33, name: "Stream Global", url: "https://www.stream.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 34, name: "Amdocs", url: "https://www.amdocs.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 35, name: "Epam Systems", url: "https://www.epam.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 36, name: "Majorel", url: "https://www.majorel.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 37, name: "Salesforce", url: "https://www.salesforce.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 38, name: "SAP", url: "https://www.sap.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 39, name: "Oracle", url: "https://www.oracle.com/careers", job_selector: null, title_selector: null, link_selector: null },
-  { id: 40, name: "Microsoft", url: "https://www.microsoft.com/careers", job_selector: null, title_selector: null, link_selector: null },
-]
-
-const dataRows = ref(rawData)
+const tables = ref<{ name: string; count: number }[]>([])
+const tableSearch = ref("")
+const filteredTables = computed(() => {
+  if (!tableSearch.value) return tables.value
+  const q = tableSearch.value.toLowerCase()
+  return tables.value.filter(t => t.name.toLowerCase().includes(q))
+})
+const tableColumns = ref<ColumnDef[]>([])
+const dataRows = ref<Record<string, unknown>[]>([])
+const loadingTables = ref(false)
+const loadingRecords = ref(false)
+const totalRecords = ref(0)
+const recordOffset = ref(0)
+const recordLimit = 50
+const recordSort = ref("")
+const recordFilter = ref("")
+const dataError = ref("")
 
 const defaultSql = "SELECT * FROM crawler_sources WHERE job_selector IS NOT NULL;"
 
@@ -633,24 +708,25 @@ const topQueries = [
   { query: "DELETE FROM jobs WHERE created_at < datetime('now', '-30 days')", calls: "12", avgTime: "45.2ms", totalTime: "542.4ms", rows: "8,421" },
 ]
 
-const addFields = ref([
-  { key: "name", label: "Name", placeholder: "Enter name", value: "", hint: "" },
-  { key: "url", label: "URL", placeholder: "https://", value: "", hint: "" },
-  { key: "job_selector", label: "Job Selector", placeholder: "e.g., tr.job-row", value: "", hint: "CSS selector for job listing container" },
-  { key: "title_selector", label: "Title Selector", placeholder: "e.g., h2.job-title a", value: "", hint: "CSS selector for job title element" },
-  { key: "link_selector", label: "Link Selector", placeholder: "e.g., a.job-link", value: "", hint: "CSS selector for job detail link" },
-])
+const addFields = ref<{ key: string; label: string; placeholder: string; value: string }[]>([])
+
+watch(tableColumns, (cols) => {
+  addFields.value = cols
+    .filter(c => c.key !== "rowid")
+    .map(c => ({ key: c.key, label: c.label, placeholder: `Enter ${c.label}`, value: "" }))
+}, { immediate: true })
 
 const schemaDdl = ref("-- Edit schema for crawler_sources\nALTER TABLE crawler_sources ADD COLUMN new_field TEXT;")
 
 onMounted(() => {
   loadConfig()
   loadKeys()
+  loadTables()
 })
 
 async function loadConfig() {
   try {
-    const res = await api.getConfig(dbName)
+    const res = await api.getConfig(dbName.value)
     dbConfig.value = res.data
   } catch {}
 }
@@ -658,7 +734,7 @@ async function loadConfig() {
 async function saveGroup(group: string) {
   dbConfig.value.group = group || undefined
   try {
-    await api.updateConfig(dbName, { group: group || null })
+    await api.updateConfig(dbName.value, { group: group || null })
     groupSaved.value = true
     setTimeout(() => groupSaved.value = false, 2000)
   } catch {}
@@ -666,17 +742,17 @@ async function saveGroup(group: string) {
 
 async function saveReadonly() {
   try {
-    await api.updateConfig(dbName, { readonly: dbConfig.value.readonly || false })
+    await api.updateConfig(dbName.value, { readonly: dbConfig.value.readonly || false })
   } catch {}
 }
 
 async function exportDatabase() {
   try {
-    const blob = await api.exportDatabase(dbName)
+    const blob = await api.exportDatabase(dbName.value)
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `${dbName}.db`
+    a.download = `${dbName.value}.db`
     a.click()
     URL.revokeObjectURL(url)
   } catch {}
@@ -684,7 +760,7 @@ async function exportDatabase() {
 
 async function loadKeys() {
   try {
-    const res = await api.listKeys(dbName)
+    const res = await api.listKeys(dbName.value)
     apiKeys.value = res.data.map((k: ApiKeyInfo) => ({
       id: k.id,
       name: k.label,
@@ -708,7 +784,53 @@ function formatTimeAgo(dateStr: string) {
 }
 
 function handleDelete(rows: number[]) {
+  deletingRows.value = rows
   showDeleteModal.value = true
+}
+
+async function confirmDeleteRecords() {
+  try {
+    for (const row of deletingRows.value) {
+      await api.deleteRecord(dbName.value, selectedTable.value, row)
+    }
+    showDeleteModal.value = false
+    deletingRows.value = []
+    await loadRecords()
+  } catch {}
+}
+
+async function handleUpdateRows(rows: Record<string, unknown>[]) {
+  const oldRows = dataRows.value
+  dataRows.value = rows
+  for (let i = 0; i < rows.length; i++) {
+    if (i >= oldRows.length) break
+    const newRow = rows[i]
+    const oldRow = oldRows[i]
+    const rowId = oldRow.rowid ?? oldRow.id
+    if (rowId == null) continue
+    const changes: Record<string, unknown> = {}
+    for (const key of Object.keys(newRow)) {
+      if (newRow[key] !== oldRow[key] && key !== "rowid" && key !== "id") changes[key] = newRow[key]
+    }
+    if (Object.keys(changes).length > 0) {
+      try {
+        await api.updateRecord(dbName.value, selectedTable.value, rowId as number, changes)
+      } catch {}
+    }
+  }
+}
+
+async function saveRecord() {
+  const record: Record<string, unknown> = {}
+  for (const field of addFields.value) {
+    if (field.value) record[field.key] = field.value
+  }
+  try {
+    await api.createRecord(dbName.value, selectedTable.value, record)
+    showAddDrawer.value = false
+    addFields.value.forEach(f => f.value = "")
+    await loadRecords()
+  } catch {}
 }
 
 function openSchemaEditor(name: string) {
@@ -724,7 +846,7 @@ function confirmDeleteKey(k: { id: string; name: string }) {
 async function generateKey() {
   if (!newKeyLabel.value.trim()) return
   try {
-    const res = await api.createKey(dbName, newKeyLabel.value.trim())
+    const res = await api.createKey(dbName.value, newKeyLabel.value.trim())
     newKeyValue.value = res.data.key
     showGenerateKeyModal.value = false
     showNewKeyModal.value = true
@@ -735,7 +857,7 @@ async function generateKey() {
 async function revokeKey() {
   if (!deletingKey.value) return
   try {
-    await api.revokeKey(dbName, deletingKey.value.id)
+    await api.revokeKey(dbName.value, deletingKey.value.id)
     showDeleteKeyModal.value = false
     deletingKey.value = null
     await loadKeys()
@@ -743,7 +865,7 @@ async function revokeKey() {
 }
 
 function copyUrl() {
-  navigator.clipboard.writeText(`${window.location.origin}/api/databases/${dbName}`)
+  navigator.clipboard.writeText(`${window.location.origin}/api/databases/${dbName.value}`)
   urlCopied.value = true
   setTimeout(() => urlCopied.value = false, 2000)
 }
@@ -756,7 +878,7 @@ function copyKey() {
 
 async function deleteDatabase() {
   try {
-    await api.deleteDatabase(dbName)
+    await api.deleteDatabase(dbName.value)
     router.push("/databases")
   } catch {}
 }

@@ -26,7 +26,7 @@ const router = createRouter({
       component: () => import("./views/Databases.vue"),
     },
     {
-      path: "/databases/:name/:tab?",
+      path: "/databases/:name/:tab?/:table?",
       name: "database-detail",
       component: () => import("./views/DatabaseDetail.vue"),
     },

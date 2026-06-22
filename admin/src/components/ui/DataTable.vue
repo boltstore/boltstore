@@ -8,7 +8,7 @@
       >
         <span class="text-xs text-text-muted">{{ selectedRows.size }} selected</span>
         <button
-          class="btn-ghost btn-sm flex items-center gap-1 text-red-400 hover:text-red-300 border-red-500/30 hover:bg-red-500/10"
+          class="btn-danger btn-sm flex items-center gap-1"
           @click="$emit('deleteSelected', Array.from(selectedRows))"
         >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
@@ -107,7 +107,7 @@
           <button class="btn-ghost btn-sm text-xs px-2 py-1" @click="addFilter">+ Add filter</button>
           <button class="btn-ghost btn-sm text-xs px-2 py-1" @click="clearFilters">Clear filters</button>
         </div>
-        <button class="btn-primary btn-sm text-xs px-2 py-1">Apply</button>
+        <button class="btn-primary btn-sm text-xs px-2 py-1" @click="applyFilters">Apply</button>
       </div>
       <div class="w-full h-px my-1" style="background-color: #333333;"></div>
       <div
@@ -205,21 +205,21 @@
       </div>
       <div class="flex items-center justify-between px-4 py-2 border-t border-border-default bg-bolt-elevated/50">
       <div class="flex items-center gap-2 text-xs text-text-muted">
-        1 – {{ sortedRows.length }} of {{ sortedRows.length }}
+         {{ visibleTotal > 0 ? offset + 1 : 0 }} – {{ Math.min(offset + limit, visibleTotal) }} of {{ visibleTotal }}
         <button class="btn-ghost btn-sm p-1 flex items-center" @click="$emit('refresh')">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         </button>
       </div>
         <div class="flex items-center gap-1">
           <slot name="table-footer-right" />
-          <button class="btn-ghost btn-sm opacity-50 cursor-not-allowed">
+          <button class="btn-ghost btn-sm" :class="{ 'opacity-50 cursor-not-allowed': offset <= 0 }" :disabled="offset <= 0" @click="$emit('page-change', Math.max(0, offset - limit))">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
           </button>
-          <button class="btn-ghost btn-sm opacity-50 cursor-not-allowed">
+          <button class="btn-ghost btn-sm" :class="{ 'opacity-50 cursor-not-allowed': offset + limit >= total }" :disabled="offset + limit >= total" @click="$emit('page-change', offset + limit)">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           </button>
-        </div>
       </div>
+    </div>
     </div>
   </div>
 </template>
@@ -238,14 +238,24 @@ const props = withDefaults(
   defineProps<{
     columns: ColumnDef[]
     rows: Record<string, unknown>[]
+    total?: number
+    offset?: number
+    limit?: number
   }>(),
-  {}
+  {
+    total: 0,
+    offset: 0,
+    limit: 50,
+  }
 )
 
 const emit = defineEmits<{
   "deleteSelected": [rowIndices: number[]]
   "update:rows": [rows: Record<string, unknown>[]]
   "refresh": []
+  "page-change": [offset: number]
+  "sort-change": [column: string | null, asc: boolean]
+  "filter-change": [filters: { column: string; operator: string; value: string }[]]
 }>()
 
 const showFilterBar = ref(false)
@@ -324,12 +334,20 @@ interface Filter {
 }
 
 const filters = ref<Filter[]>([])
+const activeFilters = ref<Filter[]>([])
 
-const columns = ref(
-  props.columns.map((c) => ({ ...c, visible: c.visible ?? true }))
+const columns = ref<ColumnDef[]>([])
+
+watch(
+  () => props.columns,
+  (cols) => {
+    columns.value = cols.map((c) => ({ ...c, visible: c.visible ?? true }))
+  },
+  { immediate: true }
 )
 
 const visibleColumns = computed(() => columns.value.filter((c) => c.visible))
+const visibleTotal = computed(() => props.total || sortedRows.value.length)
 
 const allSelected = computed(() => {
   return props.rows.length > 0 && selectedRows.value.size === props.rows.length
@@ -360,29 +378,45 @@ function setSort(i: number) {
     sortAsc.value = !sortAsc.value
   } else {
     sortColIndex.value = i
-    sortAsc.value = true
+    sortAsc.value = false
   }
   showSortPanel.value = false
+  const col = visibleColumns.value[i]
+  emit("sort-change", col?.key ?? null, sortAsc.value)
 }
 
 function clearSort() {
   sortColIndex.value = -1
   sortAsc.value = true
+  emit("sort-change", null, true)
 }
 
 const sortedRows = computed(() => {
-  if (sortColIndex.value < 0) return props.rows
-  const col = visibleColumns.value[sortColIndex.value]
-  if (!col) return props.rows
-  return [...props.rows].sort((a, b) => {
-    const va = a[col.key]
-    const vb = b[col.key]
-    if (va == null) return 1
-    if (vb == null) return -1
-    const cmp = String(va).localeCompare(String(vb))
-    return sortAsc.value ? cmp : -cmp
-  })
+  let rows = [...props.rows]
+
+  // Apply filters (client-side only, for preview before Apply)
+  for (const f of activeFilters.value) {
+    if (!f.value) continue
+    const val = f.value.toLowerCase()
+    rows = rows.filter(r => {
+      const cell = String(r[f.column] ?? "").toLowerCase()
+      switch (f.operator) {
+        case "contains": return cell.includes(val)
+        case "equals": return cell === val
+        case "starts with": return cell.startsWith(val)
+        case "ends with": return cell.endsWith(val)
+        default: return cell.includes(val)
+      }
+    })
+  }
+
+  return rows
 })
+
+function applyFilters() {
+  activeFilters.value = filters.value.map(f => ({ ...f }))
+  emit("filter-change", filters.value)
+}
 
 function addFilter() {
   filters.value.push({ column: columns.value[0]?.key ?? "", operator: "contains", value: "" })
@@ -390,6 +424,8 @@ function addFilter() {
 
 function clearFilters() {
   filters.value = []
+  activeFilters.value = []
+  emit("filter-change", [])
 }
 
 function startEdit(row: number, col: string) {
