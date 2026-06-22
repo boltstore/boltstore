@@ -52,21 +52,32 @@
       </router-link>
     </div>
     <div class="p-3 border-t border-border-default shrink-0">
-      <router-link
-        to="/login"
-        class="flex items-center justify-center gap-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-md px-3 py-2 transition-colors"
+      <button
+        class="flex items-center justify-center gap-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-md px-3 py-2 transition-colors w-full"
         style="text-decoration: none"
+        @click="handleLogout"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
         Log out
-      </router-link>
+      </button>
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
+import { useRouter } from "vue-router"
 import { useSidebar } from "../../composables/useSidebar"
+import { api, clearSession } from "../../api/client"
 
+const router = useRouter()
 const emit = defineEmits<{ createDatabase: [] }>()
 const { isOpen, close } = useSidebar()
+
+async function handleLogout() {
+  try {
+    await api.logout()
+  } catch {}
+  clearSession()
+  router.push("/login")
+}
 </script>

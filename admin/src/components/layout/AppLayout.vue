@@ -58,7 +58,9 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from "vue"
+import { useRouter } from "vue-router"
 import { useSidebar } from "../../composables/useSidebar"
+import { hasSession } from "../../api/client"
 import Sidebar from "./Sidebar.vue"
 import MobileOverlay from "./MobileOverlay.vue"
 import GithubBadge from "../ui/GithubBadge.vue"
@@ -75,6 +77,7 @@ withDefaults(
 )
 
 const { toggle: toggleSidebar } = useSidebar()
+const router = useRouter()
 const showCreateModal = ref(false)
 const newDbName = ref("")
 
@@ -93,6 +96,9 @@ function onKeyDown(e: KeyboardEvent) {
   if (e.key === "Escape" && showCreateModal.value) showCreateModal.value = false
 }
 
-onMounted(() => window.addEventListener("keydown", onKeyDown, { capture: true }))
+onMounted(() => {
+  if (!hasSession()) router.push("/login")
+  window.addEventListener("keydown", onKeyDown, { capture: true })
+})
 onUnmounted(() => window.removeEventListener("keydown", onKeyDown, { capture: true }))
 </script>

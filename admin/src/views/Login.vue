@@ -16,19 +16,22 @@
           </svg>
           <span class="font-bold text-xl tracking-tight">Boltstore</span>
         </div>
-        <h1 class="text-xl font-semibold mb-2">Welcome back</h1>
-        <p class="text-sm text-text-secondary">Sign in to your dashboard</p>
+        <h1 class="text-xl font-semibold mb-2">{{ isSetup ? 'Create Admin Account' : 'Welcome back' }}</h1>
+        <p class="text-sm text-text-secondary">{{ isSetup ? 'Set up your admin credentials to get started' : 'Sign in to your dashboard' }}</p>
       </div>
-      <form class="space-y-4" @submit.prevent="router.push('/overview')">
+      <form class="space-y-4" @submit.prevent="handleSubmit">
         <div>
           <label class="block text-xs font-medium text-text-secondary mb-1.5">Email</label>
-          <input type="email" class="input-field" placeholder="you@example.com" required>
+          <input type="email" class="input-field" placeholder="you@example.com" v-model="email" required>
         </div>
         <div>
           <label class="block text-xs font-medium text-text-secondary mb-1.5">Password</label>
-          <input type="password" class="input-field" placeholder="Enter your password" required>
+          <input type="password" class="input-field" placeholder="Enter your password" v-model="password" required>
         </div>
-        <button type="submit" class="btn-primary w-full py-2.5">Sign In</button>
+        <p v-if="error" class="text-xs text-red-400">{{ error }}</p>
+        <button type="submit" class="btn-primary w-full py-2.5" :disabled="loading">
+          {{ loading ? 'Please wait...' : (isSetup ? 'Create Account' : 'Sign In') }}
+        </button>
       </form>
     </div>
     <GithubBadge />
@@ -36,8 +39,46 @@
 </template>
 
 <script setup lang="ts">
+import { ref, onMounted } from "vue"
 import { useRouter } from "vue-router"
+import { api, saveSession, hasSession } from "../api/client"
 import GithubBadge from "../components/ui/GithubBadge.vue"
 
 const router = useRouter()
+const email = ref("")
+const password = ref("")
+const error = ref("")
+const loading = ref(false)
+const isSetup = ref(false)
+
+onMounted(async () => {
+  if (hasSession()) {
+    router.push("/overview")
+    return
+  }
+  try {
+    const res = await api.getStatus()
+    isSetup.value = !res.data.hasAdmins
+  } catch {
+    isSetup.value = false
+  }
+})
+
+async function handleSubmit() {
+  error.value = ""
+  loading.value = true
+
+  try {
+    if (isSetup.value) {
+      await api.setup(email.value, password.value)
+    }
+    const res = await api.login(email.value, password.value)
+    saveSession(res.data.token)
+    router.push("/overview")
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? e.message : "An error occurred"
+  } finally {
+    loading.value = false
+  }
+}
 </script>
