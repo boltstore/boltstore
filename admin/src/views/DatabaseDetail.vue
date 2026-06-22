@@ -204,11 +204,12 @@
           </div>
           <div>
             <label class="label">Group</label>
-            <select class="input-field appearance-none" style="font-family:Inter" v-model="dbConfig.group" @change="saveGroup">
+            <select class="input-field appearance-none" style="font-family:Inter" :value="dbConfig.group || ''" @change="saveGroup(($event.target as HTMLSelectElement).value)">
               <option value="">default</option>
               <option value="production">production</option>
               <option value="staging">staging</option>
             </select>
+            <p v-if="groupSaved" class="text-[10px] text-green-400 mt-1">Group updated</p>
           </div>
           <div class="flex items-start gap-2">
             <input type="checkbox" id="readonly" class="mt-0.5 w-3.5 h-3.5 rounded border-border-default bg-bolt-input accent-accent-600" v-model="dbConfig.readonly" @change="saveReadonly">
@@ -492,6 +493,7 @@ const newKeyLabel = ref("")
 const newKeyValue = ref("")
 const dbConfig = ref<Record<string, unknown>>({})
 const apiKeys = ref<{ id: string; name: string; key: string; lastUsed: string }[]>([])
+const groupSaved = ref(false)
 
 function onKeyDown(e: KeyboardEvent) {
   if (e.key !== "Escape") return
@@ -653,9 +655,12 @@ async function loadConfig() {
   } catch {}
 }
 
-async function saveGroup() {
+async function saveGroup(group: string) {
+  dbConfig.value.group = group || undefined
   try {
-    await api.updateConfig(dbName, { group: dbConfig.value.group || null })
+    await api.updateConfig(dbName, { group: group || null })
+    groupSaved.value = true
+    setTimeout(() => groupSaved.value = false, 2000)
   } catch {}
 }
 
