@@ -238,12 +238,13 @@ export const api = {
   },
 
   // Import
-  importDatabase: async (file: File, name?: string) => {
+  importDatabase: async (file: File, name?: string, group?: string) => {
     const baseUrl = getBaseUrl()
     const token = getToken()
     const form = new FormData()
     form.append("file", file)
     if (name) form.append("name", name)
+    if (group) form.append("group", group)
     const res = await fetch(`${baseUrl}/api/databases/import`, {
       method: "POST",
       headers: token ? { Authorization: `Bearer ${token}` } : {},

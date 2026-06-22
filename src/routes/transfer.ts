@@ -40,6 +40,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
     const form = await req.formData();
     const fileField = form.get("file");
     const nameField = form.get("name");
+    const groupField = form.get("group");
 
     if (!fileField || !(fileField instanceof File)) {
       return errorResponse("VALIDATION", "File is required.", 400);
@@ -77,7 +78,8 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
 
     // Register so manager.get() can find it, then validate integrity
     try {
-      const pool = manager.registerDatabase(dbName, destPath);
+      const group = typeof groupField === "string" && groupField.length > 0 ? groupField : undefined;
+      const pool = manager.registerDatabase(dbName, destPath, group);
       pool.read().query("PRAGMA integrity_check").get();
     } catch {
       // Clean up on failure

@@ -3,7 +3,7 @@
     <div class="flex items-center justify-between mb-4">
       <div class="text-xs text-text-muted">{{ databases.length }} database{{ databases.length !== 1 ? 's' : '' }}</div>
       <div class="flex items-center gap-2">
-        <button class="btn-secondary btn-sm flex items-center gap-1" @click="triggerImport">
+        <button class="btn-secondary btn-sm flex items-center gap-1" @click="showImport = true">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
           Import
         </button>
@@ -11,7 +11,6 @@
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Create
         </button>
-        <input type="file" ref="fileInput" accept=".db,.sqlite,.sqlite3" class="hidden" @change="handleImport">
       </div>
     </div>
 
@@ -26,11 +25,12 @@
               <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Storage</th>
               <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Group</th>
               <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Status</th>
+              <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Created</th>
               <th class="text-right px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated"></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="db in databases" :key="db.name" class="hover:bg-bolt-hover transition-colors">
+            <tr v-for="db in sortedDatabases" :key="db.name" class="hover:bg-bolt-hover transition-colors">
               <td class="px-5 py-3">
                 <div class="flex items-center gap-2">
                   <div class="w-2 h-2 rounded-full bg-accent-400"></div>
@@ -49,6 +49,7 @@
               <td class="px-5 py-3 text-center">
                 <Badge variant="green">Active</Badge>
               </td>
+              <td class="px-5 py-3 text-text-secondary text-center text-xs">{{ formatDate(db.createdAt) }}</td>
               <td class="px-5 py-3 text-right">
                 <router-link :to="'/databases/' + db.name" class="btn-secondary btn-sm flex items-center gap-1 inline-flex">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
@@ -57,7 +58,7 @@
               </td>
             </tr>
             <tr v-if="databases.length === 0">
-              <td colspan="7" class="px-5 py-8 text-center text-sm text-text-muted">No databases yet. Create one to get started.</td>
+              <td colspan="8" class="px-5 py-8 text-center text-sm text-text-muted">No databases yet. Create one to get started.</td>
             </tr>
           </tbody>
         </table>
@@ -102,6 +103,46 @@
 
     <div
       class="fixed inset-0 z-50"
+      :class="showImport ? 'flex items-center justify-center' : 'hidden'"
+      style="background: rgba(0,0,0,0.6);"
+      @click="showImport = false"
+    >
+      <div class="bg-bolt-card border border-border-default rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl" @click.stop>
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-full bg-accent-600/10 flex items-center justify-center shrink-0">
+            <svg class="w-5 h-5 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
+          </div>
+          <div>
+            <h3 class="text-sm font-medium text-text-primary">Import Database</h3>
+            <p class="text-xs text-text-muted mt-0.5">Upload a .db or .sqlite file.</p>
+          </div>
+        </div>
+        <div class="mb-4">
+          <label class="block text-xs font-medium text-text-secondary mb-1.5">File</label>
+          <input type="file" ref="fileInput" accept=".db,.sqlite,.sqlite3" class="input-field text-xs py-2" @change="onFilePicked">
+        </div>
+        <div class="mb-4">
+          <label class="block text-xs font-medium text-text-secondary mb-1.5">Database Name (optional)</label>
+          <input type="text" class="input-field" placeholder="Defaults to filename" v-model="importName">
+        </div>
+        <div class="mb-4">
+          <label class="block text-xs font-medium text-text-secondary mb-1.5">Group</label>
+          <select class="input-field" v-model="importGroup">
+            <option value="">default</option>
+            <option value="production">production</option>
+            <option value="staging">staging</option>
+          </select>
+        </div>
+        <p v-if="importError" class="text-xs text-red-400 mb-3">{{ importError }}</p>
+        <div class="flex items-center justify-end gap-2">
+          <button class="btn-ghost btn-sm" @click="showImport = false">Cancel</button>
+          <button class="btn-primary btn-sm" :disabled="importing || !importFile" @click="handleImport">{{ importing ? 'Importing...' : 'Import' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="fixed inset-0 z-50"
       :class="showDelete ? 'flex items-center justify-center' : 'hidden'"
       style="background: rgba(0,0,0,0.6);"
       @click="showDelete = false"
@@ -129,20 +170,34 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue"
+import { ref, computed, onMounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import Badge from "../components/ui/Badge.vue"
 import { api, type DatabaseInfo } from "../api/client"
 
 const databases = ref<DatabaseInfo[]>([])
+
+const sortedDatabases = computed(() => {
+  return [...databases.value].sort((a, b) => {
+    const da = new Date(a.createdAt.endsWith("Z") ? a.createdAt : a.createdAt + "Z").getTime()
+    const db = new Date(b.createdAt.endsWith("Z") ? b.createdAt : b.createdAt + "Z").getTime()
+    return db - da
+  })
+})
 const showCreate = ref(false)
 const showDelete = ref(false)
+const showImport = ref(false)
 const newDbName = ref("")
 const newDbGroup = ref("")
 const deletingName = ref("")
 const createError = ref("")
 const creating = ref(false)
 const deleting = ref(false)
+const importing = ref(false)
+const importFile = ref<File | null>(null)
+const importName = ref("")
+const importGroup = ref("")
+const importError = ref("")
 const fileInput = ref<HTMLInputElement | null>(null)
 
 onMounted(() => load())
@@ -211,18 +266,25 @@ async function exportDatabase(name: string) {
   } catch {}
 }
 
-function triggerImport() {
-  fileInput.value?.click()
+function onFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  importFile.value = input.files?.[0] || null
 }
 
-async function handleImport(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
+async function handleImport() {
+  if (!importFile.value) return
+  importError.value = ""
+  importing.value = true
   try {
-    await api.importDatabase(file)
-    input.value = ""
+    await api.importDatabase(importFile.value, importName.value || undefined, importGroup.value || undefined)
+    showImport.value = false
+    importFile.value = null
+    importName.value = ""
     await load()
-  } catch {}
+  } catch (e: unknown) {
+    importError.value = e instanceof Error ? e.message : "Import failed"
+  } finally {
+    importing.value = false
+  }
 }
 </script>
