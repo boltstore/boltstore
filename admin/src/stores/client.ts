@@ -6,7 +6,7 @@ interface ConnectionState {
   baseUrl: string;
   token: string;
   connected: boolean;
-  adminName: string;
+  adminEmail: string;
   sessionLoading: boolean;
 }
 
@@ -22,7 +22,7 @@ const state = reactive<ConnectionState>({
   baseUrl: window.location.origin,
   token: "",
   connected: false,
-  adminName: "",
+  adminEmail: "",
   sessionLoading: !!loadSavedState().token,
   ...loadSavedState(),
 });
@@ -32,8 +32,8 @@ export function useConnection() {
     state.token = token;
     state.baseUrl = window.location.origin;
     try {
-      const data = await apiRequest<{ id: string; username: string }>("GET", "/api/admin/me");
-      state.adminName = data.username;
+      const data = await apiRequest<{ id: string; email: string }>("GET", "/api/admin/me");
+      state.adminEmail = data.email;
       state.connected = true;
       state.sessionLoading = false;
       localStorage.setItem(LS_TOKEN, token);
@@ -49,7 +49,7 @@ export function useConnection() {
     apiRequest("POST", "/api/admin/logout").catch(() => {});
     state.token = "";
     state.connected = false;
-    state.adminName = "";
+    state.adminEmail = "";
     state.sessionLoading = false;
     localStorage.removeItem(LS_TOKEN);
   }
@@ -73,7 +73,7 @@ export function useConnection() {
   }
 
   // Auto-restore session on mount
-  if (state.token && !state.adminName) {
+  if (state.token && !state.adminEmail) {
     connect(state.token)
       .catch(() => { state.sessionLoading = false; });
   }

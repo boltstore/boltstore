@@ -14,11 +14,11 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
 
   // Create first admin (no auth required if no admins exist, or bootstrap key provided)
   router.post("/api/admin/setup", async (req) => {
-    const body = await req.json() as { username?: string; password?: string };
-    if (!body.username || !body.password) {
-      return errorResponse("VALIDATION", "Username and password are required.", 400);
+    const body = await req.json() as { email?: string; password?: string };
+    if (!body.email || !body.password) {
+      return errorResponse("VALIDATION", "Email and password are required.", 400);
     }
-    if (body.username.length < 3) return errorResponse("VALIDATION", "Username must be at least 3 characters.", 400);
+    if (body.email.length < 3) return errorResponse("VALIDATION", "Email must be at least 3 characters.", 400);
     if (body.password.length < 8) return errorResponse("VALIDATION", "Password must be at least 8 characters.", 400);
 
     const existing = metaPool.read().query("SELECT COUNT(*) as c FROM _admins").get() as any;
@@ -30,37 +30,37 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
       }
     }
 
-    // Check duplicate username
-    const dup = metaPool.read().query("SELECT 1 FROM _admins WHERE username = ?").get(body.username);
-    if (dup) return errorResponse("CONFLICT", "Username already exists.", 409);
+    // Check duplicate email
+    const dup = metaPool.read().query("SELECT 1 FROM _admins WHERE email = ?").get(body.email);
+    if (dup) return errorResponse("CONFLICT", "Email already exists.", 409);
 
     const id = generateId("adm_");
     const passwordHash = await Bun.password.hash(body.password, { algorithm: "bcrypt", cost: 10 });
-    metaPool.write().run("INSERT INTO _admins (id, username, password_hash) VALUES (?, ?, ?)", [id, body.username, passwordHash]);
+    metaPool.write().run("INSERT INTO _admins (id, email, password_hash) VALUES (?, ?, ?)", [id, body.email, passwordHash]);
 
     logActivity(manager, { action: "admin.create" });
-    return jsonResponse({ data: { id, username: body.username } }, 201);
+    return jsonResponse({ data: { id, email: body.email } }, 201);
   });
 
   // Login
   router.post("/api/admin/login", async (req) => {
-    const body = await req.json() as { username?: string; password?: string };
-    if (!body.username || !body.password) {
-      return errorResponse("VALIDATION", "Username and password are required.", 400);
+    const body = await req.json() as { email?: string; password?: string };
+    if (!body.email || !body.password) {
+      return errorResponse("VALIDATION", "Email and password are required.", 400);
     }
 
-    const row = metaPool.read().query("SELECT id, username, password_hash FROM _admins WHERE username = ?").get(body.username) as any;
-    if (!row) return errorResponse("UNAUTHORIZED", "Invalid username or password.", 401);
+    const row = metaPool.read().query("SELECT id, email, password_hash FROM _admins WHERE email = ?").get(body.email) as any;
+    if (!row) return errorResponse("UNAUTHORIZED", "Invalid email or password.", 401);
 
     const valid = await Bun.password.verify(body.password, row.password_hash);
-    if (!valid) return errorResponse("UNAUTHORIZED", "Invalid username or password.", 401);
+    if (!valid) return errorResponse("UNAUTHORIZED", "Invalid email or password.", 401);
 
     const token = generateId("sess_") + generateId("");
     const sessId = generateId("ssn_");
     metaPool.write().run("INSERT INTO _sessions (id, admin_id, token) VALUES (?, ?, ?)", [sessId, row.id, token]);
 
-    logActivity(manager, { action: "admin.login", details: { admin: row.username } });
-    return jsonResponse({ data: { token, admin: { id: row.id, username: row.username } } });
+    logActivity(manager, { action: "admin.login", details: { admin: row.email } });
+    return jsonResponse({ data: { token, admin: { id: row.id, email: row.email } } });
   });
 
   // Get current admin from session token
@@ -69,13 +69,13 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
     if (!token) return errorResponse("UNAUTHORIZED", "Not authenticated.", 401);
 
     const row = metaPool.read().query(`
-      SELECT a.id, a.username FROM _admins a
+      SELECT a.id, a.email FROM _admins a
       JOIN _sessions s ON s.admin_id = a.id
       WHERE s.token = ?
     `).get(token) as any;
 
     if (!row) return errorResponse("UNAUTHORIZED", "Invalid session.", 401);
-    return jsonResponse({ data: { id: row.id, username: row.username } });
+    return jsonResponse({ data: { id: row.id, email: row.email } });
   });
 
   // Logout (delete session)
