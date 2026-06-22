@@ -1,65 +1,92 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
-import { useConnection } from "../stores/client";
+import AppLayout from "../components/layout/AppLayout.vue";
+import GithubBadge from "../components/ui/GithubBadge.vue";
+import { useSidebar } from "../composables/useSidebar";
 
-const { apiRequest } = useConnection();
-const logs = ref<any[]>([]);
-const loading = ref(true);
-const page = ref(1);
-const perPage = ref(20);
-const total = ref(0);
+const { toggleSidebar } = useSidebar();
 
-const totalPages = computed(() => Math.ceil(total.value / perPage.value));
-
-onMounted(fetchLogs);
-
-async function fetchLogs() {
-  loading.value = true;
-  try {
-    const res = await apiRequest<any>("GET", `/api/activity?limit=${perPage.value}&offset=${(page.value - 1) * perPage.value}`);
-    logs.value = res?.data ?? res ?? [];
-    total.value = res?.meta?.total ?? 0;
-  } catch (e) {
-    console.error(e);
-  } finally {
-    loading.value = false;
-  }
-}
-
-function actionLabel(action: string) {
-  return action.replace(/\./g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
-}
+const activityLogs = [
+  { timestamp: "2024-01-15 14:32:01", action: "Database Created", database: "callcenterninja", details: "Created by admin" },
+  { timestamp: "2024-01-15 14:28:45", action: "Query Executed", database: "app-production", details: "SELECT * FROM users" },
+  { timestamp: "2024-01-15 14:15:22", action: "Database Deleted", database: "test-db", details: "Deleted by admin" },
+  { timestamp: "2024-01-15 13:58:10", action: "Query Executed", database: "callcenterninja", details: "UPDATE crawler_sources SET status = 'active'" },
+  { timestamp: "2024-01-15 13:45:33", action: "Database Created", database: "analytics-staging", details: "Created by admin" },
+  { timestamp: "2024-01-15 13:22:18", action: "Query Executed", database: "app-production", details: "INSERT INTO jobs (title, url) VALUES (...)" },
+  { timestamp: "2024-01-15 12:56:44", action: "Settings Updated", database: "-", details: "Timezone changed to UTC" },
+  { timestamp: "2024-01-15 12:34:09", action: "Query Executed", database: "callcenterninja", details: "DELETE FROM jobs WHERE status = 'expired'" },
+  { timestamp: "2024-01-15 12:11:27", action: "Database Created", database: "app-production", details: "Created by admin" },
+  { timestamp: "2024-01-15 11:48:55", action: "Query Executed", database: "analytics-staging", details: "SELECT COUNT(*) FROM events" },
+];
 </script>
 
 <template>
-  <div>
-    <div class="flex items-center justify-between mb-8">
-      <h1 class="text-2xl font-semibold text-gray-100">Activity Log</h1>
-      <span class="text-xs text-gray-600">{{ total }} entries</span>
-    </div>
+  <AppLayout>
+    <header class="h-14 border-b border-border-default flex items-center justify-between px-4 sm:px-6 bg-bolt-base/80 backdrop-blur-sm sticky top-0 z-30">
+      <div class="flex items-center gap-2 text-sm">
+        <button class="md:hidden p-1 text-text-muted hover:text-text-primary transition-colors" @click="toggleSidebar">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+        </button>
+        <span class="text-text-primary">Activity Log</span>
+      </div>
+      <div class="flex items-center gap-3"></div>
+    </header>
 
-    <div v-if="loading" class="text-center py-20 text-gray-500 text-sm">Loading...</div>
+    <div class="p-4 sm:p-6 max-w-6xl mx-auto">
+      <!-- Filters -->
+      <div class="flex items-center gap-3 mb-4">
+        <select class="input-field appearance-none text-xs py-2 px-3 w-auto">
+          <option>All Actions</option>
+          <option>Database Created</option>
+          <option>Database Deleted</option>
+          <option>Query Executed</option>
+          <option>Settings Updated</option>
+        </select>
+        <input type="text" class="input-field text-xs py-2 px-3" placeholder="Filter by database..." />
+      </div>
 
-    <div v-else-if="logs.length === 0" class="text-center py-20 text-gray-600 text-sm">No activity recorded yet.</div>
-
-    <div v-else class="space-y-2">
-      <div v-for="log in logs" :key="log.id" class="flex items-center gap-4 px-4 py-3 rounded-lg bg-gray-900 border border-gray-800">
-        <div class="w-2 h-2 rounded-full bg-accent-500 flex-shrink-0"></div>
-        <div class="flex-1 min-w-0">
-          <p class="text-sm text-gray-200">{{ actionLabel(log.action) }}</p>
-          <div class="flex gap-3 mt-0.5">
-            <span v-if="log.database_name" class="text-xs text-gray-600">{{ log.database_name }}</span>
-            <span v-if="log.ip" class="text-xs text-gray-700 font-mono">{{ log.ip }}</span>
-          </div>
+      <!-- Activity Table -->
+      <div class="bg-bolt-card border border-border-default rounded-lg overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border-default">
+                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Timestamp</th>
+                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Action</th>
+                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Database</th>
+                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="log in activityLogs"
+                :key="log.timestamp"
+                class="border-b border-border-subtle hover:bg-bolt-hover transition-colors"
+              >
+                <td class="px-5 py-3 text-text-secondary font-mono text-xs">{{ log.timestamp }}</td>
+                <td class="px-5 py-3">
+                  <span
+                    class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full border"
+                    :class="{
+                      'bg-green-500/10 text-green-400 border-green-500/20': log.action === 'Database Created',
+                      'bg-red-500/10 text-red-400 border-red-500/20': log.action === 'Database Deleted',
+                      'bg-accent-600/10 text-accent-400 border-accent-600/20': log.action === 'Query Executed',
+                      'bg-yellow-500/10 text-yellow-400 border-yellow-500/20': log.action === 'Settings Updated',
+                    }"
+                  >
+                    {{ log.action }}
+                  </span>
+                </td>
+                <td class="px-5 py-3 text-text-secondary">{{ log.database }}</td>
+                <td class="px-5 py-3 text-text-muted text-xs">{{ log.details }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div class="text-xs text-gray-600 flex-shrink-0 text-right whitespace-nowrap">{{ log.created_at ? new Date(log.created_at).toLocaleString() : '' }}</div>
-      </div>
-
-      <div v-if="totalPages > 1" class="flex items-center justify-center gap-2 pt-2">
-        <button :disabled="page <= 1" @click="page--; fetchLogs()" class="px-3 py-1.5 rounded bg-gray-900 border border-gray-800 text-xs text-gray-400 hover:text-gray-200 disabled:opacity-40">Previous</button>
-        <span class="text-xs text-gray-600">Page {{ page }} of {{ totalPages }}</span>
-        <button :disabled="page >= totalPages" @click="page++; fetchLogs()" class="px-3 py-1.5 rounded bg-gray-900 border border-gray-800 text-xs text-gray-400 hover:text-gray-200 disabled:opacity-40">Next</button>
       </div>
     </div>
-  </div>
+
+    <GithubBadge />
+  </AppLayout>
 </template>

@@ -1,324 +1,427 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
-import { useRoute, useRouter } from "vue-router";
-import { useConnection } from "../stores/client";
-import SqlConsole from "./SqlConsole.vue";
-import DatabaseSettings from "./DatabaseSettings.vue";
+import { ref } from "vue";
+import { useRouter } from "vue-router";
+import AppLayout from "../components/layout/AppLayout.vue";
+import GithubBadge from "../components/ui/GithubBadge.vue";
+import Drawer from "../components/ui/Drawer.vue";
+import { useSidebar } from "../composables/useSidebar";
 
-const route = useRoute();
 const router = useRouter();
-const { apiRequest } = useConnection();
+const { toggleSidebar } = useSidebar();
 
-const dbName = computed(() => route.params.name as string);
+const activeTab = ref("data");
+const showAddRecordDrawer = ref(false);
+const selectedTable = ref("crawler_sources");
 
-const tables = ref<string[]>([]);
-const loading = ref(true);
-const showCreate = ref(false);
-const creating = ref(false);
-const deleting = ref<string | null>(null);
-const showDeleteConfirm = ref(false);
-const deleteTarget = ref("");
-const newTable = ref({ name: "", columns: [{ name: "", type: "text" as const }] });
+const tables = [
+  { name: "crawler_sources", count: 40, active: true },
+  { name: "jobs", count: 1248, active: false },
+  { name: "users", count: 89, active: false },
+];
 
-const selectedTable = ref("");
-const records = ref<any[]>([]);
-const columns = ref<any[]>([]);
-const recordsLoading = ref(false);
-const page = ref(1);
-const perPage = ref(20);
-const total = ref(0);
-const sortField = ref("");
-const sortDir = ref<"asc" | "desc">("asc");
-const deletingRecord = ref<number | null>(null);
-const view = ref<"tables" | "sql" | "settings">("tables");
+const columns = [
+  { key: "id", label: "id", type: "integer", sortable: true },
+  { key: "name", label: "name", type: "text", sortable: true },
+  { key: "url", label: "url", type: "text", sortable: true },
+  { key: "job_selector", label: "job_selector", type: "text", sortable: true },
+  { key: "title_selector", label: "title_selector", type: "text", sortable: true },
+  { key: "link_selector", label: "link_selector", type: "text", sortable: true },
+];
 
-const totalPages = computed(() => Math.ceil(total.value / perPage.value));
+const rows = [
+  { id: 1, name: "TDCX", url: "https://www.tdcx.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 2, name: "Concentrix", url: "https://jobs.concentrix.com", job_selector: "script#jobsData", title_selector: null, link_selector: null },
+  { id: 3, name: "Teleperformance", url: "https://www.tp.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 4, name: "Sutherland", url: "https://www.jobs.sutherland.com", job_selector: null, title_selector: null, link_selector: null },
+  { id: 5, name: "Foundever", url: "https://jobs.foundever.com", job_selector: "tr.data-row", title_selector: "a.jobTitle-link", link_selector: "a.jobTitle-link" },
+  { id: 6, name: "TaskUs", url: "https://jobs.taskus.com", job_selector: null, title_selector: null, link_selector: null },
+  { id: 7, name: "Accenture", url: "https://www.accenture.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 8, name: "Alorica", url: "https://jobs.alorica.com", job_selector: null, title_selector: null, link_selector: null },
+  { id: 9, name: "Webhelp", url: "https://jobs.webhelp.com", job_selector: null, title_selector: null, link_selector: null },
+  { id: 10, name: "Genpact", url: "https://www.genpact.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 11, name: "IBM Services", url: "https://www.ibm.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 12, name: "WNS Global", url: "https://www.wns.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 13, name: "Firstsource", url: "https://www.firstsource.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 14, name: "Hinduja Global", url: "https://www.hgs.cx/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 15, name: "Transcom", url: "https://www.transcom.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 16, name: "VXI Global", url: "https://www.vxiglobal.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 17, name: "24-7 Intouch", url: "https://www.24-7intouch.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 18, name: "Qualfon", url: "https://www.qualfon.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 19, name: "Startek", url: "https://www.startek.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 20, name: "Sitel Group", url: "https://www.sitel.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 21, name: "Arvato", url: "https://www.arvato.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 22, name: "EXL Service", url: "https://www.exlservice.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 23, name: "Infosys BPM", url: "https://www.infosys.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 24, name: "Wipro BPO", url: "https://careers.wipro.com", job_selector: null, title_selector: null, link_selector: null },
+  { id: 25, name: "Tech Mahindra", url: "https://www.techmahindra.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 26, name: "Cognizant", url: "https://www.cognizant.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 27, name: "Capita", url: "https://www.capita.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 28, name: "CGI Group", url: "https://www.cgi.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 29, name: "Atento", url: "https://www.atento.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 30, name: "Comdata", url: "https://www.comdata.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 31, name: "Minacs", url: "https://www.minacs.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 32, name: "Iberia Inf", url: "https://www.iberia.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 33, name: "Stream Global", url: "https://www.stream.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 34, name: "Amdocs", url: "https://www.amdocs.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 35, name: "Epam Systems", url: "https://www.epam.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 36, name: "Majorel", url: "https://www.majorel.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 37, name: "Salesforce", url: "https://www.salesforce.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 38, name: "SAP", url: "https://www.sap.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 39, name: "Oracle", url: "https://www.oracle.com/careers", job_selector: null, title_selector: null, link_selector: null },
+  { id: 40, name: "Microsoft", url: "https://www.microsoft.com/careers", job_selector: null, title_selector: null, link_selector: null },
+];
 
-onMounted(load);
+const tabs = [
+  { id: "data", label: "Data", icon: "M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" },
+  { id: "sql", label: "SQL Console", icon: "M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" },
+  { id: "schema", label: "Schema", icon: "M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" },
+  { id: "queries", label: "Top Queries", icon: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
+  { id: "settings", label: "Settings", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z" },
+];
 
-watch(() => dbName.value, () => { selectedTable.value = ""; view.value = "tables"; load(); });
+const topQueries = [
+  { query: "SELECT * FROM crawler_sources WHERE status = 'active'", count: 12453 },
+  { query: "INSERT INTO jobs (title, url, company) VALUES (?, ?, ?)", count: 8921 },
+  { query: "UPDATE crawler_sources SET last_crawled = ? WHERE id = ?", count: 6543 },
+  { query: "DELETE FROM jobs WHERE posted_at < ?", count: 2341 },
+  { query: "SELECT COUNT(*) FROM jobs WHERE status = 'open'", count: 1876 },
+];
 
-async function load() {
-  loading.value = true;
-  try {
-    const info = await apiRequest("GET", `/api/databases/${dbName.value}`);
-    tables.value = info?.tables ?? [];
-  } catch (e) {
-    console.error(e);
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function selectTable(name: string) {
-  selectedTable.value = name;
-  page.value = 1;
-  sortField.value = "";
-  sortDir.value = "asc";
-  view.value = "tables";
-  await loadRecords();
-}
-
-async function loadRecords() {
-  if (!selectedTable.value) return;
-  recordsLoading.value = true;
-  try {
-    const schema = await apiRequest("GET", `/api/databases/${dbName.value}/tables/${selectedTable.value}`);
-    columns.value = schema?.columns ?? [];
-    await fetchRecords();
-  } catch (e) {
-    console.error(e);
-  } finally {
-    recordsLoading.value = false;
-  }
-}
-
-async function fetchRecords() {
-  const params = new URLSearchParams();
-  params.set("limit", String(perPage.value));
-  params.set("offset", String((page.value - 1) * perPage.value));
-  if (sortField.value) params.set("sort", sortDir.value === "desc" ? `-${sortField.value}` : sortField.value);
-
-  const res = await globalThis.fetch(
-    `${(useConnection().state).baseUrl}/api/databases/${dbName.value}/tables/${selectedTable.value}/records?${params}`,
-    { headers: { "Authorization": `Bearer ${(useConnection().state).token}` } }
-  );
-  const json = await res.json();
-  records.value = json.data ?? [];
-  total.value = json.meta?.total ?? 0;
-}
-
-function changeLimit(newLimit: number) {
-  perPage.value = newLimit;
-  page.value = 1;
-  fetchRecords();
-}
-
-function sortBy(field: string) {
-  if (sortField.value === field) {
-    sortDir.value = sortDir.value === "asc" ? "desc" : "asc";
-  } else {
-    sortField.value = field;
-    sortDir.value = "asc";
-  }
-  page.value = 1;
-  fetchRecords();
-}
-
-async function deleteRecord(id: number) {
-  if (deletingRecord.value !== null) return;
-  if (!confirm("Delete this record?")) return;
-  deletingRecord.value = id;
-  try {
-    await apiRequest("DELETE", `/api/databases/${dbName.value}/tables/${selectedTable.value}/records/${id}`);
-    await fetchRecords();
-  } catch (e: any) {
-    alert(e.message);
-  } finally {
-    deletingRecord.value = null;
-  }
-}
-
-async function createTable() {
-  if (creating.value) return;
-  creating.value = true;
-  try {
-    await apiRequest("POST", `/api/databases/${dbName.value}/tables`, {
-      name: newTable.value.name,
-      columns: newTable.value.columns.filter((c: any) => c.name),
-    });
-    showCreate.value = false;
-    newTable.value = { name: "", columns: [{ name: "", type: "text" as const }] };
-    await load();
-  } catch (e: any) {
-    alert(e.message);
-  } finally {
-    creating.value = false;
-  }
-}
-
-function addColumn() {
-  newTable.value.columns.push({ name: "", type: "text" as const });
-}
-
-function confirmDeleteTable(name: string) {
-  if (deleting.value) return;
-  deleteTarget.value = name;
-  showDeleteConfirm.value = true;
-}
-
-async function executeDeleteTable() {
-  if (!deleteTarget.value || deleting.value) return;
-  deleting.value = deleteTarget.value;
-  showDeleteConfirm.value = false;
-  try {
-    await apiRequest("DELETE", `/api/databases/${dbName.value}/tables/${deleteTarget.value}`);
-    if (selectedTable.value === deleteTarget.value) selectedTable.value = "";
-    await load();
-  } catch (e: any) {
-    alert(e.message);
-  } finally {
-    deleting.value = null;
-    deleteTarget.value = "";
-  }
-}
+const schemaInfo = [
+  { table: "crawler_sources", columns: [
+    { name: "id", type: "integer" },
+    { name: "name", type: "text" },
+    { name: "url", type: "text" },
+    { name: "job_selector", type: "text" },
+    { name: "title_selector", type: "text" },
+    { name: "link_selector", type: "text" },
+    { name: "created_at", type: "datetime" },
+  ]},
+  { table: "jobs", columns: [
+    { name: "id", type: "integer" },
+    { name: "title", type: "text" },
+    { name: "url", type: "text" },
+    { name: "company", type: "text" },
+    { name: "status", type: "text" },
+    { name: "posted_at", type: "datetime" },
+  ]},
+  { table: "users", columns: [
+    { name: "id", type: "integer" },
+    { name: "email", type: "text" },
+    { name: "role", type: "text" },
+    { name: "created_at", type: "datetime" },
+  ]},
+];
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
-    <!-- Header -->
-    <div class="flex items-center gap-3 mb-4 flex-shrink-0">
-      <button @click="router.push('/databases')" class="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1">
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
-        Databases
-      </button>
-      <span class="text-gray-700">/</span>
-      <h1 class="text-lg font-semibold text-gray-100">{{ dbName }}</h1>
-    </div>
+  <AppLayout>
+    <header class="h-14 border-b border-border-default flex items-center justify-between px-4 sm:px-6 bg-bolt-base/80 backdrop-blur-sm sticky top-0 z-30">
+      <div class="flex items-center gap-2 text-sm">
+        <button class="md:hidden p-1 text-text-muted hover:text-text-primary transition-colors" @click="toggleSidebar">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+        </button>
+        <a href="/databases" class="text-text-muted hover:text-text-primary transition-colors">Databases</a>
+        <span class="text-text-muted">/</span>
+        <span class="text-text-primary">callcenterninja</span>
+        <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-green-500/10 text-green-400 border border-green-500/20">Active</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-text-muted hidden sm:inline">14.79 MB \u00b7 528M rows read \u00b7 9.8K rows written</span>
+      </div>
+    </header>
 
-    <div class="flex flex-1 gap-4 min-h-0">
-      <!-- Left panel: tables list -->
-      <div class="flex-none w-1/5 flex flex-col bg-gray-900 rounded-xl border border-gray-800 min-h-0">
-        <div class="flex items-center justify-between px-3 py-2.5 border-b border-gray-800 flex-shrink-0">
-          <span class="text-xs font-medium text-gray-500 uppercase tracking-wider">Tables</span>
-          <button @click="showCreate = true" class="text-xs text-accent-400 hover:text-accent-300" title="Create table">+ New</button>
+    <div class="p-4 sm:p-6 max-w-6xl mx-auto">
+      <!-- Tabs -->
+      <div class="border-b border-border-default mb-6 flex items-center justify-between">
+        <div>
+          <a
+            v-for="tab in tabs"
+            :key="tab.id"
+            href="#"
+            class="nav-tab"
+            :class="{ active: activeTab === tab.id }"
+            @click.prevent="activeTab = tab.id"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="tab.icon"/>
+            </svg>
+            {{ tab.label }}
+          </a>
         </div>
-        <div class="flex-1 overflow-y-auto p-2 space-y-0.5">
-          <div v-if="loading" class="text-center py-8 text-xs text-gray-600">Loading...</div>
-          <template v-else-if="tables.length === 0">
-            <div class="text-center py-8">
-              <p class="text-xs text-gray-600 mb-2">No tables yet</p>
-              <button @click="showCreate = true" class="text-xs text-accent-400 hover:text-accent-300">Create one</button>
+        <div class="flex items-center gap-2 text-[10px] text-text-muted pb-1">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/>
+          </svg>
+          SQLite 3.42.0 \u00b7 17ms
+        </div>
+      </div>
+
+      <!-- Data Panel -->
+      <div v-show="activeTab === 'data'" class="flex flex-col md:flex-row gap-4">
+        <!-- Table List -->
+        <div class="w-56 shrink-0">
+          <div class="flex items-center gap-2 mb-3">
+            <input type="text" class="input-field text-xs py-2" placeholder="Search tables..." style="font-family:Inter" />
+          </div>
+          <div class="space-y-0.5">
+            <div
+              v-for="table in tables"
+              :key="table.name"
+              class="flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors"
+              :class="table.name === selectedTable ? 'text-text-primary bg-bolt-hover' : 'text-text-secondary hover:bg-bolt-hover'"
+              @click="selectedTable = table.name"
+            >
+              <svg class="w-3.5 h-3.5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+              </svg>
+              {{ table.name }}
+              <span class="ml-auto text-[10px] text-text-muted">{{ table.count.toLocaleString() }}</span>
             </div>
-          </template>
-          <template v-else>
-            <div v-for="t in tables" :key="t" @click="selectTable(t)"
-              :class="[
-                'w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between group cursor-pointer',
-                selectedTable === t ? 'bg-accent-500/10 text-accent-300' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-              ]">
-              <span class="truncate min-w-0">{{ t }}</span>
-              <button @click.stop="confirmDeleteTable(t)" :disabled="deleting !== null"
-                class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 text-xs disabled:opacity-40 flex-shrink-0 ml-2">
-                {{ deleting === t ? "..." : "×" }}
+          </div>
+        </div>
+
+        <!-- Data Viewer -->
+        <div class="flex-1 min-w-0">
+          <!-- Toolbar -->
+          <div class="flex items-center gap-2 mb-3 flex-wrap">
+            <div class="flex-1"></div>
+            <div class="flex items-center gap-1">
+              <button class="btn-ghost btn-sm flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"/>
+                </svg>
+                Filters
+              </button>
+              <button class="btn-ghost btn-sm flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
+                </svg>
+                Sort
+              </button>
+              <button class="btn-ghost btn-sm flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                </svg>
+                Columns
+              </button>
+              <button class="btn-primary btn-sm flex items-center gap-1" @click="showAddRecordDrawer = true">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                Add Record
               </button>
             </div>
-          </template>
-        </div>
-        <div class="border-t border-gray-800 p-2 space-y-1 flex-shrink-0">
-          <button @click="view = 'sql'" :class="['nav-item w-full', view === 'sql' ? 'text-accent-400' : '']">SQL Console</button>
-          <hr class="border-gray-800">
-          <button @click="view = 'settings'" :class="['nav-item w-full', view === 'settings' ? 'text-accent-400' : '']">Settings</button>
-        </div>
-      </div>
-
-      <!-- Right panel -->
-      <div class="flex-1 flex flex-col min-h-0">
-        <!-- Table browser -->
-        <template v-if="view === 'tables'">
-          <div v-if="!selectedTable" class="flex-1 flex items-center justify-center">
-            <p class="text-sm text-gray-600">Select a table to browse its data</p>
           </div>
 
-          <template v-else>
-            <div class="flex items-center justify-between mb-3 flex-shrink-0">
-              <div class="flex items-center gap-3">
-                <h2 class="text-sm font-medium text-gray-200">{{ selectedTable }}</h2>
-                <span class="text-xs text-gray-600">{{ total }} rows</span>
-                <select v-model.number="perPage" @change="changeLimit(perPage)" class="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-gray-400 text-xs focus:outline-none focus:border-accent-500">
-                  <option :value="10">10</option>
-                  <option :value="20">20</option>
-                  <option :value="50">50</option>
-                  <option :value="100">100</option>
-                </select>
+          <!-- Data Table -->
+          <div class="border border-border-default rounded-lg overflow-hidden bg-bolt-card mb-4">
+            <div class="overflow-x-auto table-scrollable">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th class="w-8">
+                      <input type="checkbox" class="w-3.5 h-3.5 rounded border-border-default bg-bolt-input accent-accent-600" />
+                    </th>
+                    <th
+                      v-for="col in columns"
+                      :key="col.key"
+                      class="sortable"
+                    >
+                      {{ col.label }}
+                      <span class="schema-col">{{ col.type }}</span>
+                      <svg class="sort-icon w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+                      </svg>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in rows" :key="row.id">
+                    <td>
+                      <input type="checkbox" class="row-check w-3.5 h-3.5 rounded border-border-default bg-bolt-input accent-accent-600" />
+                    </td>
+                    <td class="font-mono text-xs">{{ row.id }}</td>
+                    <td>{{ row.name }}</td>
+                    <td>{{ row.url }}</td>
+                    <td>
+                      <span v-if="row.job_selector === null" class="text-text-muted italic">null</span>
+                      <span v-else>{{ row.job_selector }}</span>
+                    </td>
+                    <td>
+                      <span v-if="row.title_selector === null" class="text-text-muted italic">null</span>
+                      <span v-else>{{ row.title_selector }}</span>
+                    </td>
+                    <td>
+                      <span v-if="row.link_selector === null" class="text-text-muted italic">null</span>
+                      <span v-else>{{ row.link_selector }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="flex items-center justify-between px-4 py-2 border-t border-border-default bg-bolt-elevated/50">
+              <div class="flex items-center gap-2 text-xs text-text-muted">
+                1 \u2013 40 of 40
               </div>
-              <div class="flex items-center gap-1">
-                <button :disabled="page <= 1" @click="page--; fetchRecords()" class="px-2 py-1 rounded bg-gray-900 border border-gray-800 text-xs text-gray-400 hover:text-gray-200 disabled:opacity-40">Prev</button>
-                <span class="text-xs text-gray-500 w-16 text-center">{{ page }} / {{ totalPages }}</span>
-                <button :disabled="page >= totalPages" @click="page++; fetchRecords()" class="px-2 py-1 rounded bg-gray-900 border border-gray-800 text-xs text-gray-400 hover:text-gray-200 disabled:opacity-40">Next</button>
+              <div class="flex items-center gap-2">
+                <button class="btn-ghost btn-sm flex items-center gap-1">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                  </svg>
+                </button>
+                <button class="btn-secondary btn-sm opacity-50 cursor-not-allowed">Previous</button>
+                <button class="btn-secondary btn-sm opacity-50 cursor-not-allowed">Next</button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
 
-            <div v-if="recordsLoading" class="flex-1 flex items-center justify-center">
-              <p class="text-xs text-gray-600">Loading...</p>
+      <!-- SQL Console Panel -->
+      <div v-show="activeTab === 'sql'" class="space-y-4">
+        <div class="bg-bolt-card border border-border-default rounded-lg p-4">
+          <textarea
+            class="w-full h-32 bg-bolt-elevated border border-border-default rounded-lg p-3 text-sm text-text-primary font-mono resize-none focus:outline-none focus:border-accent-600"
+            placeholder="-- Enter your SQL query here\nSELECT * FROM crawler_sources WHERE status = 'active';"
+          ></textarea>
+          <div class="flex items-center justify-end mt-3">
+            <button class="btn-primary flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              Run Query
+            </button>
+          </div>
+        </div>
+        <div class="bg-bolt-card border border-border-default rounded-lg p-4">
+          <div class="text-sm text-text-muted mb-2">Results</div>
+          <div class="text-xs text-text-muted">Run a query to see results here.</div>
+        </div>
+      </div>
+
+      <!-- Schema Panel -->
+      <div v-show="activeTab === 'schema'" class="space-y-4">
+        <div
+          v-for="schema in schemaInfo"
+          :key="schema.table"
+          class="bg-bolt-card border border-border-default rounded-lg p-4"
+        >
+          <div class="flex items-center gap-2 mb-3">
+            <svg class="w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+            </svg>
+            <span class="text-sm font-medium text-text-primary">{{ schema.table }}</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Column</th>
+                  <th>Type</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="col in schema.columns" :key="col.name">
+                  <td class="text-text-primary">{{ col.name }}</td>
+                  <td>
+                    <span class="schema-col">{{ col.type }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top Queries Panel -->
+      <div v-show="activeTab === 'queries'" class="space-y-4">
+        <div class="bg-bolt-card border border-border-default rounded-lg overflow-hidden">
+          <div class="px-5 py-4 border-b border-border-default">
+            <div class="text-sm font-medium text-text-primary">Top Queries</div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-border-default">
+                  <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Query</th>
+                  <th class="text-right px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Executions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="q in topQueries"
+                  :key="q.query"
+                  class="border-b border-border-subtle hover:bg-bolt-hover transition-colors"
+                >
+                  <td class="px-5 py-3 text-text-secondary font-mono text-xs">{{ q.query }}</td>
+                  <td class="px-5 py-3 text-right text-text-secondary">{{ q.count.toLocaleString() }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Panel -->
+      <div v-show="activeTab === 'settings'" class="max-w-2xl">
+        <div class="bg-bolt-card border border-border-default rounded-lg p-5 space-y-4">
+          <div>
+            <label class="form-group label">Database Name</label>
+            <input type="text" class="input-field" value="callcenterninja" />
+          </div>
+          <div>
+            <label class="form-group label">Group</label>
+            <select class="input-field appearance-none" style="font-family:Inter">
+              <option>default</option>
+              <option>production</option>
+              <option>staging</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-group label">Region</label>
+            <select class="input-field appearance-none" style="font-family:Inter">
+              <option>Auto (closest)</option>
+              <option>US East (N. Virginia)</option>
+              <option>EU West (Ireland)</option>
+              <option>Asia Pacific (Tokyo)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="bg-bolt-card border border-red-500/75 rounded-lg p-5 mt-6">
+          <h3 class="text-sm font-medium text-red-400 mb-4">Danger Zone</h3>
+          <div class="flex items-center justify-between p-3 border border-red-500/20 rounded-md bg-red-500/5">
+            <div>
+              <div class="text-xs font-medium text-red-400">Delete Database</div>
+              <div class="form-group hint">This will permanently delete all tables and data. This action cannot be undone.</div>
             </div>
-
-            <template v-else>
-              <div class="flex-1 min-h-0 overflow-auto">
-                <table class="min-w-full text-sm">
-                  <thead class="sticky top-0 z-10 bg-gray-900">
-                    <tr class="border-b border-gray-800">
-                      <th v-for="col in columns" :key="col.name" @click="sortBy(col.name)"
-                        class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:text-gray-300 select-none whitespace-nowrap border-r border-gray-800 last:border-r-0" style="min-width: 100px;">
-                        <div class="flex items-center gap-1">
-                          {{ col.name }}
-                          <span v-if="sortField === col.name" class="text-accent-400">{{ sortDir === "asc" ? "↑" : "↓" }}</span>
-                        </div>
-                      </th>
-                      <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-14">Act.</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-gray-800">
-                    <tr v-for="row in records" :key="row.id" class="hover:bg-gray-900/20 transition-colors">
-                      <td v-for="col in columns" :key="col.name" class="px-3 py-2 text-gray-300 text-xs font-mono max-w-[300px] truncate whitespace-nowrap border-r border-gray-800 last:border-r-0" style="min-width: 100px;" :title="row[col.name] ?? ''">
-                        {{ row[col.name] ?? "—" }}
-                      </td>
-                      <td class="px-3 py-2 text-right">
-                        <button @click="deleteRecord(row.id)" :disabled="deletingRecord !== null" class="text-xs text-red-400 hover:text-red-300 disabled:opacity-40">
-                          {{ deletingRecord === row.id ? "..." : "Del" }}
-                        </button>
-                      </td>
-                    </tr>
-                    <tr v-if="records.length === 0">
-                      <td :colspan="columns.length + 1" class="px-4 py-12 text-center text-gray-600 text-sm">No records</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </template>
-          </template>
-        </template>
-
-        <!-- SQL Console -->
-        <SqlConsole v-else-if="view === 'sql'" />
-
-        <!-- Settings -->
-        <DatabaseSettings v-else-if="view === 'settings'" />
-      </div>
-    </div>
-
-    <!-- Delete table confirmation modal -->
-    <div v-if="showDeleteConfirm" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showDeleteConfirm = false">
-      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm">
-        <h3 class="text-sm font-medium text-gray-200 mb-2">Delete Table</h3>
-        <p class="text-sm text-gray-400 mb-6">Are you sure you want to delete <span class="text-gray-200 font-medium">{{ deleteTarget }}</span>? This cannot be undone.</p>
-        <div class="flex gap-3 justify-end">
-          <button @click="showDeleteConfirm = false" class="btn-secondary">Cancel</button>
-          <button @click="executeDeleteTable" :disabled="deleting !== null" class="btn-primary bg-red-600 hover:bg-red-500">{{ deleting === deleteTarget ? "Deleting..." : "Delete" }}</button>
+            <button class="btn-danger btn-sm">Delete</button>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Create table modal -->
-    <div v-if="showCreate" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showCreate = false">
-      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-md">
-        <h3 class="text-sm font-medium text-gray-200 mb-4">Create Table</h3>
-        <input v-model="newTable.name" class="input mb-4" placeholder="Table name" />
-        <div v-for="(col, i) in newTable.columns" :key="i" class="flex gap-2 mb-2">
-          <input v-model="col.name" class="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-500" placeholder="Column name" />
-          <select v-model="col.type" class="w-28 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-200 focus:outline-none focus:border-accent-500">
-            <option value="text">text</option>
-            <option value="integer">integer</option>
-            <option value="real">real</option>
-            <option value="boolean">boolean</option>
-          </select>
+    <!-- Add Record Drawer -->
+    <Drawer :show="showAddRecordDrawer" @close="showAddRecordDrawer = false">
+      <template #header>
+        <div class="text-sm font-medium text-text-primary">Add Record</div>
+      </template>
+      <div class="space-y-4">
+        <div v-for="col in columns" :key="col.key" class="form-group">
+          <label>{{ col.label }}</label>
+          <input type="text" class="input-field" :placeholder="col.type" />
         </div>
-        <button @click="addColumn" class="text-xs text-accent-400 mb-4">+ Add column</button>
-        <div class="flex gap-3 justify-end">
-          <button @click="showCreate = false" :disabled="creating" class="btn-sm-secondary">Cancel</button>
-          <button @click="createTable" :disabled="creating" class="btn-sm-primary">{{ creating ? "Creating..." : "Create" }}</button>
+        <div class="flex items-center justify-end gap-3 pt-4 border-t border-border-default">
+          <button class="btn-secondary" @click="showAddRecordDrawer = false">Cancel</button>
+          <button class="btn-primary">Save</button>
         </div>
       </div>
-    </div>
-  </div>
+    </Drawer>
+
+    <GithubBadge />
+  </AppLayout>
 </template>

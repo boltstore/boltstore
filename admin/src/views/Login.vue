@@ -1,82 +1,62 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
-import { useRouter } from "vue-router";
-import { useConnection } from "../stores/client";
+import { ref } from "vue";
+import GithubBadge from "../components/ui/GithubBadge.vue";
 
-const router = useRouter();
-const { connect, apiRequest, state } = useConnection();
-
-const isSetup = ref(false);
-const loading = ref(true);
-const error = ref("");
-
-const username = ref("");
+const email = ref("");
 const password = ref("");
-
-onMounted(async () => {
-  // If already connected, redirect
-  if (state.connected) {
-    router.push("/overview");
-    return;
-  }
-  try {
-    const data = await apiRequest<{ hasAdmins: boolean }>("GET", "/api/admin/status");
-    isSetup.value = !data.hasAdmins;
-  } catch (e: any) {
-    error.value = e.message || "Server unreachable";
-  } finally {
-    loading.value = false;
-  }
-});
-
-async function submit() {
-  error.value = "";
-  if (!username.value || !password.value) {
-    error.value = "Username and password are required.";
-    return;
-  }
-  try {
-    if (isSetup.value) {
-      await apiRequest("POST", "/api/admin/setup", { username: username.value, password: password.value });
-    }
-    const data = await apiRequest<{ token: string }>("POST", "/api/admin/login", { username: username.value, password: password.value });
-    await connect(data.token);
-    router.push("/overview");
-  } catch (e: any) {
-    error.value = e.message || "Login failed";
-  }
-}
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-950 flex items-center justify-center p-8">
-    <div class="w-full max-w-sm">
-      <div class="text-center mb-10">
-        <div class="w-12 h-12 rounded-xl bg-accent-500 flex items-center justify-center text-white font-bold text-xl mx-auto mb-4">B</div>
-        <h1 class="text-xl font-semibold text-gray-100">Boltstore</h1>
-        <p class="text-sm text-gray-500 mt-1">{{ isSetup ? "Create your first admin account" : "Sign in to your server" }}</p>
+  <div class="min-h-screen flex items-center justify-center relative overflow-hidden bg-bolt-base text-text-primary">
+    <!-- Background grid -->
+    <div class="bg-grid absolute inset-0 pointer-events-none"></div>
+    <div class="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-bolt-base/50 pointer-events-none"></div>
+
+    <div class="relative z-10 w-full max-w-sm px-6">
+      <div class="text-center mb-8">
+        <div class="flex items-center justify-center gap-2.5 mb-6">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="32" height="32" rx="7" fill="#080c14"/>
+            <g transform="translate(16, 15)">
+              <rect x="-13" y="-5" width="26" height="2" rx="1" fill="#00d4ff" opacity="0.35"/>
+              <rect x="-13" y="0" width="26" height="2" rx="1" fill="#00d4ff" opacity="0.25"/>
+              <rect x="-13" y="5" width="26" height="2" rx="1" fill="#00d4ff" opacity="0.15"/>
+              <path d="M-2 -10 L8 1 L2 1 L6 12 L-8 -1 L-2 -1 Z" fill="#00d4ff"/>
+            </g>
+          </svg>
+          <span class="font-bold text-xl tracking-tight">Boltstore</span>
+        </div>
+        <h1 class="text-xl font-semibold mb-2">Welcome back</h1>
+        <p class="text-sm text-text-secondary">Sign in to your dashboard</p>
       </div>
 
-      <div v-if="loading" class="text-center py-8 text-gray-500 text-sm">Connecting...</div>
-
-      <form v-else @submit.prevent="submit" class="space-y-4">
+      <form class="space-y-4" @submit.prevent="">
         <div>
-          <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1">Username</label>
-          <input v-model="username" type="text" class="input" :placeholder="isSetup ? 'Choose a username' : 'admin'" autocomplete="username" @keydown.enter="submit" />
+          <label class="block text-xs font-medium text-text-secondary mb-1.5">Email</label>
+          <input
+            v-model="email"
+            type="email"
+            class="input-field"
+            placeholder="you@example.com"
+            required
+          />
         </div>
         <div>
-          <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-1">Password</label>
-          <input v-model="password" type="password" class="input" :placeholder="isSetup ? 'At least 8 characters' : '••••••••'" autocomplete="current-password" @keydown.enter="submit" />
+          <label class="block text-xs font-medium text-text-secondary mb-1.5">Password</label>
+          <input
+            v-model="password"
+            type="password"
+            class="input-field"
+            placeholder="Enter your password"
+            required
+          />
         </div>
-
-        <p v-if="error" class="text-sm text-red-400 bg-red-950/50 rounded-lg px-3 py-2">{{ error }}</p>
-
-        <div class="pt-2">
-          <button type="submit" class="btn-primary w-full">
-            {{ isSetup ? "Create Account & Sign In" : "Sign In" }}
-          </button>
-        </div>
+        <button type="submit" class="btn-primary w-full py-2.5">
+          Sign In
+        </button>
       </form>
     </div>
+
+    <GithubBadge />
   </div>
 </template>

@@ -1,214 +1,173 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { useConnection } from "../stores/client";
+import AppLayout from "../components/layout/AppLayout.vue";
+import GithubBadge from "../components/ui/GithubBadge.vue";
+import Modal from "../components/ui/Modal.vue";
+import { useSidebar } from "../composables/useSidebar";
 
-const { apiRequest } = useConnection();
+const { toggleSidebar } = useSidebar();
+
 const router = useRouter();
+const showCreateModal = ref(false);
 
-const databases = ref<any[]>([]);
-const loading = ref(true);
-const showCreate = ref(false);
-const showImport = ref(false);
-const newName = ref("");
-const createError = ref("");
-const importFile = ref<File | null>(null);
-const importName = ref("");
-const importing = ref(false);
-const exporting = ref<string | null>(null);
-const showDeleteDb = ref(false);
-const deleteDbTarget = ref("");
-const deletingDb = ref(false);
+const databases = [
+  {
+    name: "callcenterninja",
+    rowsRead: "528,001,446",
+    rowsWritten: "9,851",
+    storage: "14.79 MB",
+    group: "default",
+    groupColor: "bg-red-400",
+    status: "Active",
+  },
+  {
+    name: "app-production",
+    rowsRead: "2,145,302",
+    rowsWritten: "4,221",
+    storage: "3.12 MB",
+    group: "production",
+    groupColor: "bg-blue-400",
+    status: "Active",
+  },
+  {
+    name: "analytics-staging",
+    rowsRead: "45,892",
+    rowsWritten: "1,034",
+    storage: "856 KB",
+    group: "staging",
+    groupColor: "bg-yellow-400",
+    status: "Active",
+  },
+];
 
-onMounted(load);
-
-async function load() {
-  loading.value = true;
-  try {
-    databases.value = (await apiRequest("GET", "/api/databases")) ?? [];
-  } catch (e: any) {
-    alert(e.message);
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function createDb() {
-  try {
-    await apiRequest("POST", "/api/databases", { name: newName.value });
-    showCreate.value = false;
-    createError.value = "";
-    newName.value = "";
-    await load();
-  } catch (e: any) {
-    createError.value = e.message;
-  }
-}
-
-function confirmDeleteDb(name: string) {
-  if (deletingDb.value) return;
-  deleteDbTarget.value = name;
-  showDeleteDb.value = true;
-}
-
-async function executeDeleteDb() {
-  if (!deleteDbTarget.value || deletingDb.value) return;
-  deletingDb.value = true;
-  showDeleteDb.value = false;
-  try {
-    await apiRequest("DELETE", `/api/databases/${deleteDbTarget.value}`);
-    await load();
-  } catch (e: any) {
-    alert(e.message);
-  } finally {
-    deletingDb.value = false;
-    deleteDbTarget.value = "";
-  }
-}
-
-async function importDb() {
-  if (!importFile.value || importing.value) return;
-  importing.value = true;
-  try {
-    const form = new FormData();
-    form.append("file", importFile.value);
-    if (importName.value) form.append("name", importName.value);
-    const { state } = useConnection();
-    const res = await globalThis.fetch(`${state.baseUrl}/api/databases/import`, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${state.token}` },
-      body: form,
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      let msg = "Import failed";
-      try { msg = JSON.parse(text)?.error?.message || msg; } catch {}
-      throw new Error(msg);
-    }
-    showImport.value = false;
-    importFile.value = null;
-    importName.value = "";
-    await load();
-  } catch (e: any) {
-    alert(e.message);
-  } finally {
-    importing.value = false;
-  }
-}
-
-async function exportDb(name: string) {
-  if (exporting.value) return;
-  exporting.value = name;
-  try {
-    const { state } = useConnection();
-    const res = await globalThis.fetch(`${state.baseUrl}/api/databases/${name}/export`, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${state.token}` },
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      let msg = "Export failed";
-      try { msg = JSON.parse(text)?.error?.message || msg; } catch {}
-      throw new Error(msg);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${name}.db`;
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (e: any) {
-    alert(e.message);
-  } finally {
-    exporting.value = null;
-  }
-}
+const newDb = ref({
+  name: "",
+  group: "default",
+  region: "Auto (closest)",
+  seed: false,
+});
 </script>
 
 <template>
-  <div>
-    <div class="flex items-center justify-between mb-8">
-      <h1 class="text-2xl font-semibold text-gray-100">Databases</h1>
-      <div class="flex gap-3">
-        <button @click="showImport = true" :disabled="importing" class="btn-secondary">{{ importing ? "Importing..." : "Import" }}</button>
-        <button @click="showCreate = true; createError = ''; newName = ''" class="btn-primary">+ Create</button>
+  <AppLayout @create-database="showCreateModal = true">
+    <header class="h-14 border-b border-border-default flex items-center justify-between px-4 sm:px-6 bg-bolt-base/80 backdrop-blur-sm sticky top-0 z-30">
+      <div class="flex items-center gap-2 text-sm">
+        <button class="md:hidden p-1 text-text-muted hover:text-text-primary transition-colors" @click="toggleSidebar">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+        </button>
+        <span class="text-text-primary">Databases</span>
       </div>
-    </div>
+      <div class="flex items-center gap-3"></div>
+    </header>
 
-    <div v-if="loading" class="text-center py-20 text-gray-500 text-sm">Loading...</div>
-
-    <div v-else-if="databases.length === 0" class="text-center py-20">
-      <div class="w-16 h-16 rounded-2xl bg-gray-900 flex items-center justify-center mx-auto mb-4 border border-gray-800">
-        <svg class="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
-      </div>
-      <p class="text-sm text-gray-500 mb-1">No databases</p>
-      <p class="text-xs text-gray-600 mb-4">Create your first database to get started</p>
-      <button @click="showCreate = true; createError = ''; newName = ''" class="btn-primary">Create Database</button>
-    </div>
-
-    <div v-else class="db-grid">
-      <div v-for="db in databases" :key="db.name" class="db-card">
-        <div class="flex items-start justify-between mb-3">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gray-800 flex items-center justify-center">
-              <svg class="w-5 h-5 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4"/></svg>
-            </div>
-            <div>
-              <p class="text-sm font-medium text-gray-200">{{ db.name }}</p>
-              <p class="text-xs text-gray-600">{{ db.createdAt ? new Date(db.createdAt).toLocaleDateString() : '' }}</p>
-            </div>
+    <div class="p-4 sm:p-6 max-w-6xl mx-auto">
+      <!-- Database Table -->
+      <div class="bg-bolt-card border border-border-default rounded-lg overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border-default">
+                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Name</th>
+                <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Rows Read</th>
+                <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Rows Written</th>
+                <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Storage</th>
+                <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Group</th>
+                <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Status</th>
+                <th class="text-right px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="db in databases"
+                :key="db.name"
+                class="border-b border-border-subtle hover:bg-bolt-hover transition-colors"
+              >
+                <td class="px-5 py-3">
+                  <div class="flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-accent-400"></div>
+                    <span class="font-medium text-text-primary">{{ db.name }}</span>
+                  </div>
+                </td>
+                <td class="px-5 py-3 text-text-secondary text-center">{{ db.rowsRead }}</td>
+                <td class="px-5 py-3 text-text-secondary text-center">{{ db.rowsWritten }}</td>
+                <td class="px-5 py-3 text-text-secondary text-center">{{ db.storage }}</td>
+                <td class="px-5 py-3 text-center">
+                  <span class="inline-flex items-center gap-1 text-xs text-text-secondary">
+                    <span class="w-2 h-2 rounded-sm" :class="db.groupColor"></span>
+                    {{ db.group }}
+                  </span>
+                </td>
+                <td class="px-5 py-3 text-center">
+                  <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-green-500/10 text-green-400 border border-green-500/20">{{ db.status }}</span>
+                </td>
+                <td class="px-5 py-3 text-right">
+                  <button class="btn-secondary btn-sm flex items-center gap-1 inline-flex" @click="router.push(`/databases/${db.name}`)">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                    </svg>
+                    Manage
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="flex items-center justify-between px-5 py-3 border-t border-border-default">
+          <div class="text-xs text-text-muted">Showing 3 of 3 databases</div>
+          <div class="flex items-center gap-2">
+            <button class="btn-secondary btn-sm opacity-50 cursor-not-allowed">Previous</button>
+            <button class="btn-secondary btn-sm opacity-50 cursor-not-allowed">Next</button>
           </div>
-          <div class="flex gap-1">
-            <button @click.stop="exportDb(db.name)" :disabled="exporting !== null" title="Export" class="icon-btn">
-              <svg v-if="exporting === db.name" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-              <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-            </button>
-            <button @click.stop="confirmDeleteDb(db.name)" title="Delete" class="icon-btn text-red-400 hover:text-red-300"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
-          </div>
-        </div>
-        <button @click="router.push(`/databases/${db.name}`)" class="w-full mt-2 text-xs px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors">Manage</button>
-      </div>
-    </div>
-
-    <!-- Create Modal -->
-    <div v-if="showCreate" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showCreate = false; createError = ''; newName = ''">
-      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm">
-        <h3 class="text-sm font-medium text-gray-200 mb-4">Create Database</h3>
-        <input v-model="newName" @keyup.enter="createDb" class="input mb-2" placeholder="my-database" autofocus />
-        <p v-if="createError" class="text-xs text-red-400 mb-4">{{ createError }}</p>
-        <div class="flex gap-3 justify-end">
-          <button @click="showCreate = false; createError = ''; newName = ''" class="btn-secondary">Cancel</button>
-          <button @click="createDb" class="btn-primary">Create</button>
         </div>
       </div>
     </div>
 
-    <!-- Import Modal -->
-    <div v-if="showImport" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showImport = false">
-      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm">
-        <h3 class="text-sm font-medium text-gray-200 mb-4">Import Database</h3>
-        <input type="file" accept=".db,.sqlite,.sqlite3" @change="(e: any) => importFile = e.target.files?.[0] || null" class="text-sm text-gray-400 mb-1 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-gray-800 file:text-gray-300 hover:file:bg-gray-700" />
-        <p class="text-xs text-gray-600 mb-3">Accepted: .db, .sqlite, .sqlite3</p>
-        <input v-model="importName" class="input mb-4" placeholder="Database name (optional)" />
-        <div class="flex gap-3 justify-end">
-          <button @click="showImport = false" class="btn-secondary">Cancel</button>
-          <button @click="importDb" :disabled="importing" class="btn-primary">{{ importing ? "Importing..." : "Import" }}</button>
+    <!-- Create Database Modal -->
+    <Modal :show="showCreateModal" @close="showCreateModal = false">
+      <div class="px-5 py-4 border-b border-border-default flex items-center justify-between">
+        <div class="text-sm font-medium text-text-primary">Create Database</div>
+        <button class="text-text-muted hover:text-text-primary transition-colors" @click="showCreateModal = false">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="p-5 space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-text-secondary mb-1.5">Database Name</label>
+          <input v-model="newDb.name" type="text" class="input-field" placeholder="e.g., my-app-prod" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-text-secondary mb-1.5">Group</label>
+          <select v-model="newDb.group" class="input-field appearance-none">
+            <option>default</option>
+            <option>production</option>
+            <option>staging</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-text-secondary mb-1.5">Region</label>
+          <select v-model="newDb.region" class="input-field appearance-none">
+            <option>Auto (closest)</option>
+            <option>US East (N. Virginia)</option>
+            <option>EU West (Ireland)</option>
+            <option>Asia Pacific (Tokyo)</option>
+          </select>
+        </div>
+        <div class="flex items-start gap-2">
+          <input id="seed" v-model="newDb.seed" type="checkbox" class="mt-0.5 w-3.5 h-3.5 rounded border-border-default bg-bolt-input accent-accent-600" />
+          <label for="seed" class="text-xs text-text-secondary">Seed with sample data (useful for testing)</label>
         </div>
       </div>
-    </div>
+      <div class="px-5 py-4 border-t border-border-default flex items-center justify-end gap-2">
+        <button class="btn-secondary" @click="showCreateModal = false">Cancel</button>
+        <button class="btn-primary" @click="showCreateModal = false">Create Database</button>
+      </div>
+    </Modal>
 
-    <!-- Delete database confirmation modal -->
-    <div v-if="showDeleteDb" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" @click.self="showDeleteDb = false">
-      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm">
-        <h3 class="text-sm font-medium text-gray-200 mb-2">Delete Database</h3>
-        <p class="text-sm text-gray-400 mb-6">Are you sure you want to delete <span class="text-gray-200 font-medium">{{ deleteDbTarget }}</span>? All data will be permanently removed.</p>
-        <div class="flex gap-3 justify-end">
-          <button @click="showDeleteDb = false" class="btn-secondary">Cancel</button>
-          <button @click="executeDeleteDb" :disabled="deletingDb" class="btn-primary bg-red-600 hover:bg-red-500">{{ deletingDb ? "Deleting..." : "Delete" }}</button>
-        </div>
-      </div>
-    </div>
-  </div>
+    <GithubBadge />
+  </AppLayout>
 </template>
-
