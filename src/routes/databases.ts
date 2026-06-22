@@ -2,7 +2,7 @@ import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
 import { isAdminRequest } from "../middleware/auth";
-import { logActivity } from "./activity";
+import { logActivity, getClientIp, getAdminId } from "./activity";
 
 const VALID_NAME = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -20,7 +20,7 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("VALIDATION", "Use only lowercase letters, numbers, hyphens, and underscores, starting with a letter or number.", 400);
     }
     const info = manager.createDatabase(body.name);
-    logActivity(manager, { action: "database.create", database_name: body.name, ip: req.headers.get("x-forwarded-for") || undefined });
+    logActivity(manager, { action: "database.create", admin_id: getAdminId(req, manager), database_name: body.name, ip: getClientIp(req) });
     return jsonResponse({ data: info }, 201);
   });
 
@@ -73,14 +73,14 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     manager.closePool(oldName);
     try { require("node:fs").rmSync(row.file_path); } catch {}
 
-    logActivity(manager, { action: "database.rename", database_name: oldName, details: { from: oldName, to: body.name }, ip: req.headers.get("x-forwarded-for") || undefined });
+    logActivity(manager, { action: "database.rename", admin_id: getAdminId(req, manager), database_name: oldName, details: { from: oldName, to: body.name }, ip: getClientIp(req) });
     return jsonResponse({ data: { name: body.name } });
   });
 
   router.delete("/api/databases/:name", async (req, params) => {
     if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     manager.deleteDatabase(params.name);
-    logActivity(manager, { action: "database.delete", database_name: params.name, ip: req.headers.get("x-forwarded-for") || undefined });
+    logActivity(manager, { action: "database.delete", admin_id: getAdminId(req, manager), database_name: params.name, ip: getClientIp(req) });
     return jsonResponse({ data: { deleted: true } });
   });
 }

@@ -5,6 +5,7 @@ import { isAdminRequest } from "../middleware/auth";
 
 export interface ActivityEvent {
   action: string;
+  admin_id?: string;
   database_name?: string;
   target?: string;
   details?: Record<string, unknown>;
@@ -20,6 +21,40 @@ function generateId(): string {
   return "act_" + id;
 }
 
+export function getClientIp(request: Request): string | undefined {
+  // Cloudflare — most reliable when present
+  const cf = request.headers.get("cf-connecting-ip");
+  if (cf) return cf;
+
+  // X-Forwarded-For — first IP is the original client
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded) {
+    const first = forwarded.split(",")[0]?.trim();
+    if (first) return first;
+  }
+
+  // X-Real-IP — used by nginx and some reverse proxies
+  const real = request.headers.get("x-real-ip");
+  if (real) return real;
+
+  return undefined;
+}
+
+export function getAdminId(request: Request, manager: DatabaseManager): string | undefined {
+  const auth = request.headers.get("Authorization");
+  if (!auth?.startsWith("Bearer ")) return undefined;
+  const token = auth.slice(7).trim();
+  if (!token) return undefined;
+  try {
+    const row = manager.getMetaPool().read()
+      .query("SELECT admin_id FROM _sessions WHERE token = ?")
+      .get(token) as { admin_id: string } | null;
+    return row?.admin_id;
+  } catch {
+    return undefined;
+  }
+}
+
 export function registerActivityRoutes(router: Router, manager: DatabaseManager): void {
   router.get("/api/activity", async (req) => {
     if (!isAdminRequest(req, manager)) return jsonResponse({ data: [], meta: { total: 0 } });
@@ -28,7 +63,7 @@ export function registerActivityRoutes(router: Router, manager: DatabaseManager)
     const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0);
     const total = (manager.getMetaPool().read().query("SELECT COUNT(*) as c FROM _activity_log").get() as any)?.c ?? 0;
     const rows = manager.getMetaPool().read().query(
-      "SELECT id, action, database_name, target, details, ip, created_at FROM _activity_log ORDER BY created_at DESC LIMIT ? OFFSET ?"
+      "SELECT id, admin_id, action, database_name, target, details, ip, created_at FROM _activity_log ORDER BY created_at DESC LIMIT ? OFFSET ?"
     ).all(limit, offset);
     return jsonResponse({ data: rows, meta: { total, limit, offset } });
   });
@@ -37,8 +72,8 @@ export function registerActivityRoutes(router: Router, manager: DatabaseManager)
 export function logActivity(manager: DatabaseManager, event: ActivityEvent): void {
   try {
     manager.getMetaPool().write().run(
-      "INSERT INTO _activity_log (id, action, database_name, target, details, ip) VALUES (?, ?, ?, ?, ?, ?)",
-      [generateId(), event.action, event.database_name ?? null, event.target ?? null, event.details ? JSON.stringify(event.details) : null, event.ip ?? null]
+      "INSERT INTO _activity_log (id, admin_id, action, database_name, target, details, ip) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [generateId(), event.admin_id ?? null, event.action, event.database_name ?? null, event.target ?? null, event.details ? JSON.stringify(event.details) : null, event.ip ?? null]
     );
   } catch {
     // Activity log is best-effort — never crash the request

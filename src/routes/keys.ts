@@ -2,7 +2,7 @@ import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
 import { isAdminRequest } from "../middleware/auth";
-import { logActivity } from "./activity";
+import { logActivity, getClientIp, getAdminId } from "./activity";
 
 const KEY_PREFIX = "boltstore_";
 
@@ -48,7 +48,7 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
       [id, params.name, body.label, hash]
     );
 
-    logActivity(manager, { action: "api_key.create", database_name: params.name, target: body.label, ip: req.headers.get("x-forwarded-for") || undefined });
+    logActivity(manager, { action: "api_key.create", admin_id: getAdminId(req, manager), database_name: params.name, target: body.label, ip: getClientIp(req) });
     return jsonResponse({ data: { id, label: body.label, key } }, 201);
   });
 
@@ -63,7 +63,7 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
     );
     if (result.changes === 0) return errorResponse("NOT_FOUND", "API key not found.", 404);
 
-    logActivity(manager, { action: "api_key.rotate", database_name: params.name, target: params.keyId, ip: req.headers.get("x-forwarded-for") || undefined });
+    logActivity(manager, { action: "api_key.rotate", admin_id: getAdminId(req, manager), database_name: params.name, target: params.keyId, ip: getClientIp(req) });
     return jsonResponse({ data: { id: params.keyId, key } });
   });
 
@@ -74,7 +74,7 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
       [params.keyId, params.name]
     );
     if (result.changes === 0) return errorResponse("NOT_FOUND", "API key not found.", 404);
-    logActivity(manager, { action: "api_key.revoke", database_name: params.name, target: params.keyId, ip: req.headers.get("x-forwarded-for") || undefined });
+    logActivity(manager, { action: "api_key.revoke", admin_id: getAdminId(req, manager), database_name: params.name, target: params.keyId, ip: getClientIp(req) });
     return jsonResponse({ data: { revoked: true } });
   });
 }

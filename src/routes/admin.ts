@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
-import { logActivity } from "./activity";
+import { logActivity, getClientIp, getAdminId } from "./activity";
 
 export function registerAdminRoutes(router: Router, manager: DatabaseManager, adminKey?: string): void {
   const metaPool = manager.getMetaPool();
@@ -38,7 +38,7 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
     const passwordHash = await Bun.password.hash(body.password, { algorithm: "bcrypt", cost: 10 });
     metaPool.write().run("INSERT INTO _admins (id, email, password_hash) VALUES (?, ?, ?)", [id, body.email, passwordHash]);
 
-    logActivity(manager, { action: "admin.create" });
+    logActivity(manager, { action: "admin.create", admin_id: id, ip: getClientIp(req) });
     return jsonResponse({ data: { id, email: body.email } }, 201);
   });
 
@@ -59,7 +59,7 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
     const sessId = generateId("ssn_");
     metaPool.write().run("INSERT INTO _sessions (id, admin_id, token) VALUES (?, ?, ?)", [sessId, row.id, token]);
 
-    logActivity(manager, { action: "admin.login", details: { admin: row.email } });
+    logActivity(manager, { action: "admin.login", admin_id: row.id, details: { admin: row.email }, ip: getClientIp(req) });
     return jsonResponse({ data: { token, admin: { id: row.id, email: row.email } } });
   });
 
@@ -81,7 +81,13 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
   // Logout (delete session)
   router.post("/api/admin/logout", async (req) => {
     const token = extractToken(req);
-    if (token) metaPool.write().run("DELETE FROM _sessions WHERE token = ?", [token]);
+    if (token) {
+      const row = metaPool.read().query("SELECT admin_id FROM _sessions WHERE token = ?").get(token) as { admin_id: string } | null;
+      metaPool.write().run("DELETE FROM _sessions WHERE token = ?", [token]);
+      if (row) {
+        logActivity(manager, { action: "admin.logout", admin_id: row.admin_id, ip: getClientIp(req) });
+      }
+    }
     return jsonResponse({ data: { loggedOut: true } });
   });
 }

@@ -2,7 +2,7 @@ import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
 import { isAdminRequest } from "../middleware/auth";
-import { logActivity } from "./activity";
+import { logActivity, getClientIp, getAdminId } from "./activity";
 
 export function registerTransferRoutes(router: Router, manager: DatabaseManager): void {
   const dataDir = manager.getDataDir();
@@ -21,7 +21,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
       // Clean up temp file
       try { require("node:fs").rmSync(exportPath); } catch {}
 
-      logActivity(manager, { action: "database.export", database_name: params.name, ip: req.headers.get("x-forwarded-for") || undefined });
+      logActivity(manager, { action: "database.export", admin_id: getAdminId(req, manager), database_name: params.name, ip: getClientIp(req) });
       return new Response(bytes, {
         status: 200,
         headers: {
@@ -85,7 +85,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("VALIDATION", "Imported file failed integrity check.", 400);
     }
 
-    logActivity(manager, { action: "database.import", database_name: dbName, ip: req.headers.get("x-forwarded-for") || undefined });
+    logActivity(manager, { action: "database.import", admin_id: getAdminId(req, manager), database_name: dbName, ip: getClientIp(req) });
     return jsonResponse({ data: { name: dbName, file: fileField.name } }, 201);
   });
 }
