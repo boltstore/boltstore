@@ -2,6 +2,7 @@ import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
 import { authenticateApiKey, checkDbCors } from "../middleware/auth";
+import { checkReadOnly } from "../middleware/readonly";
 
 export function registerQueryRoutes(router: Router, manager: DatabaseManager): void {
   router.post("/api/databases/:db/query", async (req, params) => {
@@ -13,6 +14,12 @@ export function registerQueryRoutes(router: Router, manager: DatabaseManager): v
     const body = await req.json() as { sql?: string; params?: any[] };
     if (!body.sql || typeof body.sql !== "string") {
       return errorResponse("VALIDATION", "Field 'sql' is required.", 400);
+    }
+
+    const isWrite = /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|REPLACE|VACUUM)/i.test(body.sql.trim());
+    if (isWrite) {
+      const ro = checkReadOnly(manager, params.db);
+      if (ro) return ro;
     }
 
     const pool = manager.get(params.db);

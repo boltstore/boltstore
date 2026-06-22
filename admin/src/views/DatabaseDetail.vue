@@ -5,11 +5,18 @@
         <router-link to="/databases" class="text-text-muted hover:text-text-primary transition-colors">Databases</router-link>
         <span class="text-text-muted">/</span>
         <span class="text-text-primary">{{ dbName }}</span>
-        <span class="badge-green">Active</span>
+        <span v-if="dbConfig.readonly" class="inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">Read-only</span>
+        <span v-else class="badge-green">Active</span>
       </div>
     </template>
     <template #header-right>
-      <span class="text-xs text-text-muted hidden sm:inline">14.79 MB · 528M rows read · 9.8K rows written</span>
+      <div class="flex items-center gap-2">
+        <button class="btn-ghost btn-sm flex items-center gap-1 hidden sm:inline-flex" @click="exportDatabase">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
+          Download
+        </button>
+        <span class="text-xs text-text-muted hidden sm:inline">14.79 MB · 528M rows read · 9.8K rows written</span>
+      </div>
     </template>
 
     <div class="border-b border-border-default mb-6 flex items-center justify-between">
@@ -197,14 +204,14 @@
           </div>
           <div>
             <label class="label">Group</label>
-            <select class="input-field appearance-none" style="font-family:Inter">
-              <option>default</option>
-              <option>production</option>
-              <option>staging</option>
+            <select class="input-field appearance-none" style="font-family:Inter" v-model="dbConfig.group" @change="saveGroup">
+              <option value="">default</option>
+              <option value="production">production</option>
+              <option value="staging">staging</option>
             </select>
           </div>
           <div class="flex items-start gap-2">
-            <input type="checkbox" id="readonly" class="mt-0.5 w-3.5 h-3.5 rounded border-border-default bg-bolt-input accent-accent-600">
+            <input type="checkbox" id="readonly" class="mt-0.5 w-3.5 h-3.5 rounded border-border-default bg-bolt-input accent-accent-600" v-model="dbConfig.readonly" @change="saveReadonly">
             <div>
               <label for="readonly" class="text-xs text-text-secondary">Read-only mode</label>
               <p class="description">Prevent any write operations on this database</p>
@@ -229,6 +236,13 @@
           </div>
 
           <div>
+            <button class="btn-secondary btn-sm flex items-center gap-1" @click="exportDatabase">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
+              Download Database
+            </button>
+          </div>
+
+          <div>
             <label class="label">API Keys</label>
             <div class="space-y-2">
               <div
@@ -237,9 +251,8 @@
                 class="flex items-center justify-between p-3 bg-bolt-elevated border border-border-subtle rounded-md"
               >
                 <div class="flex items-center gap-3">
-                  <div class="text-xs font-medium text-text-primary max-w-[8rem] truncate">{{ k.name }}</div>
-                  <div class="text-xs font-mono text-text-muted">{{ k.key }}</div>
-                  <div class="text-xs text-text-muted">Last used: {{ k.lastUsed }} ago</div>
+                  <div class="text-xs font-medium text-text-primary">{{ k.name }}</div>
+                  <div class="text-xs text-text-muted">Last used: {{ k.lastUsed }}</div>
                 </div>
                 <button class="text-xs text-red-400 hover:text-red-300 transition-colors" @click="confirmDeleteKey(k)">Delete</button>
               </div>
@@ -359,8 +372,8 @@
           <p class="text-xs text-text-muted">This will generate a new API key for the database. Existing keys will remain active.</p>
         </div>
         <div class="mb-4">
-          <label class="block text-xs font-medium text-text-secondary mb-1.5">Key Identifier (optional)</label>
-          <input type="text" class="input-field" placeholder="e.g. production-worker-1">
+          <label class="block text-xs font-medium text-text-secondary mb-1.5">Key Identifier</label>
+          <input type="text" class="input-field" placeholder="e.g. production-worker-1" v-model="newKeyLabel">
         </div>
         <div class="flex items-center justify-end gap-2">
           <button class="btn-ghost btn-sm" @click="showGenerateKeyModal = false">Cancel</button>
@@ -387,7 +400,7 @@
         <div class="p-3 bg-bolt-elevated border border-border-default rounded-md mb-4">
           <div class="text-xs text-text-muted mb-1">API Key</div>
           <div class="flex items-center gap-2">
-            <code class="text-xs font-mono text-accent-400 break-all">bsk_new_...a1b2</code>
+            <code class="text-xs font-mono text-accent-400 break-all">{{ newKeyValue }}</code>
             <button class="btn-secondary btn-sm flex items-center gap-1 ml-auto shrink-0" @click="copyKey">
               <svg v-if="!copied" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
               <svg v-else class="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
@@ -419,7 +432,7 @@
         <div class="p-3 bg-bolt-elevated border border-border-default rounded-md mb-4 text-xs font-mono text-accent-400">{{ deletingKey?.name }}</div>
         <div class="flex items-center justify-end gap-2">
           <button class="btn-ghost btn-sm" @click="showDeleteKeyModal = false">Cancel</button>
-          <button class="btn-primary btn-sm bg-red-600 hover:bg-red-500">Delete Key</button>
+          <button class="btn-primary btn-sm bg-red-600 hover:bg-red-500" @click="revokeKey">Delete Key</button>
         </div>
       </div>
     </div>
@@ -445,7 +458,7 @@
         </div>
         <div class="flex items-center justify-end gap-2">
           <button class="btn-ghost btn-sm" @click="showDeleteDatabaseModal = false">Cancel</button>
-          <button class="btn-primary btn-sm bg-red-600 hover:bg-red-500 border-red-500/50">Delete Database</button>
+          <button class="btn-primary btn-sm bg-red-600 hover:bg-red-500 border-red-500/50" @click="deleteDatabase">Delete Database</button>
         </div>
       </div>
     </div>
@@ -454,12 +467,14 @@
 
 <script setup lang="ts">
 import { ref, h, computed, onMounted, onUnmounted } from "vue"
-import { useRoute } from "vue-router"
+import { useRoute, useRouter } from "vue-router"
 import AppLayout from "../components/layout/AppLayout.vue"
 import DataTable, { type ColumnDef } from "../components/ui/DataTable.vue"
 import Drawer from "../components/ui/Drawer.vue"
+import { api, type ApiKeyInfo } from "../api/client"
 
 const route = useRoute()
+const router = useRouter()
 const dbName = route.params.name as string
 const activeTab = computed(() => route.params.tab as string || "data")
 const selectedTable = ref("crawler_sources")
@@ -470,9 +485,13 @@ const showGenerateKeyModal = ref(false)
 const showNewKeyModal = ref(false)
 const showDeleteKeyModal = ref(false)
 const showDeleteDatabaseModal = ref(false)
-const deletingKey = ref<{ name: string } | null>(null)
+const deletingKey = ref<{ id: string; name: string } | null>(null)
 const copied = ref(false)
 const urlCopied = ref(false)
+const newKeyLabel = ref("")
+const newKeyValue = ref("")
+const dbConfig = ref<Record<string, unknown>>({})
+const apiKeys = ref<{ id: string; name: string; key: string; lastUsed: string }[]>([])
 
 function onKeyDown(e: KeyboardEvent) {
   if (e.key !== "Escape") return
@@ -612,12 +631,6 @@ const topQueries = [
   { query: "DELETE FROM jobs WHERE created_at < datetime('now', '-30 days')", calls: "12", avgTime: "45.2ms", totalTime: "542.4ms", rows: "8,421" },
 ]
 
-const apiKeys = [
-  { name: "default-key", key: "bsk_...a3f9", lastUsed: "2 mins" },
-  { name: "production-worker-1", key: "bsk_...e7b2", lastUsed: "3 hours" },
-  { name: "staging-test", key: "bsk_...c1d4", lastUsed: "2 days" },
-]
-
 const addFields = ref([
   { key: "name", label: "Name", placeholder: "Enter name", value: "", hint: "" },
   { key: "url", label: "URL", placeholder: "https://", value: "", hint: "" },
@@ -628,6 +641,67 @@ const addFields = ref([
 
 const schemaDdl = ref("-- Edit schema for crawler_sources\nALTER TABLE crawler_sources ADD COLUMN new_field TEXT;")
 
+onMounted(() => {
+  loadConfig()
+  loadKeys()
+})
+
+async function loadConfig() {
+  try {
+    const res = await api.getConfig(dbName)
+    dbConfig.value = res.data
+  } catch {}
+}
+
+async function saveGroup() {
+  try {
+    await api.updateConfig(dbName, { group: dbConfig.value.group || null })
+  } catch {}
+}
+
+async function saveReadonly() {
+  try {
+    await api.updateConfig(dbName, { readonly: dbConfig.value.readonly || false })
+  } catch {}
+}
+
+async function exportDatabase() {
+  try {
+    const blob = await api.exportDatabase(dbName)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `${dbName}.db`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {}
+}
+
+async function loadKeys() {
+  try {
+    const res = await api.listKeys(dbName)
+    apiKeys.value = res.data.map((k: ApiKeyInfo) => ({
+      id: k.id,
+      name: k.label,
+      key: k.id.slice(0, 8) + "...",
+      lastUsed: k.last_used_at ? formatTimeAgo(k.last_used_at) : "never",
+    }))
+  } catch {}
+}
+
+function formatTimeAgo(dateStr: string) {
+  const d = new Date(dateStr.endsWith("Z") ? dateStr : dateStr + "Z")
+  const now = new Date()
+  const diff = now.getTime() - d.getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return "just now"
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
 function handleDelete(rows: number[]) {
   showDeleteModal.value = true
 }
@@ -637,25 +711,48 @@ function openSchemaEditor(name: string) {
   showSchemaDrawer.value = true
 }
 
-function confirmDeleteKey(k: { name: string }) {
+function confirmDeleteKey(k: { id: string; name: string }) {
   deletingKey.value = k
   showDeleteKeyModal.value = true
 }
 
-function generateKey() {
-  showGenerateKeyModal.value = false
-  showNewKeyModal.value = true
+async function generateKey() {
+  if (!newKeyLabel.value.trim()) return
+  try {
+    const res = await api.createKey(dbName, newKeyLabel.value.trim())
+    newKeyValue.value = res.data.key
+    showGenerateKeyModal.value = false
+    showNewKeyModal.value = true
+    await loadKeys()
+  } catch {}
+}
+
+async function revokeKey() {
+  if (!deletingKey.value) return
+  try {
+    await api.revokeKey(dbName, deletingKey.value.id)
+    showDeleteKeyModal.value = false
+    deletingKey.value = null
+    await loadKeys()
+  } catch {}
 }
 
 function copyUrl() {
-  navigator.clipboard.writeText(`https://api.boltstore.local/v1/dbs/${dbName}`)
+  navigator.clipboard.writeText(`${window.location.origin}/api/databases/${dbName}`)
   urlCopied.value = true
   setTimeout(() => urlCopied.value = false, 2000)
 }
 
 function copyKey() {
-  navigator.clipboard.writeText("bsk_new_...a1b2")
+  navigator.clipboard.writeText(newKeyValue.value)
   copied.value = true
   setTimeout(() => copied.value = false, 2000)
+}
+
+async function deleteDatabase() {
+  try {
+    await api.deleteDatabase(dbName)
+    router.push("/databases")
+  } catch {}
 }
 </script>

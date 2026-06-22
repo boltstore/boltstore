@@ -69,6 +69,7 @@
               <tr class="border-b border-border-default">
                 <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Name</th>
                 <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Group</th>
+                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Status</th>
                 <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Created</th>
                 <th class="text-right px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated"></th>
               </tr>
@@ -87,6 +88,10 @@
                     {{ db.group || 'default' }}
                   </span>
                 </td>
+                <td class="px-5 py-3 whitespace-nowrap">
+                  <Badge v-if="db.readonly" variant="yellow">Read-only</Badge>
+                  <Badge v-else variant="green">Active</Badge>
+                </td>
                 <td class="px-5 py-3 text-text-secondary text-xs whitespace-nowrap">{{ formatDate(db.createdAt) }}</td>
                 <td class="px-5 py-3 text-right">
                   <router-link :to="'/databases/' + db.name" class="text-text-muted hover:text-text-primary transition-colors">
@@ -95,7 +100,7 @@
                 </td>
               </tr>
               <tr v-if="databases.length === 0">
-                <td colspan="4" class="px-5 py-8 text-center text-sm text-text-muted">No databases yet. Create one to get started.</td>
+                <td colspan="5" class="px-5 py-8 text-center text-sm text-text-muted">No databases yet. Create one to get started.</td>
               </tr>
             </tbody>
           </table>

@@ -2,6 +2,7 @@ import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
 import { authenticateApiKey, checkDbCors } from "../middleware/auth";
+import { checkReadOnly } from "../middleware/readonly";
 
 const VALID_TABLE_NAME = /^[a-z_][a-z0-9_]*$/i;
 const VALID_COLUMN_NAME = /^[a-z_][a-z0-9_]*$/i;
@@ -48,6 +49,8 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
     if (auth instanceof Response) return auth;
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
+    const ro = checkReadOnly(manager, params.db);
+    if (ro) return ro;
 
     const body = await req.json() as { name?: string; columns?: ColumnDef[] };
     if (!body.name || !VALID_TABLE_NAME.test(body.name)) {
@@ -91,6 +94,8 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
     if (auth instanceof Response) return auth;
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
+    const ro = checkReadOnly(manager, params.db);
+    if (ro) return ro;
 
     const body = await req.json() as { add_columns?: ColumnDef[]; drop_columns?: string[]; rename_column?: { from: string; to: string } };
     const pool = manager.get(params.db);
@@ -126,6 +131,8 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
     if (auth instanceof Response) return auth;
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
+    const ro = checkReadOnly(manager, params.db);
+    if (ro) return ro;
 
     const pool = manager.get(params.db);
     pool.write().run(`DROP TABLE IF EXISTS "${params.table}"`);

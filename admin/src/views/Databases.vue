@@ -47,7 +47,8 @@
                 </span>
               </td>
               <td class="px-5 py-3 text-center">
-                <Badge variant="green">Active</Badge>
+                <Badge v-if="db.readonly" variant="yellow">Read-only</Badge>
+                <Badge v-else variant="green">Active</Badge>
               </td>
               <td class="px-5 py-3 text-text-secondary text-center text-xs">{{ formatDate(db.createdAt) }}</td>
               <td class="px-5 py-3 text-right">

@@ -27,7 +27,7 @@ export interface DatabaseInfo {
   name: string
   path: string
   createdAt: string
-  tables?: string[]
+  readonly?: boolean
 }
 
 export interface ApiKeyInfo {

@@ -9,6 +9,7 @@ export interface DatabaseInfo {
   createdAt: string;
   updatedAt?: string;
   group?: string;
+  readonly?: boolean;
 }
 
 export interface ManagerConfig {
@@ -168,6 +169,8 @@ export class DatabaseManager {
     try {
       const { rmSync } = require("node:fs");
       rmSync(row.file_path, { force: true });
+      rmSync(row.file_path + "-wal", { force: true });
+      rmSync(row.file_path + "-shm", { force: true });
     } catch {}
   }
 
@@ -181,11 +184,13 @@ export class DatabaseManager {
     }[];
     return rows.map((r) => {
       let group: string | undefined;
+      let readonly = false;
       try {
         const cfg = JSON.parse(r.config);
         group = cfg.group;
+        readonly = !!cfg.readonly;
       } catch {}
-      return { id: r.name, name: r.name, path: r.file_path, createdAt: r.created_at, group };
+      return { id: r.name, name: r.name, path: r.file_path, createdAt: r.created_at, group, readonly };
     });
   }
 
