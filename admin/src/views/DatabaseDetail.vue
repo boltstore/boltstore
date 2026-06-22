@@ -134,7 +134,7 @@
 
     <div v-show="activeTab === 'schema'" class="space-y-4">
       <div
-        v-for="t in schemaTables"
+        v-for="t in loadedSchemas"
         :key="t.name"
         class="bg-bolt-card border border-border-default rounded-lg overflow-hidden"
       >
@@ -333,8 +333,10 @@
         <textarea
           class="input-field w-full h-60 resize-none font-mono text-xs leading-relaxed"
           spellcheck="false"
-          :value="schemaDdl"
+          v-model="schemaDdl"
         ></textarea>
+        <p v-if="schemaError" class="text-xs text-red-400 mt-2">{{ schemaError }}</p>
+        <p v-if="schemaSuccess" class="text-xs text-green-400 mt-2">{{ schemaSuccess }}</p>
         <div class="mt-4">
           <label class="label">Preview changes</label>
           <div class="p-3 bg-bolt-elevated border border-border-default rounded-md text-xs text-text-muted font-mono">
@@ -345,7 +347,7 @@
       <template #footer>
         <div class="flex gap-2">
           <button class="btn-ghost w-full text-xs" @click="showSchemaDrawer = false">Cancel</button>
-          <button class="btn-primary w-full text-xs">Apply Changes</button>
+          <button class="btn-primary w-full text-xs" :disabled="schemaApplying" @click="applySchema">{{ schemaApplying ? 'Applying...' : 'Apply Changes' }}</button>
         </div>
       </template>
     </Drawer>
@@ -699,42 +701,35 @@ async function runQuery() {
   }
 }
 
-const schemaTables = [
-  {
-    name: "crawler_sources",
-    rows: 40,
-    columns: [
-      { name: "id", type: "INTEGER", nullable: false, default: null, constraint: "PRIMARY KEY", pk: true },
-      { name: "name", type: "TEXT", nullable: false, default: null, constraint: "UNIQUE", pk: false },
-      { name: "url", type: "TEXT", nullable: false, default: null, constraint: null, pk: false },
-      { name: "job_selector", type: "TEXT", nullable: true, default: null, constraint: null, pk: false },
-      { name: "title_selector", type: "TEXT", nullable: true, default: null, constraint: null, pk: false },
-      { name: "link_selector", type: "TEXT", nullable: true, default: null, constraint: null, pk: false },
-    ],
-  },
-  {
-    name: "jobs",
-    rows: 1248,
-    columns: [
-      { name: "id", type: "INTEGER", nullable: false, default: null, constraint: "PRIMARY KEY", pk: true },
-      { name: "title", type: "TEXT", nullable: false, default: null, constraint: null, pk: false },
-      { name: "url", type: "TEXT", nullable: false, default: null, constraint: null, pk: false },
-      { name: "company_id", type: "INTEGER", nullable: true, default: null, constraint: "FOREIGN KEY", pk: false },
-      { name: "status", type: "TEXT", nullable: false, default: "'new'", constraint: null, pk: false },
-      { name: "created_at", type: "DATETIME", nullable: false, default: "CURRENT_TIMESTAMP", constraint: null, pk: false },
-    ],
-  },
-  {
-    name: "users",
-    rows: 89,
-    columns: [
-      { name: "id", type: "INTEGER", nullable: false, default: null, constraint: "PRIMARY KEY", pk: true },
-      { name: "email", type: "TEXT", nullable: false, default: null, constraint: "UNIQUE", pk: false },
-      { name: "role", type: "TEXT", nullable: false, default: "'viewer'", constraint: null, pk: false },
-      { name: "created_at", type: "DATETIME", nullable: false, default: "CURRENT_TIMESTAMP", constraint: null, pk: false },
-    ],
-  },
-]
+const loadedSchemas = ref<{ name: string; rows: string; columns: { name: string; type: string; nullable: boolean; default: string | null; constraint: string | null; pk: boolean }[] }[]>([])
+
+async function loadSchemas() {
+  try {
+    const tableList = await api.listTables(dbName.value)
+    const schemas = []
+    for (const name of tableList.data) {
+      try {
+        const schema = await api.getTableSchema(dbName.value, name)
+        const columns = schema.data.columns.map(c => ({
+          name: c.name,
+          type: c.type,
+          nullable: !c.notnull,
+          default: c.dflt_value,
+          constraint: c.pk ? "PRIMARY KEY" : null,
+          pk: !!c.pk,
+        }))
+        schemas.push({ name, rows: "—", columns })
+      } catch {
+        schemas.push({ name, rows: "—", columns: [] })
+      }
+    }
+    loadedSchemas.value = schemas
+  } catch {}
+}
+
+watch(activeTab, (tab) => {
+  if (tab === "schema") loadSchemas()
+}, { immediate: true })
 
 const topQueries = [
   { query: "SELECT * FROM jobs WHERE company_id = ?", calls: "12,450", avgTime: "2.3ms", totalTime: "28.6s", rows: "3,112" },
@@ -752,7 +747,27 @@ watch(tableColumns, (cols) => {
     .map(c => ({ key: c.key, label: c.label, placeholder: `Enter ${c.label}`, value: "" }))
 }, { immediate: true })
 
-const schemaDdl = ref("-- Edit schema for crawler_sources\nALTER TABLE crawler_sources ADD COLUMN new_field TEXT;")
+const schemaDdl = ref("")
+const schemaError = ref("")
+const schemaSuccess = ref("")
+const schemaApplying = ref(false)
+
+async function applySchema() {
+  if (!schemaDdl.value.trim()) return
+  schemaApplying.value = true
+  schemaError.value = ""
+  schemaSuccess.value = ""
+  try {
+    await api.executeQuery(dbName.value, schemaDdl.value)
+    schemaSuccess.value = "Schema updated successfully"
+    showSchemaDrawer.value = false
+    loadSchemas()
+  } catch (e: unknown) {
+    schemaError.value = e instanceof Error ? e.message : "Failed to apply schema changes"
+  } finally {
+    schemaApplying.value = false
+  }
+}
 
 onMounted(() => {
   loadConfig()
@@ -870,6 +885,8 @@ async function saveRecord() {
 }
 
 function openSchemaEditor(name: string) {
+  schemaError.value = ""
+  schemaSuccess.value = ""
   schemaDdl.value = `-- Edit schema for ${name}\nALTER TABLE ${name} ADD COLUMN new_field TEXT;`
   showSchemaDrawer.value = true
 }

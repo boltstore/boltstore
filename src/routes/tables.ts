@@ -40,7 +40,7 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
 
     const pool = manager.get(params.db);
     const db = pool.read();
-    const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB '_*' ORDER BY name").all() as { name: string }[];
+    const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB '_*' AND name != 'sqlite_sequence' ORDER BY name").all() as { name: string }[];
     return jsonResponse({ data: tables.map(t => t.name) });
   });
 
