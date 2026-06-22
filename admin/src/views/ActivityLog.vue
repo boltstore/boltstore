@@ -1,22 +1,60 @@
 <script setup lang="ts">
+import { ref, onMounted } from "vue";
+import { useConnection } from "../stores/client";
 import AppLayout from "../components/layout/AppLayout.vue";
 import GithubBadge from "../components/ui/GithubBadge.vue";
 import { useSidebar } from "../composables/useSidebar";
 
+const { apiRequest } = useConnection();
 const { toggleSidebar } = useSidebar();
 
-const activityLogs = [
-  { timestamp: "2024-01-15 14:32:01", action: "Database Created", database: "callcenterninja", details: "Created by admin" },
-  { timestamp: "2024-01-15 14:28:45", action: "Query Executed", database: "app-production", details: "SELECT * FROM users" },
-  { timestamp: "2024-01-15 14:15:22", action: "Database Deleted", database: "test-db", details: "Deleted by admin" },
-  { timestamp: "2024-01-15 13:58:10", action: "Query Executed", database: "callcenterninja", details: "UPDATE crawler_sources SET status = 'active'" },
-  { timestamp: "2024-01-15 13:45:33", action: "Database Created", database: "analytics-staging", details: "Created by admin" },
-  { timestamp: "2024-01-15 13:22:18", action: "Query Executed", database: "app-production", details: "INSERT INTO jobs (title, url) VALUES (...)" },
-  { timestamp: "2024-01-15 12:56:44", action: "Settings Updated", database: "-", details: "Timezone changed to UTC" },
-  { timestamp: "2024-01-15 12:34:09", action: "Query Executed", database: "callcenterninja", details: "DELETE FROM jobs WHERE status = 'expired'" },
-  { timestamp: "2024-01-15 12:11:27", action: "Database Created", database: "app-production", details: "Created by admin" },
-  { timestamp: "2024-01-15 11:48:55", action: "Query Executed", database: "analytics-staging", details: "SELECT COUNT(*) FROM events" },
-];
+interface ActivityEntry {
+  id: string;
+  created_at: string;
+  action: string;
+  database_name: string | null;
+  target: string | null;
+  details: string | null;
+  admin_id: string | null;
+}
+
+const activityLogs = ref<ActivityEntry[]>([]);
+const loading = ref(true);
+
+onMounted(async () => {
+  try {
+    const res = await apiRequest<{ data: ActivityEntry[]; meta: { total: number } }>("GET", "/api/activity");
+    activityLogs.value = res.data ?? [];
+  } catch {
+    // Keep empty
+  }
+  loading.value = false;
+});
+
+function formatAction(action: string): string {
+  const map: Record<string, string> = {
+    "database.create": "Database Created",
+    "database.delete": "Database Deleted",
+    "database.rename": "Database Renamed",
+    "database.config.update": "Config Updated",
+    "database.export": "Database Exported",
+    "database.import": "Database Imported",
+    "api_key.create": "API Key Created",
+    "api_key.revoke": "API Key Revoked",
+    "api_key.rotate": "API Key Rotated",
+    "admin.login": "Admin Login",
+    "admin.logout": "Admin Logout",
+    "admin.create": "Admin Created",
+  };
+  return map[action] ?? action;
+}
+
+function actionClass(action: string): string {
+  if (action.startsWith("database.create") || action.startsWith("admin.create")) return "bg-green-500/10 text-green-400 border-green-500/20";
+  if (action.startsWith("database.delete")) return "bg-red-500/10 text-red-400 border-red-500/20";
+  if (action.startsWith("admin.login") || action.startsWith("api_key")) return "bg-accent-600/10 text-accent-400 border-accent-600/20";
+  return "bg-yellow-500/10 text-yellow-400 border-yellow-500/20";
+}
 </script>
 
 <template>
@@ -40,15 +78,21 @@ const activityLogs = [
           <option>All Actions</option>
           <option>Database Created</option>
           <option>Database Deleted</option>
-          <option>Query Executed</option>
-          <option>Settings Updated</option>
+          <option>API Key Created</option>
+          <option>Admin Login</option>
         </select>
         <input type="text" class="input-field text-xs py-2 px-3" placeholder="Filter by database..." />
       </div>
 
       <!-- Activity Table -->
       <div class="bg-bolt-card border border-border-default rounded-lg overflow-hidden">
-        <div class="overflow-x-auto">
+        <div v-if="loading" class="flex items-center justify-center py-12">
+          <div class="w-5 h-5 border-2 border-accent/30 border-t-accent rounded-full animate-spin"></div>
+        </div>
+        <div v-else-if="activityLogs.length === 0" class="text-center py-12 text-sm text-text-muted">
+          No activity logged yet.
+        </div>
+        <div v-else class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b border-border-default">
@@ -61,25 +105,20 @@ const activityLogs = [
             <tbody>
               <tr
                 v-for="log in activityLogs"
-                :key="log.timestamp"
+                :key="log.id"
                 class="border-b border-border-subtle hover:bg-bolt-hover transition-colors"
               >
-                <td class="px-5 py-3 text-text-secondary font-mono text-xs">{{ log.timestamp }}</td>
+                <td class="px-5 py-3 text-text-secondary font-mono text-xs">{{ log.created_at }}</td>
                 <td class="px-5 py-3">
                   <span
                     class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full border"
-                    :class="{
-                      'bg-green-500/10 text-green-400 border-green-500/20': log.action === 'Database Created',
-                      'bg-red-500/10 text-red-400 border-red-500/20': log.action === 'Database Deleted',
-                      'bg-accent-600/10 text-accent-400 border-accent-600/20': log.action === 'Query Executed',
-                      'bg-yellow-500/10 text-yellow-400 border-yellow-500/20': log.action === 'Settings Updated',
-                    }"
+                    :class="actionClass(log.action)"
                   >
-                    {{ log.action }}
+                    {{ formatAction(log.action) }}
                   </span>
                 </td>
-                <td class="px-5 py-3 text-text-secondary">{{ log.database }}</td>
-                <td class="px-5 py-3 text-text-muted text-xs">{{ log.details }}</td>
+                <td class="px-5 py-3 text-text-secondary">{{ log.database_name || "-" }}</td>
+                <td class="px-5 py-3 text-text-muted text-xs">{{ log.details || "-" }}</td>
               </tr>
             </tbody>
           </table>

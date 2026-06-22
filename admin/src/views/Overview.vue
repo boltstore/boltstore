@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
+import { useConnection } from "../stores/client";
 import AppLayout from "../components/layout/AppLayout.vue";
 import GithubBadge from "../components/ui/GithubBadge.vue";
 import MetricCard from "../components/ui/MetricCard.vue";
@@ -7,10 +8,14 @@ import TabButton from "../components/ui/TabButton.vue";
 import ChartBar from "../components/ui/ChartBar.vue";
 import { useSidebar } from "../composables/useSidebar";
 
-const router = useRouter();
+const { apiRequest } = useConnection();
 const { toggleSidebar } = useSidebar();
 
 const timeRange = ref("24h");
+const loading = ref(true);
+
+const health = ref({ status: "ok", version: "", databases: 0, uptime: 0 });
+const databases = ref<{ name: string; created_at: string }[]>([]);
 
 const chartBars = [
   40, 65, 45, 80, 55, 70, 60, 90, 75, 50,
@@ -18,35 +23,21 @@ const chartBars = [
   95, 70, 55, 80,
 ];
 
-const recentDatabases = [
-  {
-    name: "callcenterninja",
-    rowsRead: "528,001,446",
-    rowsWritten: "9,851",
-    storage: "14.79 MB",
-    group: "default",
-    groupColor: "bg-red-400",
-    status: "Active",
-  },
-  {
-    name: "app-production",
-    rowsRead: "2,145,302",
-    rowsWritten: "4,221",
-    storage: "3.12 MB",
-    group: "production",
-    groupColor: "bg-blue-400",
-    status: "Active",
-  },
-  {
-    name: "analytics-staging",
-    rowsRead: "45,892",
-    rowsWritten: "1,034",
-    storage: "856 KB",
-    group: "staging",
-    groupColor: "bg-yellow-400",
-    status: "Active",
-  },
-];
+const groupColors = ["bg-red-400", "bg-blue-400", "bg-yellow-400", "bg-green-400", "bg-purple-400"];
+
+onMounted(async () => {
+  try {
+    const [h, dbs] = await Promise.all([
+      apiRequest<{ status: string; version: string; databases: number; uptime: number }>("GET", "/api/health"),
+      apiRequest<{ data: { name: string; created_at: string }[]; meta?: { total: number } }>("GET", "/api/databases"),
+    ]);
+    health.value = h;
+    if (dbs.data) databases.value = dbs.data;
+  } catch {
+    // Keep defaults
+  }
+  loading.value = false;
+});
 </script>
 
 <template>
@@ -64,14 +55,18 @@ const recentDatabases = [
       <div class="flex items-center gap-3"></div>
     </header>
 
-    <div class="p-4 sm:p-6 max-w-6xl mx-auto">
+    <div v-if="loading" class="flex items-center justify-center py-24">
+      <div class="w-6 h-6 border-2 border-accent/30 border-t-accent rounded-full animate-spin"></div>
+    </div>
+
+    <div v-else class="p-4 sm:p-6 max-w-6xl mx-auto">
       <!-- Metrics -->
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <MetricCard
           title="Active Databases"
-          value="3"
+          :value="String(health.databases || databases.length)"
           icon="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"
-          subtext="2 groups"
+          subtext="v{{ health.version || '-' }} &middot; {{ health.uptime ? Math.floor(health.uptime / 3600) + 'h uptime' : '' }}"
         />
         <MetricCard
           title="Storage Used"
@@ -89,7 +84,7 @@ const recentDatabases = [
           title="Avg Latency"
           value="12ms"
           icon="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-          subtext="p95: 34ms \u00b7 p99: 56ms"
+          subtext="p95: 34ms &middot; p99: 56ms"
         />
       </div>
 
@@ -118,44 +113,36 @@ const recentDatabases = [
       <div class="bg-bolt-card border border-border-default rounded-lg overflow-hidden">
         <div class="flex items-center justify-between px-5 py-4 border-b border-border-default">
           <div class="text-sm font-medium text-text-primary">Recent Databases</div>
-          <a href="/dashboard/databases" class="text-xs text-accent-400 hover:text-accent-300 transition-colors">View all \u2192</a>
+          <a href="/dashboard/databases" class="text-xs text-accent-400 hover:text-accent-300 transition-colors">View all &rarr;</a>
         </div>
-        <div class="overflow-x-auto">
+        <div v-if="databases.length === 0" class="text-center py-12 text-sm text-text-muted">
+          No databases yet. Create one from the Databases page.
+        </div>
+        <div v-else class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b border-border-default">
                 <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Name</th>
-                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Rows Read</th>
-                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Rows Written</th>
-                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Storage</th>
-                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Group</th>
+                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Created</th>
                 <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Status</th>
                 <th class="text-right px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated"></th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="db in recentDatabases"
+                v-for="(db, i) in databases"
                 :key="db.name"
                 class="border-b border-border-subtle hover:bg-bolt-hover transition-colors"
               >
                 <td class="px-5 py-3">
                   <div class="flex items-center gap-2">
-                    <div class="w-2 h-2 rounded-full bg-accent-400"></div>
+                    <div class="w-2 h-2 rounded-full" :class="groupColors[i % groupColors.length]"></div>
                     <span class="font-medium text-text-primary">{{ db.name }}</span>
                   </div>
                 </td>
-                <td class="px-5 py-3 text-text-secondary">{{ db.rowsRead }}</td>
-                <td class="px-5 py-3 text-text-secondary">{{ db.rowsWritten }}</td>
-                <td class="px-5 py-3 text-text-secondary">{{ db.storage }}</td>
+                <td class="px-5 py-3 text-text-secondary text-xs">{{ db.created_at }}</td>
                 <td class="px-5 py-3">
-                  <span class="inline-flex items-center gap-1 text-xs text-text-secondary">
-                    <span class="w-2 h-2 rounded-sm" :class="db.groupColor"></span>
-                    {{ db.group }}
-                  </span>
-                </td>
-                <td class="px-5 py-3">
-                  <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-green-500/10 text-green-400 border border-green-500/20">{{ db.status }}</span>
+                  <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-green-500/10 text-green-400 border border-green-500/20">Active</span>
                 </td>
                 <td class="px-5 py-3 text-right">
                   <a :href="`/dashboard/databases/${db.name}`" class="text-text-muted hover:text-text-primary transition-colors">

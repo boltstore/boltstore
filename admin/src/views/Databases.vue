@@ -1,56 +1,56 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
+import { useConnection } from "../stores/client";
 import AppLayout from "../components/layout/AppLayout.vue";
 import GithubBadge from "../components/ui/GithubBadge.vue";
 import Modal from "../components/ui/Modal.vue";
 import { useSidebar } from "../composables/useSidebar";
 
+const { apiRequest } = useConnection();
 const { toggleSidebar } = useSidebar();
 
 const router = useRouter();
 const showCreateModal = ref(false);
+const loading = ref(true);
 
-const databases = [
-  {
-    name: "callcenterninja",
-    rowsRead: "528,001,446",
-    rowsWritten: "9,851",
-    storage: "14.79 MB",
-    group: "default",
-    groupColor: "bg-red-400",
-    status: "Active",
-  },
-  {
-    name: "app-production",
-    rowsRead: "2,145,302",
-    rowsWritten: "4,221",
-    storage: "3.12 MB",
-    group: "production",
-    groupColor: "bg-blue-400",
-    status: "Active",
-  },
-  {
-    name: "analytics-staging",
-    rowsRead: "45,892",
-    rowsWritten: "1,034",
-    storage: "856 KB",
-    group: "staging",
-    groupColor: "bg-yellow-400",
-    status: "Active",
-  },
-];
+interface DbEntry {
+  name: string;
+  created_at: string;
+  path: string;
+}
 
-const newDb = ref({
-  name: "",
-  group: "default",
-  region: "Auto (closest)",
-  seed: false,
+const databases = ref<DbEntry[]>([]);
+const newDbName = ref("");
+const createError = ref("");
+
+onMounted(async () => {
+  try {
+    const res = await apiRequest<{ data: DbEntry[]; meta?: { total: number } }>("GET", "/api/databases");
+    databases.value = res.data ?? [];
+  } catch {
+    // Keep empty
+  }
+  loading.value = false;
 });
+
+async function handleCreate() {
+  if (!newDbName.value.trim()) return;
+  createError.value = "";
+  try {
+    await apiRequest("POST", "/api/databases", { name: newDbName.value.trim() });
+    const res = await apiRequest<{ data: DbEntry[] }>("GET", "/api/databases");
+    databases.value = res.data ?? [];
+    showCreateModal.value = false;
+    newDbName.value = "";
+  } catch (e) {
+    createError.value = e instanceof Error ? e.message : "Failed to create database";
+  }
+}
 </script>
 
 <template>
-  <AppLayout @create-database="showCreateModal = true">
+  <AppLayout>
     <header class="h-14 border-b border-border-default flex items-center justify-between px-4 sm:px-6 bg-bolt-base/80 backdrop-blur-sm sticky top-0 z-30">
       <div class="flex items-center gap-2 text-sm">
         <button class="md:hidden p-1 text-text-muted hover:text-text-primary transition-colors" @click="toggleSidebar">
@@ -66,15 +66,18 @@ const newDb = ref({
     <div class="p-4 sm:p-6 max-w-6xl mx-auto">
       <!-- Database Table -->
       <div class="bg-bolt-card border border-border-default rounded-lg overflow-hidden">
-        <div class="overflow-x-auto">
+        <div v-if="loading" class="flex items-center justify-center py-12">
+          <div class="w-5 h-5 border-2 border-accent/30 border-t-accent rounded-full animate-spin"></div>
+        </div>
+        <div v-else-if="databases.length === 0" class="text-center py-12 text-sm text-text-muted">
+          No databases yet.
+        </div>
+        <div v-else class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b border-border-default">
                 <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Name</th>
-                <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Rows Read</th>
-                <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Rows Written</th>
-                <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Storage</th>
-                <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Group</th>
+                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Created</th>
                 <th class="text-center px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Status</th>
                 <th class="text-right px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated"></th>
               </tr>
@@ -91,17 +94,9 @@ const newDb = ref({
                     <span class="font-medium text-text-primary">{{ db.name }}</span>
                   </div>
                 </td>
-                <td class="px-5 py-3 text-text-secondary text-center">{{ db.rowsRead }}</td>
-                <td class="px-5 py-3 text-text-secondary text-center">{{ db.rowsWritten }}</td>
-                <td class="px-5 py-3 text-text-secondary text-center">{{ db.storage }}</td>
+                <td class="px-5 py-3 text-text-secondary text-xs">{{ db.created_at }}</td>
                 <td class="px-5 py-3 text-center">
-                  <span class="inline-flex items-center gap-1 text-xs text-text-secondary">
-                    <span class="w-2 h-2 rounded-sm" :class="db.groupColor"></span>
-                    {{ db.group }}
-                  </span>
-                </td>
-                <td class="px-5 py-3 text-center">
-                  <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-green-500/10 text-green-400 border border-green-500/20">{{ db.status }}</span>
+                  <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-green-500/10 text-green-400 border border-green-500/20">Active</span>
                 </td>
                 <td class="px-5 py-3 text-right">
                   <button class="btn-secondary btn-sm flex items-center gap-1 inline-flex" @click="router.push(`/databases/${db.name}`)">
@@ -116,10 +111,9 @@ const newDb = ref({
           </table>
         </div>
         <div class="flex items-center justify-between px-5 py-3 border-t border-border-default">
-          <div class="text-xs text-text-muted">Showing 3 of 3 databases</div>
+          <div class="text-xs text-text-muted">Showing {{ databases.length }} of {{ databases.length }} databases</div>
           <div class="flex items-center gap-2">
-            <button class="btn-secondary btn-sm opacity-50 cursor-not-allowed">Previous</button>
-            <button class="btn-secondary btn-sm opacity-50 cursor-not-allowed">Next</button>
+            <button class="btn-secondary btn-sm" @click="showCreateModal = true">+ New Database</button>
           </div>
         </div>
       </div>
@@ -138,33 +132,14 @@ const newDb = ref({
       <div class="p-5 space-y-4">
         <div>
           <label class="block text-xs font-medium text-text-secondary mb-1.5">Database Name</label>
-          <input v-model="newDb.name" type="text" class="input-field" placeholder="e.g., my-app-prod" />
+          <input v-model="newDbName" type="text" class="input-field" placeholder="e.g., my-app-prod" @keyup.enter="handleCreate" />
+          <p class="text-xs text-text-muted mt-1">Lowercase letters, numbers, hyphens, and underscores only.</p>
         </div>
-        <div>
-          <label class="block text-xs font-medium text-text-secondary mb-1.5">Group</label>
-          <select v-model="newDb.group" class="input-field appearance-none">
-            <option>default</option>
-            <option>production</option>
-            <option>staging</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-text-secondary mb-1.5">Region</label>
-          <select v-model="newDb.region" class="input-field appearance-none">
-            <option>Auto (closest)</option>
-            <option>US East (N. Virginia)</option>
-            <option>EU West (Ireland)</option>
-            <option>Asia Pacific (Tokyo)</option>
-          </select>
-        </div>
-        <div class="flex items-start gap-2">
-          <input id="seed" v-model="newDb.seed" type="checkbox" class="mt-0.5 w-3.5 h-3.5 rounded border-border-default bg-bolt-input accent-accent-600" />
-          <label for="seed" class="text-xs text-text-secondary">Seed with sample data (useful for testing)</label>
-        </div>
+        <p v-if="createError" class="text-xs text-red-400">{{ createError }}</p>
       </div>
       <div class="px-5 py-4 border-t border-border-default flex items-center justify-end gap-2">
         <button class="btn-secondary" @click="showCreateModal = false">Cancel</button>
-        <button class="btn-primary" @click="showCreateModal = false">Create Database</button>
+        <button class="btn-primary" @click="handleCreate">Create Database</button>
       </div>
     </Modal>
 
