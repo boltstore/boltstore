@@ -1,15 +1,15 @@
-<script setup lang="ts">
-const props = defineProps<{ modelValue: boolean }>();
-const emit = defineEmits<{ (e: "update:modelValue", value: boolean): void }>();
-
-function toggle() {
-  emit("update:modelValue", !props.modelValue);
-}
-</script>
-
 <template>
   <label class="toggle">
-    <input type="checkbox" :checked="modelValue" @change="toggle" />
-    <span class="toggle-slider" />
+    <input
+      type="checkbox"
+      :checked="modelValue"
+      @change="$emit('update:modelValue', ($event.target as HTMLInputElement).checked)"
+    />
+    <span class="toggle-slider"></span>
   </label>
 </template>
+
+<script setup lang="ts">
+defineProps<{ modelValue: boolean }>()
+defineEmits<{ "update:modelValue": [value: boolean] }>()
+</script>

@@ -1,16 +1,23 @@
-<script setup lang="ts">
-defineProps<{
-  variant: "green" | "yellow" | "red";
-  label: string;
-}>();
-
-const variantClasses = {
-  green: "badge-green",
-  yellow: "badge-yellow",
-  red: "badge-red",
-};
-</script>
-
 <template>
-  <span :class="variantClasses[variant]">{{ label }}</span>
+  <span
+    :class="[
+      'badge',
+      variant === 'green' ? 'badge-green' : '',
+      variant === 'yellow' ? 'badge-yellow' : '',
+      variant === 'red' ? 'badge-red' : '',
+    ]"
+  >
+    <slot />
+  </span>
 </template>
+
+<script setup lang="ts">
+withDefaults(
+  defineProps<{
+    variant?: "green" | "yellow" | "red"
+  }>(),
+  {
+    variant: "green",
+  }
+)
+</script>

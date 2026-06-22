@@ -1,19 +1,13 @@
-import { ref, readonly } from "vue";
+import { ref } from "vue"
 
-const sidebarOpen = ref(false);
+const isOpen = ref(false)
 
 export function useSidebar() {
-  function toggleSidebar() {
-    sidebarOpen.value = !sidebarOpen.value;
+  function toggle() {
+    isOpen.value = !isOpen.value
   }
-
-  function closeSidebar() {
-    sidebarOpen.value = false;
+  function close() {
+    isOpen.value = false
   }
-
-  return {
-    sidebarOpen: readonly(sidebarOpen),
-    toggleSidebar,
-    closeSidebar,
-  };
+  return { isOpen, toggle, close }
 }

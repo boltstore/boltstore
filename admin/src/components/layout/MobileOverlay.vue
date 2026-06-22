@@ -1,12 +1,13 @@
-<script setup lang="ts">
-defineProps<{ show: boolean }>();
-defineEmits<{ (e: "click"): void }>();
-</script>
-
 <template>
   <div
     class="sidebar-overlay"
-    :class="{ show }"
-    @click="$emit('click')"
-  />
+    :class="{ show: isOpen }"
+    @click="close"
+  ></div>
 </template>
+
+<script setup lang="ts">
+import { useSidebar } from "../../composables/useSidebar"
+
+const { isOpen, close } = useSidebar()
+</script>
