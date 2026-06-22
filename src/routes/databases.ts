@@ -15,11 +15,11 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
 
   router.post("/api/databases", async (req) => {
     if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
-    const body = await req.json() as { name?: string };
+    const body = await req.json() as { name?: string; group?: string };
     if (!body.name || !VALID_NAME.test(body.name)) {
       return errorResponse("VALIDATION", "Use only lowercase letters, numbers, hyphens, and underscores, starting with a letter or number.", 400);
     }
-    const info = manager.createDatabase(body.name);
+    const info = manager.createDatabase(body.name, body.group);
     logActivity(manager, { action: "database.create", admin_id: getAdminId(req, manager), database_name: body.name, ip: getClientIp(req) });
     return jsonResponse({ data: info }, 201);
   });

@@ -114,10 +114,10 @@ export const api = {
   // Databases
   listDatabases: () => request<ApiResponse<DatabaseInfo[]>>("/api/databases"),
   getDatabase: (name: string) => request<ApiResponse<DatabaseInfo>>(`/api/databases/${encodeURIComponent(name)}`),
-  createDatabase: (name: string) =>
+  createDatabase: (name: string, group?: string) =>
     request<ApiResponse<DatabaseInfo>>("/api/databases", {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, group }),
     }),
   renameDatabase: (name: string, newName: string) =>
     request<ApiResponse<{ name: string }>>(`/api/databases/${encodeURIComponent(name)}`, {

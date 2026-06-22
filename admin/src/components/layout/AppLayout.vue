@@ -47,6 +47,14 @@
           <label class="block text-xs font-medium text-text-secondary mb-1.5">Database Name</label>
           <input type="text" class="input-field" placeholder="e.g. my-database" v-model="newDbName">
         </div>
+        <div class="mb-4">
+          <label class="block text-xs font-medium text-text-secondary mb-1.5">Group</label>
+          <select class="input-field" v-model="newDbGroup">
+            <option value="">default</option>
+            <option value="production">production</option>
+            <option value="staging">staging</option>
+          </select>
+        </div>
         <div class="flex items-center justify-end gap-2">
           <button class="btn-ghost btn-sm" @click="showCreateModal = false">Cancel</button>
           <button class="btn-primary btn-sm" @click="createDatabase">Create</button>
@@ -60,7 +68,7 @@
 import { ref, onMounted, onUnmounted } from "vue"
 import { useRouter } from "vue-router"
 import { useSidebar } from "../../composables/useSidebar"
-import { hasSession } from "../../api/client"
+import { hasSession, api } from "../../api/client"
 import Sidebar from "./Sidebar.vue"
 import MobileOverlay from "./MobileOverlay.vue"
 import GithubBadge from "../ui/GithubBadge.vue"
@@ -80,16 +88,24 @@ const { toggle: toggleSidebar } = useSidebar()
 const router = useRouter()
 const showCreateModal = ref(false)
 const newDbName = ref("")
+const newDbGroup = ref("")
 
 function handleCreateDatabase() {
   newDbName.value = ""
+  newDbGroup.value = ""
   showCreateModal.value = true
 }
 
-function createDatabase() {
-  if (!newDbName.value.trim()) return
-  showCreateModal.value = false
-  newDbName.value = ""
+async function createDatabase() {
+  const name = newDbName.value.trim()
+  if (!name) return
+  try {
+    await api.createDatabase(name, newDbGroup.value || undefined)
+    showCreateModal.value = false
+    newDbName.value = ""
+    newDbGroup.value = ""
+    router.push(`/databases/${name}`)
+  } catch {}
 }
 
 function onKeyDown(e: KeyboardEvent) {

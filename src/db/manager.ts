@@ -8,6 +8,7 @@ export interface DatabaseInfo {
   path: string;
   createdAt: string;
   updatedAt?: string;
+  group?: string;
 }
 
 export interface ManagerConfig {
@@ -116,7 +117,7 @@ export class DatabaseManager {
     return pool;
   }
 
-  createDatabase(name: string): DatabaseInfo {
+  createDatabase(name: string, group?: string): DatabaseInfo {
     const { mkdirSync } = require("node:fs");
     const path = `${this.config.dataDir}/${name}.db`;
 
@@ -127,11 +128,12 @@ export class DatabaseManager {
     }
 
     const now = new Date().toISOString();
-    metaDb.run("INSERT INTO _databases (name, file_path, created_at) VALUES (?, ?, ?)", [name, path, now]);
+    const config = group ? JSON.stringify({ group }) : "{}";
+    metaDb.run("INSERT INTO _databases (name, file_path, created_at, config) VALUES (?, ?, ?, ?)", [name, path, now, config]);
     const pool = new DatabasePool({ path });
     this.appPools.set(name, pool);
 
-    return { id: name, name, path, createdAt: now };
+    return { id: name, name, path, createdAt: now, group };
   }
 
   registerDatabase(name: string, filePath: string): DatabasePool {
@@ -170,12 +172,20 @@ export class DatabaseManager {
 
   listDatabases(): DatabaseInfo[] {
     const metaDb = this.metaPool.read();
-    const rows = metaDb.query("SELECT name, file_path, created_at FROM _databases ORDER BY name").all() as {
+    const rows = metaDb.query("SELECT name, file_path, created_at, config FROM _databases ORDER BY name").all() as {
       name: string;
       file_path: string;
       created_at: string;
+      config: string;
     }[];
-    return rows.map((r) => ({ id: r.name, name: r.name, path: r.file_path, createdAt: r.created_at }));
+    return rows.map((r) => {
+      let group: string | undefined;
+      try {
+        const cfg = JSON.parse(r.config);
+        group = cfg.group;
+      } catch {}
+      return { id: r.name, name: r.name, path: r.file_path, createdAt: r.created_at, group };
+    });
   }
 
   exists(name: string): boolean {

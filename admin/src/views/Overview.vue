@@ -68,19 +68,26 @@
             <thead>
               <tr class="border-b border-border-default">
                 <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Name</th>
+                <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Group</th>
                 <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Created</th>
                 <th class="text-right px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated"></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="db in databases" :key="db.name" class="hover:bg-bolt-hover transition-colors">
-                <td class="px-5 py-3">
+                <td class="px-5 py-3 w-full">
                   <div class="flex items-center gap-2">
                     <div class="w-2 h-2 rounded-full bg-accent-400"></div>
                     <span class="font-medium text-text-primary">{{ db.name }}</span>
                   </div>
                 </td>
-                <td class="px-5 py-3 text-text-secondary text-xs">{{ formatDate(db.createdAt) }}</td>
+                <td class="px-5 py-3 whitespace-nowrap">
+                  <span class="inline-flex items-center gap-1 text-xs text-text-secondary">
+                    <span class="w-2 h-2 rounded-sm" :class="groupColor(db.group)"></span>
+                    {{ db.group || 'default' }}
+                  </span>
+                </td>
+                <td class="px-5 py-3 text-text-secondary text-xs whitespace-nowrap">{{ formatDate(db.createdAt) }}</td>
                 <td class="px-5 py-3 text-right">
                   <router-link :to="'/databases/' + db.name" class="text-text-muted hover:text-text-primary transition-colors">
                     <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
@@ -88,7 +95,7 @@
                 </td>
               </tr>
               <tr v-if="databases.length === 0">
-                <td colspan="3" class="px-5 py-8 text-center text-sm text-text-muted">No databases yet. Create one to get started.</td>
+                <td colspan="4" class="px-5 py-8 text-center text-sm text-text-muted">No databases yet. Create one to get started.</td>
               </tr>
             </tbody>
           </table>
@@ -125,6 +132,7 @@
 import { ref, onMounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import MetricCard from "../components/ui/MetricCard.vue"
+import Badge from "../components/ui/Badge.vue"
 import TabButton from "../components/ui/TabButton.vue"
 import ChartBar from "../components/ui/ChartBar.vue"
 import { api, type HealthResponse, type DatabaseInfo, type ActivityEntry } from "../api/client"
@@ -153,8 +161,14 @@ onMounted(async () => {
 
 function formatDate(dateStr: string) {
   if (!dateStr) return ""
-  const d = new Date(dateStr + "Z")
+  const d = new Date(dateStr.endsWith("Z") ? dateStr : dateStr + "Z")
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+}
+
+function groupColor(group?: string) {
+  if (group === "production") return "bg-blue-400"
+  if (group === "staging") return "bg-yellow-400"
+  return "bg-gray-400"
 }
 
 function formatTime(dateStr: string) {
