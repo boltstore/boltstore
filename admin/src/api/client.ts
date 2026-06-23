@@ -14,6 +14,11 @@ import type {
   DbConfig,
   AdminInfo,
   GlobalSettings,
+  AnalyticsOverview,
+  DatabaseAnalytics,
+  QueryLogEntry,
+  StorageSnapshot,
+  TopQuery,
 } from "./types"
 
 const STORAGE_TOKEN = "boltstore_session"
@@ -233,6 +238,18 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(settings),
     }),
+
+  // Analytics
+  getAnalyticsOverview: (range = "24h") => request<ApiResponse<AnalyticsOverview>>(`/api/analytics/overview?range=${range}`),
+  getDatabaseAnalytics: (name: string, range = "24h") =>
+    request<ApiResponse<DatabaseAnalytics>>(`/api/analytics/${encodeURIComponent(name)}/overview?range=${range}`),
+  getQueryLog: (name: string, range = "24h", limit = 20, offset = 0) =>
+    request<ApiResponse<QueryLogEntry[]>>(`/api/analytics/${encodeURIComponent(name)}/queries?range=${range}&limit=${limit}&offset=${offset}`),
+  getStorageHistory: (name: string) =>
+    request<ApiResponse<StorageSnapshot[]>>(`/api/analytics/${encodeURIComponent(name)}/size`),
+  getTopQueries: (range = "24h") => request<ApiResponse<TopQuery[]>>(`/api/analytics/top-queries?range=${range}`),
+  getVolume: (range = "24h") => request<ApiResponse<{ slots: string[]; counts: number[]; errors: number[]; max: number }>>(`/api/analytics/volume?range=${range}`),
+  getErrors: (limit = 20) => request<ApiResponse<QueryLogEntry[]>>(`/api/analytics/errors?limit=${limit}`),
 
   // Export
   exportDatabase: async (name: string) => {

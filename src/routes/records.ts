@@ -3,6 +3,7 @@ import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
 import { authenticateApiKey, checkDbCors } from "../middleware/auth";
 import { checkReadOnly } from "../middleware/readonly";
+import { recordAnalytics } from "./analytics";
 
 const MAX_LIMIT = 1000;
 const DEFAULT_LIMIT = 50;
@@ -102,6 +103,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const ro = checkReadOnly(manager, params.db);
     if (ro) return ro;
 
+    const start = performance.now();
     const body = await req.json();
     const pool = manager.get(params.db);
     const db = pool.write();
@@ -121,10 +123,12 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
         const insertedRow = pool.read().query(`SELECT rowid, * FROM "${params.table}" WHERE rowid = ?`).get(lastId);
         inserted.push(insertedRow || record);
       } catch (err: any) {
+        recordAnalytics(manager, { database: params.db, table: params.table, operation: "insert", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: err.message });
         return errorResponse("ERROR", err.message || "Failed to insert record.", 400);
       }
     }
 
+    recordAnalytics(manager, { database: params.db, table: params.table, operation: "insert", durationMs: performance.now() - start, rowCount: records.length, status: "ok" });
     return jsonResponse({ data: records.length === 1 ? inserted[0] : inserted }, 201);
   });
 
@@ -134,6 +138,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
 
+    const start = performance.now();
     const url = new URL(req.url);
     const query = url.searchParams;
     const pool = manager.get(params.db);
@@ -146,6 +151,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const limit = Math.min(parseInt(query.get("limit") || String(DEFAULT_LIMIT), 10), MAX_LIMIT);
     const offset = parseInt(query.get("offset") || "0", 10);
 
+    recordAnalytics(manager, { database: params.db, table: params.table, operation: "select", durationMs: performance.now() - start, rowCount: rows.length, status: "ok" });
     return jsonResponse({
       data: rows,
       meta: { total, limit, offset },
@@ -158,9 +164,14 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
 
+    const start = performance.now();
     const pool = manager.get(params.db);
     const row = pool.read().query(`SELECT rowid, * FROM "${params.table}" WHERE rowid = ?`).get(params.id);
-    if (!row) return errorResponse("NOT_FOUND", "Record not found.", 404);
+    if (!row) {
+      recordAnalytics(manager, { database: params.db, table: params.table, operation: "select", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: "Record not found" });
+      return errorResponse("NOT_FOUND", "Record not found.", 404);
+    }
+    recordAnalytics(manager, { database: params.db, table: params.table, operation: "select", durationMs: performance.now() - start, rowCount: 1, status: "ok" });
     return jsonResponse({ data: row });
   });
 
@@ -172,6 +183,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const ro = checkReadOnly(manager, params.db);
     if (ro) return ro;
 
+    const start = performance.now();
     const body = await req.json() as Record<string, any>;
     const keys = Object.keys(body);
     if (keys.length === 0) return errorResponse("VALIDATION", "No fields to update.", 400);
@@ -184,8 +196,10 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     try {
       pool.write().run(`UPDATE "${params.table}" SET ${setClause} WHERE rowid = ?`, vals);
       const updated = pool.read().query(`SELECT rowid, * FROM "${params.table}" WHERE rowid = ?`).get(params.id);
+      recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: 1, status: "ok" });
       return jsonResponse({ data: updated });
     } catch (err: any) {
+      recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: err.message });
       return errorResponse("ERROR", err.message || "Failed to update record.", 400);
     }
   });
@@ -198,8 +212,10 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const ro = checkReadOnly(manager, params.db);
     if (ro) return ro;
 
+    const start = performance.now();
     const pool = manager.get(params.db);
     pool.write().run(`DELETE FROM "${params.table}" WHERE rowid = ?`, [params.id]);
+    recordAnalytics(manager, { database: params.db, table: params.table, operation: "delete", durationMs: performance.now() - start, rowCount: 1, status: "ok" });
     return jsonResponse({ data: { deleted: true } });
   });
 }

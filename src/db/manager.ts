@@ -1,4 +1,5 @@
 import { DatabasePool } from "./pool";
+import type { AnalyticsManager } from "../analytics";
 
 export const SCHEMA_VERSION = 1;
 
@@ -24,6 +25,15 @@ export class DatabaseManager {
   private config: ManagerConfig;
   private metaPool: DatabasePool;
   private appPools: Map<string, DatabasePool> = new Map();
+  private analytics: AnalyticsManager | null = null;
+
+  setAnalytics(a: AnalyticsManager): void {
+    this.analytics = a;
+  }
+
+  getAnalytics(): AnalyticsManager | null {
+    return this.analytics;
+  }
 
   constructor(config?: ManagerConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };

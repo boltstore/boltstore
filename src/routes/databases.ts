@@ -72,6 +72,8 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     // Close old pool, remove old file
     manager.closePool(oldName);
     try { require("node:fs").rmSync(row.file_path); } catch {}
+    try { require("node:fs").rmSync(row.file_path + "-wal", { force: true }); } catch {}
+    try { require("node:fs").rmSync(row.file_path + "-shm", { force: true }); } catch {}
 
     logActivity(manager, { action: "database.rename", admin_id: getAdminId(req, manager), database_name: oldName, details: { from: oldName, to: body.name }, ip: getClientIp(req) });
     return jsonResponse({ data: { name: body.name } });

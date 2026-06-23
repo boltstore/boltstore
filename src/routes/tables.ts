@@ -3,6 +3,7 @@ import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
 import { authenticateApiKey, checkDbCors } from "../middleware/auth";
 import { checkReadOnly } from "../middleware/readonly";
+import { logActivity, getClientIp } from "./activity";
 
 const VALID_TABLE_NAME = /^[a-z_][a-z0-9_]*$/i;
 const VALID_COLUMN_NAME = /^[a-z_][a-z0-9_]*$/i;
@@ -13,6 +14,7 @@ interface ColumnDef {
   type: string;
   nullable?: boolean;
   primary_key?: boolean;
+  auto_increment?: boolean;
   unique?: boolean;
   default?: string;
   references?: { table: string; column: string };
@@ -21,8 +23,9 @@ interface ColumnDef {
 function buildCreateTableSQL(table: string, columns: ColumnDef[]): string {
   const cols = columns.map(c => {
     let sql = `"${c.name}" ${c.type.toUpperCase()}`;
-    if (!c.nullable) sql += " NOT NULL";
     if (c.primary_key) sql += " PRIMARY KEY";
+    if (c.auto_increment) sql += " AUTOINCREMENT";
+    if (!c.nullable) sql += " NOT NULL";
     if (c.unique) sql += " UNIQUE";
     if (c.default !== undefined) sql += ` DEFAULT ${c.default}`;
     if (c.references) sql += ` REFERENCES "${c.references.table}"("${c.references.column}")`;
@@ -68,6 +71,7 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
     const sql = buildCreateTableSQL(body.name, body.columns);
     try {
       pool.write().run(sql);
+      logActivity(manager, { action: "table.create", database_name: params.db, target: body.name, details: { columns: body.columns.length }, ip: getClientIp(req) });
       return jsonResponse({ data: { name: body.name, columns: body.columns } }, 201);
     } catch (err: any) {
       return errorResponse("ERROR", err.message || "Failed to create table.", 400);
@@ -97,9 +101,22 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
     const ro = checkReadOnly(manager, params.db);
     if (ro) return ro;
 
-    const body = await req.json() as { add_columns?: ColumnDef[]; drop_columns?: string[]; rename_column?: { from: string; to: string } };
+    const body = await req.json() as { name?: string; add_columns?: ColumnDef[]; drop_columns?: string[]; rename_column?: { from: string; to: string } };
     const pool = manager.get(params.db);
     const writeDb = pool.write();
+
+    if (body.name && body.name !== params.table) {
+      if (!VALID_TABLE_NAME.test(body.name)) {
+        return errorResponse("VALIDATION", "Invalid table name.", 400);
+      }
+      try {
+        writeDb.run(`ALTER TABLE "${params.table}" RENAME TO "${body.name}"`);
+        logActivity(manager, { action: "table.rename", database_name: params.db, target: body.name, details: { from: params.table, to: body.name }, ip: getClientIp(req) });
+      } catch (err: any) {
+        return errorResponse("ERROR", err.message || "Failed to rename table.", 400);
+      }
+      return jsonResponse({ data: { name: body.name } });
+    }
 
     if (body.add_columns) {
       for (const col of body.add_columns) {
@@ -136,6 +153,7 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
 
     const pool = manager.get(params.db);
     pool.write().run(`DROP TABLE IF EXISTS "${params.table}"`);
+    logActivity(manager, { action: "table.delete", database_name: params.db, target: params.table, ip: getClientIp(req) });
     return jsonResponse({ data: { deleted: true } });
   });
 }

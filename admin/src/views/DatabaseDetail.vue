@@ -15,7 +15,7 @@
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
           Download
         </button>
-        <span class="text-xs text-text-muted hidden sm:inline">14.79 MB · 528M rows read · 9.8K rows written</span>
+        <span class="text-xs text-text-muted hidden sm:inline">{{ dbAnalytics ? `${formatBytes(dbAnalytics.storageBytes)} · ${dbAnalytics.queries.toLocaleString()} queries (24h)` : '' }}</span>
       </div>
     </template>
 
@@ -34,27 +34,40 @@
       </div>
       <div class="flex items-center gap-2 text-[10px] text-text-muted pb-1">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
-        SQLite 3.42.0 · 17ms
+        SQLite · {{ dbAnalytics ? `${dbAnalytics.avgLatencyMs}ms avg` : '' }}
       </div>
     </div>
 
     <div v-show="activeTab === 'data'" class="flex flex-col md:flex-row gap-4">
       <div class="w-56 shrink-0">
+        <p v-if="tableFeedback" class="text-[10px] text-green-400 mb-2">{{ tableFeedback }}</p>
         <div class="flex items-center gap-2 mb-3">
           <input type="text" class="input-field text-xs py-2" placeholder="Search tables..." style="font-family:Inter" v-model="tableSearch">
+          <button class="btn-primary btn-sm shrink-0 text-xs flex items-center gap-1" @click="showAddTableDrawer = true">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Add
+          </button>
         </div>
         <div class="space-y-0.5">
           <div v-if="filteredTables.length === 0 && !loadingTables" class="px-2 py-3 text-xs text-text-muted">No tables found.</div>
           <div
             v-for="t in filteredTables"
             :key="t.name"
-            class="flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors"
+            class="flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors group"
             :class="t.name === selectedTable ? 'text-text-primary bg-bolt-hover' : 'text-text-secondary hover:bg-bolt-hover'"
             @click="selectTable(t.name)"
           >
             <svg class="w-3.5 h-3.5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
             {{ t.name }}
             <span class="ml-auto text-[10px] text-text-muted">{{ t.count || '' }}</span>
+            <div class="hidden group-hover:flex items-center gap-0.5 ml-1 shrink-0">
+              <button class="w-4 h-4 flex items-center justify-center rounded text-text-muted hover:text-accent-400 hover:bg-bolt-hover" title="Rename" @click.stop="startRename(t)">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+              </button>
+              <button class="w-4 h-4 flex items-center justify-center rounded text-text-muted hover:text-red-400 hover:bg-red-500/10" title="Delete" @click.stop="startDeleteTable(t)">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -206,6 +219,9 @@
               <td class="text-right text-text-secondary">{{ q.totalTime }}</td>
               <td class="text-right text-text-secondary">{{ q.rows }}</td>
             </tr>
+            <tr v-if="topQueries.length === 0">
+              <td colspan="5" class="px-5 py-8 text-center text-sm text-text-muted">No query data yet. Run some queries to see analytics.</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -318,9 +334,78 @@
             v-model="field.value"
           >
         </div>
+        <p v-if="addRecordError" class="text-xs text-red-400 mt-2">{{ addRecordError }}</p>
       </template>
       <template #footer>
         <button class="btn-primary w-full" @click="saveRecord">Save Record</button>
+      </template>
+    </Drawer>
+
+    <Drawer :open="showAddTableDrawer" @close="showAddTableDrawer = false">
+      <template #header>
+        <svg class="w-5 h-5 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <span class="text-sm font-medium text-text-primary">Add Table</span>
+      </template>
+      <template #body>
+        <div class="form-group">
+          <label>Table Name</label>
+          <input type="text" class="input-field" placeholder="table_name" v-model="newTableName">
+        </div>
+        <p class="text-[10px] text-text-muted mt-3 mb-2">Columns</p>
+        <div class="space-y-2">
+          <div v-for="(col, i) in newTableColumns" :key="i" class="bg-bolt-elevated border border-border-subtle rounded-md overflow-hidden">
+            <div class="p-2 pb-1">
+              <div class="flex items-center gap-1.5 mb-1.5">
+                <input type="text" class="input-field text-xs py-1.5 flex-1 min-w-0" placeholder="Column name" v-model="col.name">
+                <select class="input-field text-xs py-1.5 shrink-0 appearance-none" style="font-family:Inter;width:78px" v-model="col.type">
+                  <option>text</option>
+                  <option>integer</option>
+                  <option>real</option>
+                  <option>blob</option>
+                  <option>numeric</option>
+                  <option>boolean</option>
+                  <option>date</option>
+                  <option>datetime</option>
+                </select>
+                <button v-if="newTableColumns.length > 1" class="w-5 h-5 flex items-center justify-center text-text-muted hover:text-red-400 shrink-0" @click="newTableColumns.splice(i, 1)">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+              </div>
+              <div class="flex items-center gap-2 text-[10px] flex-wrap">
+                <label class="flex items-center gap-1 text-text-muted cursor-pointer">
+                  <input type="checkbox" class="w-3 h-3 accent-accent-600" v-model="col.primary_key"> PK
+                </label>
+                <label v-if="col.primary_key" class="flex items-center gap-1 cursor-pointer" :class="col.type === 'integer' ? 'text-text-muted' : 'text-text-muted/40'">
+                  <input type="checkbox" class="w-3 h-3 accent-accent-600" :disabled="col.type !== 'integer'" v-model="col.auto_increment"> AI
+                  <span v-if="col.type !== 'integer'" class="text-[9px]">(int)</span>
+                </label>
+                <span class="text-border-subtle">|</span>
+                <label class="flex items-center gap-1 text-text-muted cursor-pointer">
+                  <input type="checkbox" class="w-3 h-3 accent-accent-600" :checked="!col.nullable" @change="col.nullable = !col.nullable"> Not null
+                </label>
+                <label class="flex items-center gap-1 text-text-muted cursor-pointer">
+                  <input type="checkbox" class="w-3 h-3 accent-accent-600" v-model="col.unique"> Unique
+                </label>
+                <button class="text-text-muted hover:text-accent-400 ml-auto" @click="col._showFk = !col._showFk" :class="col._showFk ? 'text-accent-400' : ''">FK</button>
+                <button v-if="!col.primary_key" class="text-text-muted hover:text-accent-400" @click="col._showDefault = !col._showDefault">default</button>
+              </div>
+            </div>
+            <div v-if="col._showFk" class="px-2 pb-2 flex items-center gap-1.5 border-t border-border-subtle pt-2">
+              <span class="text-[10px] text-text-muted shrink-0">FK →</span>
+              <input type="text" class="input-field text-xs py-1.5 flex-1" placeholder="table" v-model="col.fk_table">
+              <span class="text-text-muted text-[10px]">.</span>
+              <input type="text" class="input-field text-xs py-1.5" placeholder="column" style="width:100px" v-model="col.fk_column">
+            </div>
+            <div v-if="col._showDefault && !col.primary_key" class="px-2 pb-2 border-t border-border-subtle pt-2">
+              <input type="text" class="input-field text-xs py-1.5" placeholder="Default value" v-model="col.default">
+            </div>
+          </div>
+        </div>
+          <button class="btn-ghost btn-sm text-xs mt-2" @click="newTableColumns.push({ name: '', type: 'text', primary_key: false, auto_increment: false, nullable: false, default: '', unique: false, fk_table: '', fk_column: '', _showFk: false, _showDefault: false })">+ Add column</button>
+        <p v-if="addTableError" class="text-xs text-red-400 mt-3">{{ addTableError }}</p>
+      </template>
+      <template #footer>
+        <button class="btn-primary w-full" :disabled="addingTable" @click="createTable">{{ addingTable ? 'Creating...' : 'Create Table' }}</button>
       </template>
     </Drawer>
 
@@ -485,6 +570,50 @@
         </div>
       </div>
     </div>
+    <div
+      class="fixed inset-0 z-50"
+      :class="showRenameTableModal ? 'flex items-center justify-center' : 'hidden'"
+      style="background: rgba(0,0,0,0.6);"
+      @click="showRenameTableModal = false"
+    >
+      <div class="bg-bolt-card border border-border-default rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl" @click.stop>
+        <h3 class="text-sm font-medium text-text-primary mb-4">Rename Table</h3>
+        <div class="mb-4">
+          <input type="text" class="input-field" v-model="renameTableName" placeholder="New table name" @keyup.enter="confirmRename">
+          <p v-if="renameError" class="text-xs text-red-400 mt-1">{{ renameError }}</p>
+        </div>
+        <div class="flex items-center justify-end gap-2">
+          <button class="btn-ghost btn-sm" @click="showRenameTableModal = false">Cancel</button>
+          <button class="btn-primary btn-sm" :disabled="renamingTable" @click="confirmRename">{{ renamingTable ? 'Renaming...' : 'Rename' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="fixed inset-0 z-50"
+      :class="showDeleteTableModal ? 'flex items-center justify-center' : 'hidden'"
+      style="background: rgba(0,0,0,0.6);"
+      @click="showDeleteTableModal = false"
+    >
+      <div class="bg-bolt-card border border-border-default rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl" @click.stop>
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+            <svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.268 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+          </div>
+          <div>
+            <h3 class="text-sm font-medium text-text-primary">Delete Table</h3>
+            <p class="text-xs text-red-400 mt-0.5">This action is permanent. All data will be removed.</p>
+          </div>
+        </div>
+        <div class="p-3 bg-bolt-elevated border border-border-default rounded-md mb-4 text-xs text-text-muted">
+          Are you sure you want to delete <strong class="text-text-primary">{{ deletingTable?.name }}</strong>?
+        </div>
+        <div class="flex items-center justify-end gap-2">
+          <button class="btn-ghost btn-sm" @click="showDeleteTableModal = false">Cancel</button>
+          <button class="btn-primary btn-sm bg-red-600 hover:bg-red-500 border-red-500/50" @click="confirmDeleteTable">Delete</button>
+        </div>
+      </div>
+    </div>
   </AppLayout>
 </template>
 
@@ -494,7 +623,7 @@ import { useRoute, useRouter } from "vue-router"
 import AppLayout from "../components/layout/AppLayout.vue"
 import DataTable, { type ColumnDef } from "../components/ui/DataTable.vue"
 import Drawer from "../components/ui/Drawer.vue"
-import { api, type ApiKeyInfo } from "../api/client"
+import { api, type ApiKeyInfo, type DatabaseAnalytics } from "../api/client"
 
 const route = useRoute()
 const router = useRouter()
@@ -520,6 +649,21 @@ const nameSaved = ref(false)
 const renaming = ref(false)
 const editableName = ref("")
 const deletingRows = ref<number[]>([])
+const dbAnalytics = ref<DatabaseAnalytics | null>(null)
+const showRenameTableModal = ref(false)
+const showDeleteTableModal = ref(false)
+const renameTableName = ref("")
+const renamingTable = ref(false)
+const renameError = ref("")
+const renameTargetTable = ref<{ name: string } | null>(null)
+const deletingTable = ref<{ name: string } | null>(null)
+const showAddTableDrawer = ref(false)
+const newTableName = ref("")
+const newTableColumns = ref([{ name: "", type: "text", primary_key: false, auto_increment: false, nullable: false, default: "", unique: false, fk_table: "", fk_column: "", _showFk: false, _showDefault: false }])
+const addingTable = ref(false)
+const addTableError = ref("")
+const addRecordError = ref("")
+const tableFeedback = ref("")
 
 function onKeyDown(e: KeyboardEvent) {
   if (e.key !== "Escape") return
@@ -528,6 +672,9 @@ function onKeyDown(e: KeyboardEvent) {
   if (showNewKeyModal.value) showNewKeyModal.value = false
   if (showDeleteKeyModal.value) showDeleteKeyModal.value = false
   if (showDeleteDatabaseModal.value) showDeleteDatabaseModal.value = false
+  if (showRenameTableModal.value) showRenameTableModal.value = false
+  if (showDeleteTableModal.value) showDeleteTableModal.value = false
+  if (showAddTableDrawer.value) showAddTableDrawer.value = false
 }
 
 onMounted(() => window.addEventListener("keydown", onKeyDown, { capture: true }))
@@ -557,6 +704,7 @@ watch(dbName, (name) => {
   loadConfig()
   loadKeys()
   loadTables()
+  loadAnalytics()
 })
 
 async function loadTables() {
@@ -606,6 +754,16 @@ async function loadRecords() {
         label: key,
         type: typeof res.data[0][key] === "number" ? "integer" : "text",
       }))
+    }
+    if (tableColumns.value.length === 0) {
+      try {
+        const schema = await api.getTableSchema(dbName.value, selectedTable.value)
+        tableColumns.value = schema.data.columns.map(c => ({
+          key: c.name,
+          label: c.name,
+          type: c.type.toLowerCase().startsWith("int") || c.type.toLowerCase().startsWith("real") ? "integer" : "text",
+        }))
+      } catch {}
     }
     recordTiming.value = Math.round(performance.now() - start)
   } catch (e: unknown) {
@@ -739,13 +897,16 @@ watch(activeTab, (tab) => {
   if (tab === "schema") loadSchemas()
 }, { immediate: true })
 
-const topQueries = [
-  { query: "SELECT * FROM jobs WHERE company_id = ?", calls: "12,450", avgTime: "2.3ms", totalTime: "28.6s", rows: "3,112" },
-  { query: "INSERT INTO jobs (title, url, company_id) VALUES (?, ?, ?)", calls: "3,891", avgTime: "5.1ms", totalTime: "19.8s", rows: "3,891" },
-  { query: "UPDATE jobs SET status = ? WHERE id = ?", calls: "2,104", avgTime: "3.8ms", totalTime: "8.0s", rows: "2,104" },
-  { query: "SELECT COUNT(*) FROM crawler_sources WHERE name = ?", calls: "1,876", avgTime: "1.1ms", totalTime: "2.1s", rows: "1,876" },
-  { query: "DELETE FROM jobs WHERE created_at < datetime('now', '-30 days')", calls: "12", avgTime: "45.2ms", totalTime: "542.4ms", rows: "8,421" },
-]
+const topQueries = computed(() => {
+  if (!dbAnalytics.value?.topTables) return []
+  return dbAnalytics.value.topTables.map(t => ({
+    query: t.table_name,
+    calls: t.calls.toLocaleString(),
+    avgTime: `${t.avg_ms.toFixed(1)}ms`,
+    totalTime: `${(t.calls * t.avg_ms / 1000).toFixed(1)}s`,
+    rows: t.calls.toLocaleString(),
+  }))
+})
 
 const addFields = ref<{ key: string; label: string; placeholder: string; value: string }[]>([])
 
@@ -753,7 +914,12 @@ watch(tableColumns, (cols) => {
   addFields.value = cols
     .filter(c => c.key !== "rowid")
     .map(c => ({ key: c.key, label: c.label, placeholder: `Enter ${c.label}`, value: "" }))
+  addRecordError.value = ""
 }, { immediate: true })
+
+watch(showAddDrawer, (open) => {
+  if (open) addRecordError.value = ""
+})
 
 const schemaDdl = ref("")
 const schemaError = ref("")
@@ -781,6 +947,7 @@ onMounted(() => {
   loadConfig()
   loadKeys()
   loadTables()
+  loadAnalytics()
 })
 
 async function loadConfig() {
@@ -788,6 +955,20 @@ async function loadConfig() {
     const res = await api.getConfig(dbName.value)
     dbConfig.value = res.data
   } catch {}
+}
+
+async function loadAnalytics() {
+  try {
+    const res = await api.getDatabaseAnalytics(dbName.value)
+    dbAnalytics.value = res.data
+  } catch {}
+}
+
+function formatBytes(bytes: number) {
+  if (bytes === 0) return "0 B"
+  const units = ["B", "KB", "MB", "GB", "TB"]
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
 }
 
 async function saveGroup(group: string) {
@@ -897,12 +1078,15 @@ async function saveRecord() {
   for (const field of addFields.value) {
     if (field.value) record[field.key] = field.value
   }
+  addRecordError.value = ""
   try {
     await api.createRecord(dbName.value, selectedTable.value, record)
     showAddDrawer.value = false
     addFields.value.forEach(f => f.value = "")
     await loadRecords()
-  } catch {}
+  } catch (e: unknown) {
+    addRecordError.value = e instanceof Error ? e.message : "Failed to save record"
+  }
 }
 
 function openSchemaEditor(name: string) {
@@ -955,5 +1139,81 @@ async function deleteDatabase() {
     await api.deleteDatabase(dbName.value)
     router.push("/databases")
   } catch {}
+}
+
+function startRename(t: { name: string }) {
+  renameTargetTable.value = t
+  renameTableName.value = t.name
+  renameError.value = ""
+  showRenameTableModal.value = true
+}
+
+async function confirmRename() {
+  const newName = renameTableName.value.trim()
+  if (!newName || newName === renameTargetTable.value?.name) return
+  renamingTable.value = true
+  renameError.value = ""
+  try {
+    await api.alterTable(dbName.value, renameTargetTable.value!.name, { name: newName })
+    showRenameTableModal.value = false
+    tableFeedback.value = `Table renamed to "${newName}"`
+    setTimeout(() => tableFeedback.value = "", 3000)
+    if (selectedTable.value === renameTargetTable.value?.name) {
+      selectedTable.value = newName
+    }
+    await loadTables()
+  } catch (e: unknown) {
+    renameError.value = e instanceof Error ? e.message : "Failed to rename table"
+  }
+  renamingTable.value = false
+}
+
+function startDeleteTable(t: { name: string }) {
+  deletingTable.value = t
+  showDeleteTableModal.value = true
+}
+
+async function confirmDeleteTable() {
+  if (!deletingTable.value) return
+  try {
+    await api.deleteTable(dbName.value, deletingTable.value.name)
+    showDeleteTableModal.value = false
+    tableFeedback.value = `Table "${deletingTable.value.name}" deleted`
+    setTimeout(() => tableFeedback.value = "", 3000)
+    if (selectedTable.value === deletingTable.value.name) {
+      selectedTable.value = ""
+    }
+    await loadTables()
+  } catch {}
+}
+
+async function createTable() {
+  const name = newTableName.value.trim()
+  const columns = newTableColumns.value.filter(c => c.name.trim())
+  if (!name) { addTableError.value = "Table name is required."; return }
+  if (columns.length === 0) { addTableError.value = "At least one column is required."; return }
+  addingTable.value = true
+  addTableError.value = ""
+  try {
+    await api.createTable(dbName.value, name, columns.map(c => ({
+      name: c.name.trim(),
+      type: c.type,
+      primary_key: c.primary_key || undefined,
+      auto_increment: c.auto_increment || undefined,
+      nullable: c.nullable ? undefined : false,
+      default: c.default?.trim() || undefined,
+      unique: c.unique || undefined,
+      references: (c.fk_table?.trim() && c.fk_column?.trim()) ? { table: c.fk_table.trim(), column: c.fk_column.trim() } : undefined,
+    })))
+    showAddTableDrawer.value = false
+    newTableName.value = ""
+    newTableColumns.value = [{ name: "", type: "text", primary_key: false, auto_increment: false, nullable: false, default: "", unique: false, fk_table: "", fk_column: "", _showFk: false, _showDefault: false }]
+    tableFeedback.value = `Table "${name}" created`
+    setTimeout(() => tableFeedback.value = "", 3000)
+    await loadTables()
+  } catch (e: unknown) {
+    addTableError.value = e instanceof Error ? e.message : "Failed to create table"
+  }
+  addingTable.value = false
 }
 </script>

@@ -79,6 +79,7 @@ export interface ColumnDef {
   type: string
   nullable?: boolean
   primary_key?: boolean
+  auto_increment?: boolean
   unique?: boolean
   default?: string
   references?: { table: string; column: string }
@@ -105,4 +106,51 @@ export interface DbConfig {
 
 export interface GlobalSettings {
   timezone: string
+}
+
+export interface AnalyticsOverview {
+  databases: number
+  queries: number
+  writes: number
+  avgLatencyMs: number
+  errorCount: number
+  totalStorageBytes: number
+}
+
+export interface DatabaseAnalytics {
+  database: string
+  queries: number
+  writes: number
+  avgLatencyMs: number
+  errorCount: number
+  storageBytes: number
+  tableCount: number
+  topTables: { table_name: string; calls: number; avg_ms: number; writes: number }[]
+}
+
+export interface QueryLogEntry {
+  id: number
+  database: string
+  table_name: string | null
+  operation: string
+  duration_ms: number
+  row_count: number
+  status: string
+  error_msg: string | null
+  timestamp: string
+}
+
+export interface StorageSnapshot {
+  size_bytes: number
+  table_count: number
+  timestamp: string
+}
+
+export interface TopQuery {
+  database: string
+  table_name: string | null
+  operation: string
+  calls: number
+  avg_ms: number
+  total_rows: number
 }

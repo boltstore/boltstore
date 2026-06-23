@@ -15,14 +15,19 @@ try {
   } else {
     const { createServer } = await import("./server");
     const { DatabaseManager } = await import("./db/manager");
+    const { AnalyticsManager } = await import("./analytics");
     const { autoInitConfig } = await import("./cli/init");
 
     const config = await autoInitConfig();
     const manager = new DatabaseManager({ dataDir: config.databasePath });
+    const analytics = new AnalyticsManager(config.databasePath);
+    analytics.startSnapshotTimer(() => manager.listDatabases().map(d => d.name));
+    manager.setAnalytics(analytics);
 
     const server = createServer({
       port: config.port,
       manager,
+      analytics,
       adminKey: config.adminKey,
       cors: {
         origins: config.corsOrigins,

@@ -1,9 +1,11 @@
 import { createServer, stopServerBackgroundTasks } from "./server";
 import { DatabaseManager } from "./db/manager";
+import { AnalyticsManager } from "./analytics";
 import { autoInitConfig } from "./cli/init";
 import { info, success, error } from "./cli-style";
 
 let manager: DatabaseManager | undefined;
+let analytics: AnalyticsManager | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
 
 try {
@@ -12,9 +14,14 @@ try {
   const dataDir = config.databasePath;
   manager = new DatabaseManager({ dataDir });
 
+  analytics = new AnalyticsManager(dataDir);
+  analytics.startSnapshotTimer(() => manager!.listDatabases().map(d => d.name));
+  manager.setAnalytics(analytics);
+
   server = createServer({
     port: config.port,
     manager,
+    analytics,
     adminKey: config.adminKey,
     cors: {
       origins: config.corsOrigins,
@@ -37,6 +44,7 @@ try {
   process.on("SIGINT", () => {
     info("Shutting down...");
     stopServerBackgroundTasks();
+    analytics?.stop();
     manager?.close();
     server?.stop();
     process.exit(0);
@@ -45,6 +53,7 @@ try {
   process.on("SIGTERM", () => {
     info("Shutting down...");
     stopServerBackgroundTasks();
+    analytics?.stop();
     manager?.close();
     server?.stop();
     process.exit(0);
@@ -55,4 +64,4 @@ try {
   process.exit(1);
 }
 
-export { server, manager };
+export { server, manager, analytics };

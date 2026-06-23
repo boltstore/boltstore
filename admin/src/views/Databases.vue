@@ -37,9 +37,9 @@
                   <span class="font-medium text-text-primary">{{ db.name }}</span>
                 </div>
               </td>
-              <td class="px-5 py-3 text-text-secondary text-center">—</td>
-              <td class="px-5 py-3 text-text-secondary text-center">—</td>
-              <td class="px-5 py-3 text-text-secondary text-center">—</td>
+              <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name)?.queries?.toLocaleString() || '—' }}</td>
+              <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name)?.writes?.toLocaleString() || '—' }}</td>
+              <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name) ? formatBytes(getDbAnalytics(db.name)!.storageBytes) : '—' }}</td>
               <td class="px-5 py-3 text-center">
                 <span class="inline-flex items-center gap-1 text-xs text-text-secondary">
                   <span class="w-2 h-2 rounded-sm" :class="groupColor(db.group)"></span>
@@ -174,7 +174,7 @@
 import { ref, computed, onMounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import Badge from "../components/ui/Badge.vue"
-import { api, type DatabaseInfo } from "../api/client"
+import { api, type DatabaseInfo, type DatabaseAnalytics } from "../api/client"
 
 const databases = ref<DatabaseInfo[]>([])
 
@@ -200,6 +200,7 @@ const importName = ref("")
 const importGroup = ref("")
 const importError = ref("")
 const fileInput = ref<HTMLInputElement | null>(null)
+const dbAnalytics = ref<Record<string, DatabaseAnalytics>>({})
 
 onMounted(() => load())
 
@@ -207,7 +208,24 @@ async function load() {
   try {
     const res = await api.listDatabases()
     databases.value = res.data
+    for (const db of res.data) {
+      try {
+        const a = await api.getDatabaseAnalytics(db.name)
+        dbAnalytics.value[db.name] = a.data
+      } catch {}
+    }
   } catch {}
+}
+
+function getDbAnalytics(name: string) {
+  return dbAnalytics.value[name]
+}
+
+function formatBytes(bytes: number) {
+  if (bytes === 0) return "0 B"
+  const units = ["B", "KB", "MB", "GB", "TB"]
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
 }
 
 function groupColor(group?: string) {

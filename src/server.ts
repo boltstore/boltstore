@@ -13,6 +13,8 @@ import { registerTransferRoutes } from "./routes/transfer";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerActivityRoutes } from "./routes/activity";
 import { registerSettingsRoutes } from "./routes/settings";
+import { registerAnalyticsRoutes } from "./routes/analytics";
+import { AnalyticsManager } from "./analytics";
 
 export interface ServerConfig {
   port: number;
@@ -22,6 +24,7 @@ export interface ServerConfig {
   requestTimeoutMs?: number;
   adminKey?: string;
   devDashboardUrl?: string;
+  analytics?: AnalyticsManager;
 }
 
 export interface ApiResponse {
@@ -75,9 +78,10 @@ export function safeErrorResponse(err: unknown): Response {
   return errorResponse("INTERNAL_ERROR", "An unexpected error occurred.", 500);
 }
 
-export function createRouter(config: { manager?: DatabaseManager; adminKey?: string }): Router {
+export function createRouter(config: { manager?: DatabaseManager; adminKey?: string; analytics?: AnalyticsManager }): Router {
   const router = new Router();
   const manager = config.manager;
+  const analytics = config.analytics;
 
   registerHealthRoutes(router, manager);
   if (manager) {
@@ -91,12 +95,15 @@ export function createRouter(config: { manager?: DatabaseManager; adminKey?: str
     registerAdminRoutes(router, manager, config.adminKey);
     registerActivityRoutes(router, manager);
     registerSettingsRoutes(router, manager);
+    if (analytics) {
+      registerAnalyticsRoutes(router, manager, analytics);
+    }
   }
   return router;
 }
 
 export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve> {
-  const router = createRouter({ manager: config.manager, adminKey: config.adminKey });
+  const router = createRouter({ manager: config.manager, adminKey: config.adminKey, analytics: config.analytics });
   const corsConfig = config.cors || defaultCorsConfig;
   const maxBodySize = (config.maxBodySize ?? 10) * 1024 * 1024;
   const requestTimeoutMs = config.requestTimeoutMs ?? 30000;

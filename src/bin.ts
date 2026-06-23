@@ -1,6 +1,7 @@
 import { runCli } from "./cli";
 import { createServer, stopServerBackgroundTasks } from "./server";
 import { DatabaseManager } from "./db/manager";
+import { AnalyticsManager } from "./analytics";
 import { autoInitConfig } from "./cli/init";
 import { info, success, error } from "./cli-style";
 
@@ -29,12 +30,16 @@ try {
   } else {
     const config = await autoInitConfig();
     const manager = new DatabaseManager({ dataDir: config.databasePath });
+    const analytics = new AnalyticsManager(config.databasePath);
+    analytics.startSnapshotTimer(() => manager.listDatabases().map(d => d.name));
+    manager.setAnalytics(analytics);
 
     const dashboardDevUrl = await detectDevDashboard();
 
     const server = createServer({
     port: config.port,
     manager,
+    analytics,
     adminKey: config.adminKey,
     devDashboardUrl: dashboardDevUrl,
     cors: {
