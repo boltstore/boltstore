@@ -11,7 +11,7 @@ import { registerQueryRoutes } from "./routes/query";
 import { registerConfigRoutes } from "./routes/config";
 import { registerTransferRoutes } from "./routes/transfer";
 import { registerAdminRoutes } from "./routes/admin";
-import { registerActivityRoutes } from "./routes/activity";
+import { registerActivityRoutes, setTrustedProxies } from "./routes/activity";
 import { registerSettingsRoutes } from "./routes/settings";
 import { registerAnalyticsRoutes } from "./routes/analytics";
 import { AnalyticsManager } from "./analytics";
@@ -25,6 +25,7 @@ export interface ServerConfig {
   adminKey?: string;
   devDashboardUrl?: string;
   analytics?: AnalyticsManager;
+  trustedProxies?: string[];
 }
 
 export interface ApiResponse {
@@ -61,6 +62,14 @@ export const MAX_RESPONSE_SIZE = parseInt(Bun.env.MAX_RESPONSE_SIZE || "10485760
 
 export function errorResponse(code: string, message: string, status = 400, details?: unknown): Response {
   return jsonResponse({ error: { code, message, details } }, status);
+}
+
+export async function parseJsonBody<T = unknown>(request: Request): Promise<T | Response> {
+  try {
+    return await request.json() as T;
+  } catch {
+    return errorResponse("INVALID_JSON", "Invalid or empty JSON in request body.", 400);
+  }
 }
 
 function isOperationalError(err: unknown): err is Error & { status: number } {
@@ -108,14 +117,28 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
   const maxBodySize = (config.maxBodySize ?? 10) * 1024 * 1024;
   const requestTimeoutMs = config.requestTimeoutMs ?? 30000;
 
+  const trustedProxies = config.trustedProxies ?? [];
+  setTrustedProxies(trustedProxies);
+
   const server = Bun.serve({
     port: config.port,
-    async fetch(request: Request): Promise<Response> {
+    async fetch(request: Request, srv?: any): Promise<Response> {
       const requestId = generateRequestId();
       const startTime = performance.now();
       const url = new URL(request.url);
       const method = request.method;
       const pathname = url.pathname;
+
+      // Capture the direct connection IP and pass it to handlers via a header.
+      // getClientIp() uses this to decide whether to trust X-Forwarded-For etc.
+      let directIp: string | null = null;
+      try {
+        const addr = srv?.requestIP(request);
+        if (addr) directIp = typeof addr === "string" ? addr : (addr as { address?: string }).address ?? null;
+      } catch {}
+      if (directIp) {
+        request.headers.set("x-boltstore-direct-ip", directIp);
+      }
 
       // Serve dashboard static files
       if (pathname.startsWith("/dashboard")) {

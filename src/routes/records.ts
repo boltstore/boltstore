@@ -1,25 +1,37 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
-import { jsonResponse, errorResponse } from "../server";
+import { jsonResponse, errorResponse, parseJsonBody } from "../server";
 import { authenticateApiKey, checkDbCors } from "../middleware/auth";
 import { checkReadOnly } from "../middleware/readonly";
 import { recordAnalytics } from "./analytics";
+import { logger } from "../logger";
+import { toBindings } from "../db/cast";
+import { isValidIdentifier, validateIdentifier, validateIdentifiers } from "../validation";
+import { MAX_RECORD_LIMIT, DEFAULT_RECORD_LIMIT } from "../validation";
 
-const MAX_LIMIT = 1000;
-const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = MAX_RECORD_LIMIT;
+const DEFAULT_LIMIT = DEFAULT_RECORD_LIMIT;
 
-function buildWhereClause(filter: Record<string, any>, params: any[]): string {
+const SUPPORTED_OPS = new Set(["$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$like", "$glob"]);
+
+function buildWhereClause(filter: Record<string, unknown>, params: unknown[], path = "filter"): string {
   const clauses: string[] = [];
 
   for (const [key, val] of Object.entries(filter)) {
     if (key === "$and" && Array.isArray(val)) {
-      const parts = val.map((sub: any) => buildWhereClause(sub, params));
+      const parts = val.map((sub: unknown, i: number) => buildWhereClause(sub as Record<string, unknown>, params, `${path}[$and][${i}]`));
       clauses.push(`(${parts.join(" AND ")})`);
     } else if (key === "$or" && Array.isArray(val)) {
-      const parts = val.map((sub: any) => buildWhereClause(sub, params));
+      const parts = val.map((sub: unknown, i: number) => buildWhereClause(sub as Record<string, unknown>, params, `${path}[$or][${i}]`));
       clauses.push(`(${parts.join(" OR ")})`);
     } else if (typeof val === "object" && val !== null) {
-      for (const [op, operand] of Object.entries(val)) {
+      if (!isValidIdentifier(key)) {
+        throw new FilterValidationError(`Invalid column name in filter: "${key}" at ${path}`);
+      }
+      for (const [op, operand] of Object.entries(val as Record<string, unknown>)) {
+        if (!SUPPORTED_OPS.has(op)) {
+          throw new FilterValidationError(`Unsupported filter operator "${op}" at ${path}.${key}`);
+        }
         switch (op) {
           case "$eq": clauses.push(`"${key}" = ?`); params.push(operand); break;
           case "$ne": clauses.push(`"${key}" != ?`); params.push(operand); break;
@@ -39,6 +51,9 @@ function buildWhereClause(filter: Record<string, any>, params: any[]): string {
         }
       }
     } else {
+      if (!isValidIdentifier(key)) {
+        throw new FilterValidationError(`Invalid column name in filter: "${key}" at ${path}`);
+      }
       clauses.push(`"${key}" = ?`);
       params.push(val);
     }
@@ -47,43 +62,68 @@ function buildWhereClause(filter: Record<string, any>, params: any[]): string {
   return clauses.join(" AND ");
 }
 
-function buildSelectSQL(table: string, query: URLSearchParams): { sql: string; params: any[]; countSql: string } {
-  const params: any[] = [];
-  const selects: string[] = [];
+class FilterValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FilterValidationError";
+  }
+}
 
-  // Fields
+function buildSelectSQL(table: string, query: URLSearchParams): { sql: string; params: unknown[]; countSql: string } | Response {
+  const params: unknown[] = [];
+
   const fields = query.getAll("fields");
+  if (fields.length > 0) {
+    const fieldErr = validateIdentifiers(fields, "column");
+    if (fieldErr) return fieldErr;
+  }
   const selectExpr = fields.length > 0 ? fields.map(f => `"${f}"`).join(", ") : "*";
 
-  // Filter
-  let filter: Record<string, any> = {};
+  let filter: Record<string, unknown> = {};
   try {
     const filterParam = query.get("filter");
     if (filterParam) filter = JSON.parse(filterParam);
-  } catch {}
-  const where = buildWhereClause(filter, params);
-  const wherePrefix = where ? ` WHERE ${where}` : "";  // Search
+  } catch {
+    return errorResponse("INVALID_FILTER", "Filter must be valid JSON.", 400);
+  }
+
+  let where: string;
+  try {
+    where = buildWhereClause(filter, params);
+  } catch (err) {
+    if (err instanceof FilterValidationError) {
+      return errorResponse("INVALID_FILTER", err.message, 400);
+    }
+    throw err;
+  }
+  const wherePrefix = where ? ` WHERE ${where}` : "";
+
   const search = query.get("search");
   let searchClause = "";
   if (search) {
-    searchClause = `${where ? " AND" : " WHERE"} (${fields.length > 0 ? fields.map(f => `"${f}" LIKE ?`).join(" OR ") : `* LIKE ?`})`;
+    if (fields.length === 0) {
+      return errorResponse("VALIDATION", "Search requires 'fields' to be specified (searching all columns is not supported).", 400);
+    }
+    searchClause = `${where ? " AND" : " WHERE"} (${fields.map(f => `"${f}" LIKE ?`).join(" OR ")})`;
     params.push(`%${search}%`);
   }
 
-  // Sort
   const sort = query.get("sort");
   let orderBy = "";
   if (sort) {
     const parts = sort.split(",").map(s => s.trim()).filter(Boolean);
-    const orders = parts.map(p => {
-      if (p.startsWith("-")) return `"${p.slice(1)}" DESC`;
-      if (p.startsWith("+")) return `"${p.slice(1)}" ASC`;
-      return `"${p}" ASC`;
-    });
-    orderBy = ` ORDER BY ${orders.join(", ")}`;
+    const sortFields: string[] = [];
+    for (const p of parts) {
+      const name = p.startsWith("-") || p.startsWith("+") ? p.slice(1) : p;
+      const sortErr = validateIdentifier(name, "column");
+      if (sortErr) return sortErr;
+      if (p.startsWith("-")) sortFields.push(`"${name}" DESC`);
+      else if (p.startsWith("+")) sortFields.push(`"${name}" ASC`);
+      else sortFields.push(`"${name}" ASC`);
+    }
+    orderBy = ` ORDER BY ${sortFields.join(", ")}`;
   }
 
-  // Pagination
   const limit = Math.min(parseInt(query.get("limit") || String(DEFAULT_LIMIT), 10), MAX_LIMIT);
   const offset = parseInt(query.get("offset") || "0", 10);
 
@@ -96,35 +136,42 @@ function buildSelectSQL(table: string, query: URLSearchParams): { sql: string; p
 
 export function registerRecordRoutes(router: Router, manager: DatabaseManager): void {
   router.post("/api/databases/:db/tables/:table/records", async (req, params) => {
-    const auth = await authenticateApiKey(req, manager, params.db);
-    if (auth instanceof Response) return auth;
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
+    const auth = await authenticateApiKey(req, manager, params.db);
+    if (auth instanceof Response) return auth;
     const ro = checkReadOnly(manager, params.db);
     if (ro) return ro;
 
+    const tableErr = validateIdentifier(params.table, "table");
+    if (tableErr) return tableErr;
+
     const start = performance.now();
-    const body = await req.json();
+    const body = await parseJsonBody(req); if (body instanceof Response) return body;
     const pool = manager.get(params.db);
     const db = pool.write();
 
     const records = Array.isArray(body) ? body : [body];
-    const inserted: any[] = [];
+    const inserted: Record<string, unknown>[] = [];
 
     for (const record of records) {
       const keys = Object.keys(record);
+      const colErr = validateIdentifiers(keys, "column");
+      if (colErr) return colErr;
       const placeholders = keys.map(() => "?").join(", ");
       const cols = keys.map(k => `"${k}"`).join(", ");
       const vals = keys.map(k => record[k]);
 
       try {
         db.run(`INSERT INTO "${params.table}" (${cols}) VALUES (${placeholders})`, vals);
-        const lastId = (db.query("SELECT last_insert_rowid() as id").get() as any).id;
+        const lastId = (db.query("SELECT last_insert_rowid() as id").get() as { id: number | bigint }).id;
         const insertedRow = pool.read().query(`SELECT rowid, * FROM "${params.table}" WHERE rowid = ?`).get(lastId);
         inserted.push(insertedRow || record);
-      } catch (err: any) {
-        recordAnalytics(manager, { database: params.db, table: params.table, operation: "insert", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: err.message });
-        return errorResponse("ERROR", err.message || "Failed to insert record.", 400);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn("Record insert failed", { database: params.db, table: params.table, error: msg });
+        recordAnalytics(manager, { database: params.db, table: params.table, operation: "insert", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: msg });
+        return errorResponse("INSERT_ERROR", "Failed to insert record. Check your data and table schema.", 400);
       }
     }
 
@@ -133,10 +180,13 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
   });
 
   router.get("/api/databases/:db/tables/:table/records", async (req, params) => {
-    const auth = await authenticateApiKey(req, manager, params.db);
-    if (auth instanceof Response) return auth;
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
+    const auth = await authenticateApiKey(req, manager, params.db);
+    if (auth instanceof Response) return auth;
+
+    const tableErr = validateIdentifier(params.table, "table");
+    if (tableErr) return tableErr;
 
     const start = performance.now();
     const url = new URL(req.url);
@@ -144,9 +194,11 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const pool = manager.get(params.db);
     const readDb = pool.read();
 
-    const { sql, countSql, params: bindParams } = buildSelectSQL(params.table, query);
-    const total = (readDb.query(countSql).get(...bindParams.slice(0, -2)) as any)?.total ?? 0;
-    const rows = readDb.query(sql).all(...bindParams) as any[];
+    const result = buildSelectSQL(params.table, query);
+    if (result instanceof Response) return result;
+    const { sql, countSql, params: bindParams } = result;
+    const total = (readDb.query(countSql).get(...toBindings(bindParams.slice(0, -2))) as { total?: number })?.total ?? 0;
+    const rows = readDb.query(sql).all(...toBindings(bindParams)) as Record<string, unknown>[];
 
     const limit = Math.min(parseInt(query.get("limit") || String(DEFAULT_LIMIT), 10), MAX_LIMIT);
     const offset = parseInt(query.get("offset") || "0", 10);
@@ -159,10 +211,13 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
   });
 
   router.get("/api/databases/:db/tables/:table/records/:id", async (req, params) => {
-    const auth = await authenticateApiKey(req, manager, params.db);
-    if (auth instanceof Response) return auth;
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
+    const auth = await authenticateApiKey(req, manager, params.db);
+    if (auth instanceof Response) return auth;
+
+    const tableErr = validateIdentifier(params.table, "table");
+    if (tableErr) return tableErr;
 
     const start = performance.now();
     const pool = manager.get(params.db);
@@ -176,17 +231,22 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
   });
 
   router.patch("/api/databases/:db/tables/:table/records/:id", async (req, params) => {
-    const auth = await authenticateApiKey(req, manager, params.db);
-    if (auth instanceof Response) return auth;
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
+    const auth = await authenticateApiKey(req, manager, params.db);
+    if (auth instanceof Response) return auth;
     const ro = checkReadOnly(manager, params.db);
     if (ro) return ro;
 
+    const tableErr = validateIdentifier(params.table, "table");
+    if (tableErr) return tableErr;
+
     const start = performance.now();
-    const body = await req.json() as Record<string, any>;
+    const body = await parseJsonBody<Record<string, unknown>>(req); if (body instanceof Response) return body;
     const keys = Object.keys(body);
     if (keys.length === 0) return errorResponse("VALIDATION", "No fields to update.", 400);
+    const colErr = validateIdentifiers(keys, "column");
+    if (colErr) return colErr;
 
     const setClause = keys.map(k => `"${k}" = ?`).join(", ");
     const vals = keys.map(k => body[k]);
@@ -194,23 +254,28 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
 
     const pool = manager.get(params.db);
     try {
-      pool.write().run(`UPDATE "${params.table}" SET ${setClause} WHERE rowid = ?`, vals);
+      pool.write().run(`UPDATE "${params.table}" SET ${setClause} WHERE rowid = ?`, toBindings(vals));
       const updated = pool.read().query(`SELECT rowid, * FROM "${params.table}" WHERE rowid = ?`).get(params.id);
       recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: 1, status: "ok" });
       return jsonResponse({ data: updated });
-    } catch (err: any) {
-      recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: err.message });
-      return errorResponse("ERROR", err.message || "Failed to update record.", 400);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn("Record update failed", { database: params.db, table: params.table, error: msg });
+      recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: msg });
+      return errorResponse("UPDATE_ERROR", "Failed to update record. Check your data and table schema.", 400);
     }
   });
 
   router.delete("/api/databases/:db/tables/:table/records/:id", async (req, params) => {
-    const auth = await authenticateApiKey(req, manager, params.db);
-    if (auth instanceof Response) return auth;
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
+    const auth = await authenticateApiKey(req, manager, params.db);
+    if (auth instanceof Response) return auth;
     const ro = checkReadOnly(manager, params.db);
     if (ro) return ro;
+
+    const tableErr = validateIdentifier(params.table, "table");
+    if (tableErr) return tableErr;
 
     const start = performance.now();
     const pool = manager.get(params.db);

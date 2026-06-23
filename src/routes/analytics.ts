@@ -4,6 +4,12 @@ import { AnalyticsManager } from "../analytics";
 import { jsonResponse, errorResponse } from "../server";
 import { isAdminRequest } from "../middleware/auth";
 
+interface QueryStatsRow { c: number; avg_ms: number; errors: number; writes: number }
+interface StorageTotalRow { total: number }
+interface StorageRow { size_bytes: number; table_count: number }
+interface TopTableRow { table_name: string; calls: number; avg_ms: number; writes: number }
+interface CountRow { c: number }
+
 export function recordAnalytics(manager: DatabaseManager, event: {
   database: string;
   table?: string;
@@ -30,18 +36,18 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
   const pool = analytics.getPool();
 
   router.get("/api/analytics/overview", async (req) => {
-    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const url = new URL(req.url);
     const { since } = parseRange(url);
     const db = pool.read();
 
     const queries = (db.query(
       `SELECT COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes FROM _query_log WHERE timestamp >= datetime('now', ?)`
-    ).get(since) as any) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0 };
+    ).get(since) as QueryStatsRow) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0 };
 
     const totalStorage = (db.query(
       "SELECT COALESCE(SUM(size_bytes), 0) as total FROM _storage_snapshots WHERE id IN (SELECT MAX(id) FROM _storage_snapshots GROUP BY database)"
-    ).get() as any)?.total ?? 0;
+    ).get() as StorageTotalRow)?.total ?? 0;
 
     const dbCount = manager.listDatabases().length;
 
@@ -58,22 +64,22 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
   });
 
   router.get("/api/analytics/:database/overview", async (req, params) => {
-    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const url = new URL(req.url);
     const { since } = parseRange(url);
     const db = pool.read();
 
     const queries = (db.query(
       `SELECT COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?)`
-    ).get(params.database, since) as any) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0 };
+    ).get(params.database, since) as QueryStatsRow) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0 };
 
     const storage = (db.query(
       "SELECT size_bytes, table_count FROM _storage_snapshots WHERE database = ? ORDER BY timestamp DESC LIMIT 1"
-    ).get(params.database) as any) ?? { size_bytes: 0, table_count: 0 };
+    ).get(params.database) as StorageRow) ?? { size_bytes: 0, table_count: 0 };
 
     const topTables = db.query(
       `SELECT table_name, COUNT(*) as calls, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes FROM _query_log WHERE database = ? AND table_name IS NOT NULL AND timestamp >= datetime('now', ?) GROUP BY table_name ORDER BY calls DESC LIMIT 10`
-    ).all(params.database, since) as any[];
+    ).all(params.database, since) as TopTableRow[];
 
     return jsonResponse({
       data: {
@@ -90,14 +96,14 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
   });
 
   router.get("/api/analytics/:database/queries", async (req, params) => {
-    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const url = new URL(req.url);
     const { since } = parseRange(url);
     const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "20", 10) || 20, 1), 100);
     const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0);
     const db = pool.read();
 
-    const total = (db.query("SELECT COUNT(*) as c FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?)").get(params.database, since) as any)?.c ?? 0;
+    const total = (db.query("SELECT COUNT(*) as c FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?)").get(params.database, since) as CountRow)?.c ?? 0;
     const rows = db.query(
       "SELECT id, database, table_name, operation, duration_ms, row_count, status, error_msg, timestamp FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?) ORDER BY id DESC LIMIT ? OFFSET ?"
     ).all(params.database, since, limit, offset);
@@ -106,7 +112,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
   });
 
   router.get("/api/analytics/:database/size", async (req, params) => {
-    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const db = pool.read();
     const rows = db.query(
       "SELECT size_bytes, table_count, timestamp FROM _storage_snapshots WHERE database = ? ORDER BY timestamp DESC LIMIT 100"
@@ -115,7 +121,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
   });
 
   router.get("/api/analytics/top-queries", async (req) => {
-    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const url = new URL(req.url);
     const { since } = parseRange(url);
     const db = pool.read();
@@ -126,7 +132,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
   });
 
   router.get("/api/analytics/errors", async (req) => {
-    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const url = new URL(req.url);
     const { since } = parseRange(url);
     const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "20", 10) || 20, 1), 100);
@@ -138,7 +144,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
   });
 
   router.get("/api/analytics/volume", async (req) => {
-    if (!isAdminRequest(req, manager)) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const url = new URL(req.url);
     const range = url.searchParams.get("range") || "24h";
     const { since, groupFmt } = parseRange(url);

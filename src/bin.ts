@@ -1,9 +1,6 @@
 import { runCli } from "./cli";
-import { createServer, stopServerBackgroundTasks } from "./server";
-import { DatabaseManager } from "./db/manager";
-import { AnalyticsManager } from "./analytics";
-import { autoInitConfig } from "./cli/init";
-import { info, success, error } from "./cli-style";
+import { startServer } from "./app";
+import { error } from "./cli-style";
 
 const command = process.argv[2];
 
@@ -16,6 +13,7 @@ async function detectDevDashboard(): Promise<string | undefined> {
   try {
     const res = await fetch("http://localhost:5173/dashboard");
     if (res.ok) {
+      const { info } = await import("./cli-style");
       info("Vite dev server detected — dashboard requests proxied to http://localhost:5173");
       info("Open http://localhost:5173/dashboard in your browser for full HMR support");
       return "http://localhost:5173";
@@ -28,43 +26,10 @@ try {
   if (command && CLI_COMMANDS.has(command)) {
     await runCli(process.argv.slice(2));
   } else {
-    const config = await autoInitConfig();
-    const manager = new DatabaseManager({ dataDir: config.databasePath });
-    const analytics = new AnalyticsManager(config.databasePath);
-    analytics.startSnapshotTimer(() => manager.listDatabases().map(d => d.name));
-    manager.setAnalytics(analytics);
-
-    const dashboardDevUrl = await detectDevDashboard();
-
-    const server = createServer({
-    port: config.port,
-    manager,
-    analytics,
-    adminKey: config.adminKey,
-    devDashboardUrl: dashboardDevUrl,
-    cors: {
-        origins: config.corsOrigins,
-        methods: config.corsMethods,
-        headers: config.corsHeaders,
-      },
-      maxBodySize: config.maxBodySize,
-      requestTimeoutMs: config.requestTimeoutMs,
-    });
-
-    success(`Server running on http://localhost:${config.port}`);
-    info(`Health check: http://localhost:${config.port}/api/health`);
-    info(`Data directory: ${config.databasePath}`);
-    info(`Log level: ${config.logLevel}`);
-
-    if (config.serverTimezone && config.serverTimezone !== "UTC") {
-      process.env.TZ = config.serverTimezone;
-    }
-
-    process.on("SIGINT", () => { info("Shutting down..."); stopServerBackgroundTasks(); manager.close(); server.stop(); process.exit(0); });
-    process.on("SIGTERM", () => { info("Shutting down..."); stopServerBackgroundTasks(); manager.close(); server.stop(); process.exit(0); });
+    await startServer();
   }
-} catch (err: any) {
-  error(err.message);
+} catch (err: unknown) {
+  error(err instanceof Error ? err.message : String(err));
   error("Server failed to start. Check your config.");
   process.exit(1);
 }

@@ -4,7 +4,6 @@ export interface BoltstoreConfig {
   port: number;
   databasePath: string;
   logLevel: string;
-  serverTimezone: string;
   corsOrigins: string[];
   corsMethods: string[];
   corsHeaders: string[];
@@ -17,7 +16,6 @@ export interface BoltstoreConfig {
 const DEFAULT_CONFIG: BoltstoreConfig = {
   port: 8080,
   databasePath: "./data",
-  serverTimezone: "UTC",
   corsOrigins: ["*"],
   corsMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   corsHeaders: ["Content-Type", "Authorization"],
@@ -51,9 +49,6 @@ function parseCliArgs(): Partial<BoltstoreConfig> {
       case "--log-level":
         if (next) { config.logLevel = next; i++; }
         break;
-      case "--timezone":
-        if (next) { config.serverTimezone = next; i++; }
-        break;
       case "--max-body-size":
         if (next) { config.maxBodySize = parseInt(next, 10); i++; }
         break;
@@ -75,7 +70,6 @@ function parseEnvVars(): Partial<BoltstoreConfig> {
   if (Bun.env.PORT) config.port = parseInt(Bun.env.PORT, 10);
   if (Bun.env.DATABASE_PATH) config.databasePath = Bun.env.DATABASE_PATH;
   if (Bun.env.BOLTSTORE_ADMIN_KEY) config.adminKey = Bun.env.BOLTSTORE_ADMIN_KEY;
-  if (Bun.env.SERVER_TIMEZONE) config.serverTimezone = Bun.env.SERVER_TIMEZONE;
   if (Bun.env.CORS_ORIGINS) config.corsOrigins = Bun.env.CORS_ORIGINS.split(",").map((s) => s.trim());
   if (Bun.env.CORS_METHODS) config.corsMethods = Bun.env.CORS_METHODS.split(",").map((s) => s.trim());
   if (Bun.env.CORS_HEADERS) config.corsHeaders = Bun.env.CORS_HEADERS.split(",").map((s) => s.trim());
@@ -109,7 +103,6 @@ function mapToConfig(parsed: Record<string, unknown>): Partial<BoltstoreConfig> 
   if (typeof parsed.port === "number") config.port = parsed.port;
   if (typeof parsed.databasePath === "string") config.databasePath = parsed.databasePath;
   if (typeof parsed.logLevel === "string") config.logLevel = parsed.logLevel;
-  if (typeof parsed.serverTimezone === "string") config.serverTimezone = parsed.serverTimezone;
   if (Array.isArray(parsed.corsOrigins)) config.corsOrigins = parsed.corsOrigins as string[];
   if (Array.isArray(parsed.corsMethods)) config.corsMethods = parsed.corsMethods as string[];
   if (Array.isArray(parsed.corsHeaders)) config.corsHeaders = parsed.corsHeaders as string[];

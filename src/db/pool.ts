@@ -222,22 +222,23 @@ export class DatabasePool {
    */
   writeTransaction<T>(fn: () => T): T {
     const db = this.writeDb;
-    if (this.transactionDepth === 0) {
-      db.run("BEGIN");
+    // Single-level only — no nested transaction support.
+    // All writes serialize through this single connection, so there is no
+    // concurrent-write hazard; nested calls reuse the open transaction.
+    if (this.transactionDepth > 0) {
+      // Already inside a transaction — just run fn
+      return fn();
     }
+    db.run("BEGIN");
     this.transactionDepth++;
     try {
       const result = fn();
+      db.run("COMMIT");
       this.transactionDepth--;
-      if (this.transactionDepth === 0) {
-        db.run("COMMIT");
-      }
       return result;
     } catch (error) {
       this.transactionDepth--;
-      if (this.transactionDepth === 0) {
-        db.run("ROLLBACK");
-      }
+      try { db.run("ROLLBACK"); } catch {}
       throw error;
     }
   }
@@ -247,7 +248,9 @@ export class DatabasePool {
    * immediate read-after-write consistency across connections is needed.
    */
   checkpointWal(): void {
-    try { this.writeDb.run("PRAGMA wal_checkpoint(PASSIVE)"); } catch {}
+    try { this.writeDb.run("PRAGMA wal_checkpoint(PASSIVE)"); } catch (err) {
+      logger.warn("WAL checkpoint failed", { path: this.config.path, error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   /**

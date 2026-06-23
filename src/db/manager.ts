@@ -1,7 +1,9 @@
 import { DatabasePool } from "./pool";
 import type { AnalyticsManager } from "../analytics";
+import { mkdirSync, rmSync } from "node:fs";
+import { logger } from "../logger";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface DatabaseInfo {
   id: string;
@@ -24,8 +26,10 @@ const DEFAULT_CONFIG: ManagerConfig = {
 export class DatabaseManager {
   private config: ManagerConfig;
   private metaPool: DatabasePool;
-  private appPools: Map<string, DatabasePool> = new Map();
+  private appPools: Map<string, { pool: DatabasePool; lastUsed: number }> = new Map();
   private analytics: AnalyticsManager | null = null;
+  private evictionTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly idleTimeoutMs = 10 * 60 * 1000; // 10 minutes
 
   setAnalytics(a: AnalyticsManager): void {
     this.analytics = a;
@@ -37,7 +41,6 @@ export class DatabaseManager {
 
   constructor(config?: ManagerConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    const { mkdirSync } = require("node:fs");
     mkdirSync(this.config.dataDir!, { recursive: true });
     mkdirSync(`${this.config.dataDir}/plugins`, { recursive: true });
 
@@ -87,10 +90,26 @@ export class DatabaseManager {
       CREATE TABLE IF NOT EXISTS _sessions (
         id TEXT PRIMARY KEY,
         admin_id TEXT NOT NULL REFERENCES _admins(id),
-        token TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT
       )
     `);
+    // Migrate old schema: if token column exists, rename to token_hash and add expires_at
+    try {
+      const cols = db.query("PRAGMA table_info(_sessions)").all() as { name: string }[];
+      const hasToken = cols.some(c => c.name === "token");
+      const hasTokenHash = cols.some(c => c.name === "token_hash");
+      const hasExpiresAt = cols.some(c => c.name === "expires_at");
+      if (hasToken && !hasTokenHash) {
+        db.run("ALTER TABLE _sessions RENAME COLUMN token TO token_hash");
+      }
+      if (!hasExpiresAt) {
+        db.run("ALTER TABLE _sessions ADD COLUMN expires_at TEXT");
+      }
+    } catch {
+      // Fresh table or migration not needed
+    }
     db.run(`
       CREATE TABLE IF NOT EXISTS _meta (
         key TEXT PRIMARY KEY,
@@ -115,34 +134,54 @@ export class DatabaseManager {
 
   get(name: string): DatabasePool {
     const cached = this.appPools.get(name);
-    if (cached) return cached;
-
-    const metaDb = this.metaPool.read();
-    const row = metaDb.query("SELECT file_path FROM _databases WHERE name=?").get(name) as { file_path: string } | null;
-    if (!row) {
-      throw Object.assign(new Error(`Database "${name}" not found.`), { status: 404 });
+    if (cached) {
+      cached.lastUsed = Date.now();
+      return cached.pool;
     }
 
-    const pool = new DatabasePool({ path: row.file_path });
-    this.appPools.set(name, pool);
-    return pool;
+    return this.metaPool.writeTransaction(() => {
+      const existing = this.appPools.get(name);
+      if (existing) {
+        existing.lastUsed = Date.now();
+        return existing.pool;
+      }
+
+      const metaDb = this.metaPool.read();
+      const row = metaDb.query("SELECT file_path FROM _databases WHERE name=?").get(name) as { file_path: string } | null;
+      if (!row) {
+        throw Object.assign(new Error(`Database "${name}" not found.`), { status: 404 });
+      }
+
+      const pool = new DatabasePool({ path: row.file_path });
+      this.appPools.set(name, { pool, lastUsed: Date.now() });
+      this.startEvictionTimer();
+      return pool;
+    });
   }
 
   createDatabase(name: string, group?: string): DatabaseInfo {
-    const { mkdirSync } = require("node:fs");
     const path = `${this.config.dataDir}/${name}.db`;
-
-    const metaDb = this.metaPool.write();
-    const existing = metaDb.query("SELECT 1 FROM _databases WHERE name=?").get(name);
-    if (existing) {
-      throw Object.assign(new Error(`Database "${name}" already exists.`), { status: 409 });
-    }
-
     const now = new Date().toISOString();
     const config = group ? JSON.stringify({ group }) : "{}";
-    metaDb.run("INSERT INTO _databases (name, file_path, created_at, config) VALUES (?, ?, ?, ?)", [name, path, now, config]);
+
+    // Use a transaction to atomically check + insert, catching the PRIMARY KEY
+    // constraint violation if two concurrent requests race to create the same DB.
+    try {
+      this.metaPool.writeTransaction(() => {
+        const metaDb = this.metaPool.write();
+        metaDb.run("INSERT OR ABORT INTO _databases (name, file_path, created_at, config) VALUES (?, ?, ?, ?)", [name, path, now, config]);
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("UNIQUE") || msg.includes("PRIMARY KEY")) {
+        throw Object.assign(new Error(`Database "${name}" already exists.`), { status: 409 });
+      }
+      throw err;
+    }
+
     const pool = new DatabasePool({ path });
-    this.appPools.set(name, pool);
+    this.appPools.set(name, { pool, lastUsed: Date.now() });
+    this.startEvictionTimer();
 
     return { id: name, name, path, createdAt: now, group };
   }
@@ -157,7 +196,8 @@ export class DatabaseManager {
     const config = group ? JSON.stringify({ group }) : "{}";
     metaDb.run("INSERT INTO _databases (name, file_path, created_at, config) VALUES (?, ?, ?, ?)", [name, filePath, now, config]);
     const pool = new DatabasePool({ path: filePath });
-    this.appPools.set(name, pool);
+    this.appPools.set(name, { pool, lastUsed: Date.now() });
+    this.startEvictionTimer();
     return pool;
   }
 
@@ -170,18 +210,19 @@ export class DatabaseManager {
 
     const cached = this.appPools.get(name);
     if (cached) {
-      cached.close();
+      cached.pool.close();
       this.appPools.delete(name);
     }
 
     metaDb.run("DELETE FROM _databases WHERE name=?", [name]);
 
     try {
-      const { rmSync } = require("node:fs");
       rmSync(row.file_path, { force: true });
       rmSync(row.file_path + "-wal", { force: true });
       rmSync(row.file_path + "-shm", { force: true });
-    } catch {}
+    } catch (err) {
+      logger.warn("Failed to clean up database files after delete", { database: name, error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   listDatabases(): DatabaseInfo[] {
@@ -199,7 +240,9 @@ export class DatabaseManager {
         const cfg = JSON.parse(r.config);
         group = cfg.group;
         readonly = !!cfg.readonly;
-      } catch {}
+      } catch (err) {
+        logger.warn("Failed to parse database config JSON", { database: r.name, error: err instanceof Error ? err.message : String(err) });
+      }
       return { id: r.name, name: r.name, path: r.file_path, createdAt: r.created_at, group, readonly };
     });
   }
@@ -218,17 +261,52 @@ export class DatabaseManager {
     return this.metaPool;
   }
 
+  getPoolIfExists(name: string): DatabasePool | null {
+    const entry = this.appPools.get(name);
+    return entry ? entry.pool : null;
+  }
+
   closePool(name: string): void {
     const cached = this.appPools.get(name);
     if (cached) {
-      cached.close();
+      cached.pool.close();
       this.appPools.delete(name);
     }
   }
 
+  private startEvictionTimer(): void {
+    if (this.evictionTimer) return;
+    this.evictionTimer = setInterval(() => this.evictIdlePools(), 60_000);
+    if (typeof this.evictionTimer.unref === "function") this.evictionTimer.unref();
+  }
+
+  private evictIdlePools(): void {
+    const now = Date.now();
+    for (const [name, entry] of this.appPools) {
+      if (now - entry.lastUsed > this.idleTimeoutMs) {
+        try {
+          entry.pool.close();
+          this.appPools.delete(name);
+          logger.info("Evicted idle database pool", { database: name });
+        } catch (err) {
+          logger.warn("Failed to evict idle pool", { database: name, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    }
+    // Stop the timer if nothing is left to evict
+    if (this.appPools.size === 0 && this.evictionTimer) {
+      clearInterval(this.evictionTimer);
+      this.evictionTimer = null;
+    }
+  }
+
   close(): void {
-    for (const pool of this.appPools.values()) {
-      pool.close();
+    if (this.evictionTimer) {
+      clearInterval(this.evictionTimer);
+      this.evictionTimer = null;
+    }
+    for (const entry of this.appPools.values()) {
+      entry.pool.close();
     }
     this.appPools.clear();
     this.metaPool.close();

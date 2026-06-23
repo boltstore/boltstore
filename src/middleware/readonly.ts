@@ -1,4 +1,5 @@
 import { DatabaseManager } from "../db/manager";
+import { logger } from "../logger";
 
 export function checkReadOnly(manager: DatabaseManager, databaseName: string): Response | null {
   try {
@@ -13,6 +14,8 @@ export function checkReadOnly(manager: DatabaseManager, databaseName: string): R
         { status: 403, headers: { "Content-Type": "application/json" } }
       );
     }
-  } catch {}
+  } catch (err) {
+    logger.warn("Read-only check failed", { database: databaseName, error: err instanceof Error ? err.message : String(err) });
+  }
   return null;
 }

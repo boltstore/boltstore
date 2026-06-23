@@ -1,7 +1,9 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
-import { jsonResponse } from "../server";
+import { jsonResponse, errorResponse } from "../server";
 import { isAdminRequest } from "../middleware/auth";
+import { generateId, sha256Hex } from "../crypto-utils";
+import { logger } from "../logger";
 
 export interface ActivityEvent {
   action: string;
@@ -12,56 +14,66 @@ export interface ActivityEvent {
   ip?: string;
 }
 
-function generateId(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let id = "";
-  for (let i = 0; i < 16; i++) id += chars[bytes[i] % chars.length];
-  return "act_" + id;
+let configuredTrustedProxies: string[] = [];
+
+export function setTrustedProxies(proxies: string[]): void {
+  configuredTrustedProxies = proxies;
+}
+
+function isTrustedProxy(ip: string): boolean {
+  if (configuredTrustedProxies.length === 0) return false;
+  return configuredTrustedProxies.includes(ip);
 }
 
 export function getClientIp(request: Request): string | undefined {
-  // Cloudflare — most reliable when present
-  const cf = request.headers.get("cf-connecting-ip");
-  if (cf) return cf;
+  const directIp = request.headers.get("x-boltstore-direct-ip");
 
-  // X-Forwarded-For — first IP is the original client
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+  // If we know the direct connection IP, only trust forwarded headers
+  // when the direct connection is from a trusted proxy.
+  const trustForwarded = !directIp || isTrustedProxy(directIp);
+
+  if (trustForwarded) {
+    const cf = request.headers.get("cf-connecting-ip");
+    if (cf) return cf;
+
+    const forwarded = request.headers.get("x-forwarded-for");
+    if (forwarded) {
+      const first = forwarded.split(",")[0]?.trim();
+      if (first) return first;
+    }
+
+    const real = request.headers.get("x-real-ip");
+    if (real) return real;
   }
 
-  // X-Real-IP — used by nginx and some reverse proxies
-  const real = request.headers.get("x-real-ip");
-  if (real) return real;
-
-  return undefined;
+  // Fall back to the direct connection IP if available
+  return directIp ?? undefined;
 }
 
-export function getAdminId(request: Request, manager: DatabaseManager): string | undefined {
+export async function getAdminId(request: Request, manager: DatabaseManager): Promise<string | undefined> {
   const auth = request.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return undefined;
   const token = auth.slice(7).trim();
   if (!token) return undefined;
   try {
+    const hashHex = await sha256Hex(token);
     const row = manager.getMetaPool().read()
-      .query("SELECT admin_id FROM _sessions WHERE token = ?")
-      .get(token) as { admin_id: string } | null;
+      .query("SELECT admin_id FROM _sessions WHERE token_hash = ?")
+      .get(hashHex) as { admin_id: string } | null;
     return row?.admin_id;
-  } catch {
+  } catch (err) {
+    logger.warn("getAdminId session lookup failed", { error: err instanceof Error ? err.message : String(err) });
     return undefined;
   }
 }
 
 export function registerActivityRoutes(router: Router, manager: DatabaseManager): void {
   router.get("/api/activity", async (req) => {
-    if (!isAdminRequest(req, manager)) return jsonResponse({ data: [], meta: { total: 0 } });
+    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const url = new URL(req.url);
     const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "20", 10) || 20, 1), 100);
     const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0);
-    const total = (manager.getMetaPool().read().query("SELECT COUNT(*) as c FROM _activity_log").get() as any)?.c ?? 0;
+    const total = (manager.getMetaPool().read().query("SELECT COUNT(*) as c FROM _activity_log").get() as { c?: number })?.c ?? 0;
     const rows = manager.getMetaPool().read().query(
       `SELECT a.id, a.admin_id, a.action, a.database_name, a.target, a.details, a.ip, a.created_at, adm.email as admin_email
        FROM _activity_log a
@@ -76,9 +88,9 @@ export function logActivity(manager: DatabaseManager, event: ActivityEvent): voi
   try {
     manager.getMetaPool().write().run(
       "INSERT INTO _activity_log (id, admin_id, action, database_name, target, details, ip) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [generateId(), event.admin_id ?? null, event.action, event.database_name ?? null, event.target ?? null, event.details ? JSON.stringify(event.details) : null, event.ip ?? null]
+      [generateId("act_", 16), event.admin_id ?? null, event.action, event.database_name ?? null, event.target ?? null, event.details ? JSON.stringify(event.details) : null, event.ip ?? null]
     );
-  } catch {
-    // Activity log is best-effort — never crash the request
+  } catch (err) {
+    logger.warn("Failed to write activity log", { action: event.action, error: err instanceof Error ? err.message : String(err) });
   }
 }

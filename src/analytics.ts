@@ -1,4 +1,5 @@
 import { DatabasePool } from "./db/pool";
+import { logger } from "./logger";
 
 const ANALYTICS_DB = "_analytics.db";
 const DEFAULT_RETENTION_DAYS = 30;
@@ -23,6 +24,8 @@ export class AnalyticsManager {
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private retentionDays: number;
   private buffer: QueryEvent[] = [];
+  private lastPruneAt = 0;
+  private readonly pruneIntervalMs = 3600 * 1000; // prune at most once per hour
 
   constructor(dataDir: string, retentionDays = DEFAULT_RETENTION_DAYS) {
     this.dataDir = dataDir;
@@ -56,6 +59,8 @@ export class AnalyticsManager {
         timestamp   TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
+    db.run("CREATE INDEX IF NOT EXISTS idx_query_log_timestamp ON _query_log(timestamp)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_query_log_database ON _query_log(database)");
   }
 
   recordQuery(event: QueryEvent): void {
@@ -81,8 +86,14 @@ export class AnalyticsManager {
       for (const e of batch) {
         stmt.run(e.database, e.table ?? null, e.operation, e.durationMs, e.rowCount, e.status, e.errorMessage ?? null);
       }
-      this.prune();
-    } catch {}
+      const now = Date.now();
+      if (now - this.lastPruneAt > this.pruneIntervalMs) {
+        this.prune();
+        this.lastPruneAt = now;
+      }
+    } catch (err) {
+      logger.warn("Analytics flush failed", { error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   private prune(): void {
@@ -91,34 +102,46 @@ export class AnalyticsManager {
         "DELETE FROM _query_log WHERE timestamp < datetime('now', ?)",
         [`-${this.retentionDays} days`]
       );
-    } catch {}
+    } catch (err) {
+      logger.warn("Analytics prune failed", { error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
-  startSnapshotTimer(getDatabases: () => string[]): void {
+  startSnapshotTimer(getDatabases: () => string[], getPool: (name: string) => DatabasePool | null): void {
     if (this.timer) return;
     const takeSnapshot = async () => {
       try {
         const names = getDatabases();
         for (const name of names) {
           try {
-            const path = `${this.dataDir}/${name}.db`;
-            const file = Bun.file(path);
-            const exists = await file.exists();
-            if (!exists) continue;
-            const pool = new DatabasePool({ path, readConnections: 1 });
+            // Reuse the existing pool from the manager if available;
+            // only open a temporary pool as a fallback.
+            let pool = getPool(name);
+            let openedTemp = false;
+            if (!pool) {
+              const path = `${this.dataDir}/${name}.db`;
+              const file = Bun.file(path);
+              if (!(await file.exists())) continue;
+              pool = new DatabasePool({ path, readConnections: 1 });
+              openedTemp = true;
+            }
             const db = pool.read();
             const pageInfo = db.query("PRAGMA page_count").get() as { page_count: number } | null;
             const pageSize = db.query("PRAGMA page_size").get() as { page_size: number } | null;
-            const tableCount = (db.query("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name NOT GLOB '_*' AND name != 'sqlite_sequence'").get() as any)?.c ?? 0;
-            pool.close();
+            const tableCount = (db.query("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name NOT GLOB '_*' AND name != 'sqlite_sequence'").get() as { c?: number })?.c ?? 0;
+            if (openedTemp) pool.close();
             const sizeBytes = (pageInfo?.page_count ?? 0) * (pageSize?.page_size ?? 4096);
             this.pool.write().run(
               "INSERT INTO _storage_snapshots (database, size_bytes, table_count) VALUES (?, ?, ?)",
               [name, sizeBytes, tableCount]
             );
-          } catch {}
+          } catch (err) {
+            logger.warn("Snapshot failed for database", { database: name, error: err instanceof Error ? err.message : String(err) });
+          }
         }
-      } catch {}
+      } catch (err) {
+        logger.warn("Snapshot timer failed", { error: err instanceof Error ? err.message : String(err) });
+      }
     };
     takeSnapshot();
     this.timer = setInterval(takeSnapshot, SNAPSHOT_INTERVAL_MS);
