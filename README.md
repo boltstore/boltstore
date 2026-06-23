@@ -1,33 +1,58 @@
 # Boltstore
 
-**Boltstore** — A lightweight, self-hostable backend-as-a-service on SQLite + bun.js.
+**Boltstore** — A self-hostable **Database-as-a-Service (DBaaS)** built on SQLite + Bun. One process serves many isolated SQLite databases over a REST API, with an admin dashboard for management.
 
-Built for applications that need a simple REST API with optional realtime subscriptions and offline sync.
+> **What this is:** a database platform. You get SQLite databases over HTTP, multi-database isolation, API keys, an admin dashboard, analytics, import/export, and audit logging. Ship it as a single binary or `bun` process with a data directory.
+>
+> **What this is not (yet):** a Backend-as-a-Service. Boltstore started with BaaS ambitions (RLS, JWT user auth, realtime, offline sync), but the MVP deliberately scopes those out to ship a solid database platform first. If you need BaaS-style features today, build them in your application layer on top of Boltstore's API — or wait for the plugin system (see "Plugin system (future)" below).
 
 ## Features
 
-- **SQLite via HTTP REST API** — Full CRUD, filtering, sorting, pagination, aggregation, FTS5, JSON extraction, and raw SQL
-- **Multi-database support** — One instance serves multiple apps, each with isolated SQLite databases
-- **Realtime WebSocket** — Live subscriptions on collection and record changes (⚠️ unstable, opt-in via `enableRealtime: true`)
-- **Offline sync** — Client-side sync with last-write-wins conflict resolution (⚠️ unstable, opt-in via `enableSync: true`)
-- **Authentication** — Email/password, JWT tokens, OAuth (future), Row-Level Security
-- **File storage** — Local filesystem and S3-compatible providers
-- **Hooks & extensions** — User-defined JavaScript functions for validation, auth, and business logic
-- **Admin panel** — Vue 3 SPA served at `/admin` with HMR during development
-- **Secure by design** — Route tiers (Public → Authenticated → Admin), parameterized queries, audit logging
+- **SQLite via HTTP REST API** — Full CRUD on records, table DDL, filtering, sorting, pagination, and a raw SQL endpoint (read-only for non-admin keys).
+- **Multi-database support** — One instance serves multiple isolated SQLite databases, each with its own file, config, and API keys.
+- **API key authentication** — Per-database API keys for machine access; admin sessions for dashboard access. Keys are SHA-256 hashed at rest.
+- **Admin dashboard** — Vue 3 SPA at `/dashboard` for managing databases, tables, records, API keys, analytics, and settings. HMR during development via Vite.
+- **Analytics** — Built-in query log and storage snapshots (`_analytics.db`) with admin dashboards for overview, per-database, error, and volume views.
+- **Audit logging** — Admin actions (database create/rename/delete, API key create/rotate/revoke, config changes, login/logout) are recorded in `_activity_log` with admin ID and requesting IP.
+- **Per-database config** — Each database has its own JSON config (CORS origins, read-only flag, group) editable via the API.
+- **Import / export** — Export any database to a `.db` file via `VACUUM INTO`; import a `.db` file to register a new database (with integrity check).
+- **Configurable** — YAML / JSON config file, env vars, and CLI flags; merge order is CLI > env > file > defaults.
+- **Zero runtime dependencies** — Server core has no third-party npm dependencies; runs on Bun.
+
+### Explicitly NOT in the MVP (and where they'll come from)
+
+Boltstore began as a BaaS design (RLS, JWT user auth, realtime, offline sync, file storage, hooks). The MVP deliberately scopes those out to ship a solid **DBaaS** first. If you need any of the following, they are **application-layer concerns for now** or will arrive **via the plugin system** later — they will not be added to the core.
+
+- **Row-Level Security (RLS)** — Not implemented. Enforce who-can-see-what in your own application code that calls Boltstore. The plugin system (`src/plugin.ts`, `src/events.ts`) is the future extension point where RLS-style enforcement can be layered in without modifying core.
+- **JWT / user authentication** — Not implemented. The server has admin sessions (dashboard) and API keys (machine credentials). End-user auth, OAuth, and a `_users` table are BaaS-layer concerns — build them in your app, or wait for an auth plugin.
+- **Realtime / WebSocket subscriptions** — Not implemented. No `src/ws/` directory exists. If you need live updates, poll the API or build a realtime layer in front of Boltstore.
+- **Offline sync / client-side cache** — Not implemented. The client SDK is HTTP-only.
+- **File storage** — Not implemented. Store files in S3 / your filesystem and keep references in Boltstore tables.
+- **Hooks / user-defined server functions** — Not implemented; the plugin system is the future home for this.
+
+**The contract:** the core stays a database platform. BaaS features are added by you (application layer) or by plugins — never by bloating the core.
 
 ## Quick start
 
 ```bash
+# Install globally
 npm install -g boltstore
 boltstore serve --port 8080 --db ./data
+
+# Or run from source
+git clone https://github.com/boltstore/boltstore.git
+cd boltstore/boltstore
+bun install
+bun run dev
 ```
 
 Or with Docker:
 
 ```bash
-docker run -p 8080:8080 -v ./data:/data boltstore/boltstore
+docker run -p 8080:8080 -v ./data:/app/data boltstore/boltstore
 ```
+
+Then open `http://localhost:8080/dashboard` and create the first admin account.
 
 ## Configuration
 
@@ -43,7 +68,7 @@ Boltstore merges settings from four sources. Each source overrides the one below
   Defaults           (lowest priority)
 ```
 
-If both `boltstore.yaml` and `boltstore.json` exist, YAML is used first.
+If both `boltstore.yaml` and `boltstore.json` exist, YAML is preferred. Running `boltstore serve` without a config file auto-generates `boltstore.yaml` with defaults.
 
 ```bash
 # Generate a config file (YAML by default)
@@ -52,282 +77,173 @@ boltstore init
 # Or generate JSON instead
 boltstore init --json
 
-# boltstore.yaml / boltstore.json is auto-detected — no --config needed
-boltstore serve
-
 # Override any setting via CLI flags or environment variables
 boltstore serve --port 3000 --db ./myapp
 PORT=3000 boltstore serve
 ```
 
+### Config reference
+
 | Config key | Env variable | Default | Description |
 |---|---|---|---|
 | `port` | `PORT` | `8080` | HTTP server port |
-| `databasePath` | `DATABASE_PATH` | `./data` | Directory for SQLite databases |
-| `jwtSecret` | `JWT_SECRET` | — | Secret key for JWT tokens |
-| `rateLimitPublic` | `RATE_LIMIT_PUBLIC` | `100` | Rate limit for public endpoints (req/min) |
-| `rateLimitAuth` | `RATE_LIMIT_AUTH` | `1000` | Rate limit for authenticated endpoints (req/min) |
-| `rateLimitAdmin` | `RATE_LIMIT_ADMIN` | `500` | Rate limit for admin endpoints (req/min) |
-| `rateLimitWindowSeconds` | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window in seconds |
-| `serverTimezone` | `SERVER_TIMEZONE` | `UTC` | Server timezone |
-| `logLevel` | `LOG_LEVEL` | `info` | Logging: debug, info, warn, error |
-| `maxBodySize` | `MAX_BODY_SIZE` | `1048576` | Max request body in bytes |
-| `requestTimeoutMs` | `REQUEST_TIMEOUT_MS` | `30000` | Request handler timeout in ms |
-| `maxBatchSize` | `MAX_BATCH_SIZE` | `1000` | Max operations per batch/transaction |
-| `corsOrigins` | `CORS_ORIGINS` | `[]` | Allowed CORS origins (comma-separated) |
+| `databasePath` | `DATABASE_PATH` | `./data` | Directory for SQLite databases and the `_boltstore.db` meta database |
+| `adminKey` | `BOLTSTORE_ADMIN_KEY` | — | Bootstrap key for provisioning the first admin account. **One-shot** — see "Admin bootstrap" below. |
+| `logLevel` | `LOG_LEVEL` | `info` | Logging: `debug`, `info`, `warn`, `error` |
+| `maxBodySize` | `MAX_BODY_SIZE` | `10` (MB) | Max request body size in MB. **Note:** the `/api/databases/import` endpoint is exempt and currently unbounded — see "Known limitations". |
+| `requestTimeoutMs` | `REQUEST_TIMEOUT_MS` | `30000` | Request handler timeout in ms (advisory — see Known limitations) |
+| `corsOrigins` | `CORS_ORIGINS` | `*` | Allowed CORS origins (comma-separated). Use an explicit list in production. |
 | `corsMethods` | `CORS_METHODS` | `GET,POST,PATCH,DELETE,OPTIONS` | Allowed CORS methods |
 | `corsHeaders` | `CORS_HEADERS` | `Content-Type,Authorization` | Allowed CORS headers |
-| `trustedProxies` | `TRUSTED_PROXIES` | `[]` | Trusted proxy IPs/CIDRs |
-| `enableRealtime` | `ENABLE_REALTIME` | `false` | Enable WebSocket subscriptions and SSE (⚠️ unstable, opt-in) |
-| `enableSync` | `ENABLE_SYNC` | `false` | Enable offline sync and change tracking (⚠️ unstable, opt-in) |
+| `trustedProxies` | `TRUSTED_PROXIES` | `[]` | Trusted proxy IPs/CIDRs for honouring `X-Forwarded-For` / `X-Real-IP`. **Note:** currently parsed but not yet enforced — see "Known limitations". |
+
+> **Note on `RATE_LIMIT_*` env vars:** `RATE_LIMIT_PUBLIC`, `RATE_LIMIT_AUTH`, `RATE_LIMIT_ADMIN`, and `RATE_LIMIT_WINDOW_SECONDS` are **reserved for future use and not currently consumed**. Boltstore ships **no built-in rate limiting** in the MVP. Place a reverse proxy, WAF, or Cloudflare in front of the server if you need rate limiting today. See "Known limitations" below.
+
+> **Note on `SERVER_TIMEZONE`:** Removed. The backend **always** stores and returns timestamps in UTC. A timezone selector in the dashboard (if present) is a client-side display preference only and never affects API output.
 
 ## Authentication
 
-Boltstore has two credential systems that serve different purposes:
+Boltstore has two credential systems:
 
-| Feature | JWT Tokens (User Auth) | API Keys (Machine Auth) |
+| Feature | Admin Sessions | API Keys |
 |---|---|---|
-| **Who uses it** | End users (login via email/password or OAuth) | Services, scripts, CLI tools |
-| **Where stored** | Application database (`_users`, `_tokens` tables) | System meta database (`_api_keys` table) |
-| **Scope** | Scoped to one application database | Global — can access any application database |
-| **Lifetime** | Short-lived access token (15 min) + refresh token (7 days) | Permanent until revoked |
-| **Rotation** | Auto-refreshed by the SDK | Manual — create a new key, revoke the old one |
-| **Rate limiting** | Per-IP, same bucket as unauthenticated | Per-IP (same as other callers) |
-| **RLS bypass** | No — RLS policies apply to all JWT-authenticated requests | Yes — API keys bypass RLS (collection scopes are the enforcement) |
-| **Admin access** | Only if the user exists in the system database | Only if the key has `operations: ["admin"]` |
+| **Who uses it** | Dashboard users (humans) | Services, scripts, CLI tools, your application backend |
+| **Where stored** | System meta DB (`_sessions` table) | System meta DB (`_api_keys` table) |
+| **Scope** | Global — can administer the whole server | Per-database — bound to one database |
+| **Lifetime** | Until logout or the server prunes expired sessions (expiry/rotation is a future enhancement) | Permanent until revoked |
+| **Sent as** | `Authorization: Bearer <session-token>` | `Authorization: Bearer <boltstore_...>` |
+| **Admin access** | Yes — full admin API + dashboard | No — data API only (records, tables, raw SQL `SELECT`). DDL/DML via raw SQL requires an admin key. |
 
-### JWT Tokens (User Authentication)
+### Admin accounts & bootstrap
 
-JWT tokens are issued per application database. A user registered in one app database cannot access another. Each login produces two tokens:
+There is **no CLI admin command**. Admin accounts are created via the dashboard's first-run setup flow or the `POST /api/admin/setup` endpoint.
 
-- **Access token** — Short-lived (default 15 minutes). Sent as `Authorization: Bearer <token>` with every request. Contains the user ID, email, and a unique token ID (`jti`) that is tracked in the `_tokens` table for revocation.
-- **Refresh token** — Longer-lived (default 7 days). Used to obtain a new access token without re-entering credentials. Rotated on each use (the old refresh token is revoked).
+**Bootstrap flow:**
+1. Start the server with no existing admins. The dashboard will show the "Create Admin Account" screen.
+2. Submit an email + password (min 8 chars). The first admin is created with no auth required.
+3. Subsequent admin creation requires either an existing admin session **or** the bootstrap key (`BOLTSTORE_ADMIN_KEY`).
 
-Both tokens are tracked in the `_tokens` table of the application database. Expired and revoked tokens are cleaned up every 5 minutes by a background task.
+**Bootstrap key semantics (important):**
+- The bootstrap key is intended to provision **exactly one** admin account and then be consumed. Set `BOLTSTORE_ADMIN_KEY` in your env / config only during initial deployment.
+- Treat it as a one-shot provisioning secret. After the first admin exists, unset it from the environment and restart the server.
+- The current implementation does not yet auto-consume the key after first use — see `audits.md` H1.4. Until that lands, **unset `BOLTSTORE_ADMIN_KEY` after provisioning your first admin** to prevent it from being reused.
+- Compare against the key is not yet constant-time — keep the key secret and rotate the env value if you suspect exposure.
 
-Users can update their own profile (email, password) via `PATCH /api/:database/auth/me`. The `_users` table is a system table and is not directly accessible through the records API.
+### API keys
 
-### API Keys (Machine Authentication)
+API keys are system-level credentials stored in the `_api_keys` table in the meta database. Each key is bound to a single database.
 
-API keys are system-level credentials stored in the system meta database (`_boltstore.db`). They are created and managed via `/api/admin/:database/api-keys`. All API keys live in the `_api_keys` table in the system database, but they come in two distinct roles:
-
-| Role | Access Scope | Use Case |
-|------|-------------|----------|
-| **`admin`** | Global — any database, any operation | Infrastructure automation, CI/CD, cross-app admin tasks |
-| **`scoped`** | Per-database, per-operation | Service-to-service auth for a specific application |
-
-#### Admin Keys
-
-Admin keys have `role: "admin"` and bypass all permission checks. They can access any database and perform any operation (including schema changes, raw SQL, user management, etc.). These should be few in number and tightly controlled — treat them like root credentials.
-
-- `allowed_databases` is ignored (implicitly all databases)
-- `allowed_operations` is ignored (implicitly all operations)
-- Passes `requireAdmin()` checks
-- Bypasses RLS and collection-level scoping
-
-#### Scoped Keys
-
-Scoped keys have `role: "scoped"` and must explicitly declare which databases (by `dbs_` ID) and which operations they are allowed to perform. They are the recommended choice for service-to-service communication within a specific application.
-
-- **`allowed_databases`** — JSON array of database IDs (`dbs_` prefix) the key can access. Example: `["dbs_a1b2c3d4", "dbs_e5f6g7h8"]`. Use `"*"` to allow all databases. If empty, the key cannot access any database.
-- **`allowed_operations`** — JSON array of operations the key can perform. Valid values: `"read"`, `"create"`, `"update"`, `"delete"`. If empty, no operations are allowed.
-- **`collections`** (optional) — JSON array of collection names to further restrict access. If omitted, all collections in the allowed databases are accessible. If present, only the listed collections are accessible.
-- **No RLS** — Scoped keys bypass Row-Level Security. Access is controlled entirely by the database scopes, operations, and collection allow-lists configured on the key.
-
-#### `_api_keys` Table Schema
-
-```sql
-CREATE TABLE IF NOT EXISTS _api_keys (
-  id              TEXT PRIMARY KEY,          -- e.g. "apk_a1b2c3d4"
-  name            TEXT NOT NULL,             -- Human-readable label
-  role            TEXT NOT NULL DEFAULT 'scoped',  -- "admin" | "scoped"
-  key_hash        TEXT NOT NULL UNIQUE,      -- bcrypt hash of the raw secret
-  prefix          TEXT NOT NULL,             -- First 8 chars (e.g. "blt_aBcD")
-  allowed_databases TEXT NOT NULL DEFAULT '[]',  -- JSON array of database IDs (dbs_ prefix)
-  allowed_operations TEXT NOT NULL DEFAULT '[]', -- JSON array of operations
-  collections     TEXT,                      -- Optional JSON array of collection names
-  revoked         INTEGER NOT NULL DEFAULT 0,    -- 0 = active, 1 = revoked
-  created_at      TEXT NOT NULL,             -- ISO-8601
-  last_used_at    TEXT                        -- ISO-8601, updated on each use
-);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON _api_keys(prefix);
-```
-
-#### Key Properties
-
-- **Prefix-based lookup** — The first 8 characters of the key (`blt_` + 4 random chars) are used as an index prefix for efficient lookup. The full key is hashed with bcrypt before storage.
-- **Secret shown once** — The raw key is returned only at creation time. After that, only the prefix is visible via the API.
-- **Revocable** — Keys can be revoked at any time via `DELETE /api/admin/:database/api-keys/:id`. Revoked keys are immediately rejected.
-- **Permanent** — API keys do not expire. Rotate manually by creating a new key and revoking the old one.
-- **No RLS** — API keys bypass Row-Level Security. Access is controlled entirely by the role, database scopes, and operations configured on the key.
-
-#### Creating an API Key
+- **Format:** `boltstore_` + 32 random alphanumeric characters.
+- **At rest:** SHA-256 hashed (never stored plaintext). The raw key is returned **only once** at creation time.
+- **Per-database:** A key for database `foo` cannot access database `bar`. Admin keys / sessions can access any database.
+- **Operations:** A non-admin API key can read/write records, manage tables on its database, and run `SELECT` raw SQL. DDL/DML via the raw `/query` endpoint requires an admin key (see "Raw SQL" below).
+- **Management:** Created, rotated, and revoked via the admin API (`/api/databases/:name/keys`) or the dashboard.
 
 ```bash
-# Create an admin key (global access)
-curl -X POST /api/admin/_system/api-keys \
-  -H "Authorization: Bearer <admin-token>" \
+# Create an API key (requires admin session)
+curl -X POST http://localhost:8080/api/databases/myapp/keys \
+  -H "Authorization: Bearer <admin-session-token>" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "CI/CD Deploy Key",
-    "role": "admin"
-  }'
+  -d '{"label": "My App Backend"}'
+# → { "data": { "id": "apk_...", "label": "My App Backend", "key": "boltstore_..." } }
 
-# Create a scoped key (read-only on "dbs_a1b2c3d4" database)
-curl -X POST /api/admin/_system/api-keys \
-  -H "Authorization: Bearer <admin-token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "MyApp Reader",
-    "role": "scoped",
-    "allowed_databases": ["dbs_a1b2c3d4"],
-    "allowed_operations": ["read"]
-  }'
-
-# Create a scoped key with collection restrictions
-curl -X POST /api/admin/_system/api-keys \
-  -H "Authorization: Bearer <admin-token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "MyApp Posts Writer",
-    "role": "scoped",
-    "allowed_databases": ["dbs_a1b2c3d4"],
-    "allowed_operations": ["read", "create", "update"],
-    "collections": ["posts"]
-  }'
+# Use the key
+curl -H "Authorization: Bearer boltstore_..." \
+  http://localhost:8080/api/databases/myapp/tables
 ```
 
-#### Using an API Key
+### System tables
+
+Tables whose names start with `_` (e.g. `_boltstore` internal tables) are system tables. The records API refuses to operate on them; only admin routes touch system tables.
+
+## API tiers
+
+| Prefix / route | Access | Operations |
+|---|---|---|
+| `GET /api/health` | Public | Health check (status, version, database count) |
+| `POST /api/admin/status` | Public | Whether any admins exist (used by dashboard setup flow) |
+| `POST /api/admin/setup` | Bootstrap key (after first admin) / open (before first admin) | Create admin account |
+| `POST /api/admin/login` | Public | Admin login (returns session token) |
+| `GET /api/admin/me` | Admin session | Current admin info |
+| `POST /api/admin/logout` | Admin session | End session |
+| `/api/databases` (GET, POST) | Admin | List / create databases |
+| `/api/databases/:name` (GET, PATCH, DELETE) | Admin | Database detail / rename / delete |
+| `/api/databases/:name/config` (GET, PATCH) | Admin | Per-database config |
+| `/api/databases/:name/keys` (GET, POST) | Admin | List / create API keys |
+| `/api/databases/:name/keys/:id/rotate` (POST) | Admin | Rotate a key |
+| `/api/databases/:name/keys/:id` (DELETE) | Admin | Revoke a key |
+| `/api/databases/:name/export` (POST) | Admin | Export database file |
+| `/api/databases/import` (POST) | Admin | Import a `.db` file |
+| `/api/settings` (GET, PATCH) | Admin | Global settings |
+| `/api/activity` (GET) | Admin | Audit log |
+| `/api/analytics/*` (GET) | Admin | Analytics dashboards |
+| `/api/databases/:db/tables` (GET, POST) | API key or admin | List / create tables |
+| `/api/databases/:db/tables/:table` (GET, PATCH, DELETE) | API key or admin | Table schema / alter / drop |
+| `/api/databases/:db/tables/:table/records` (GET, POST) | API key or admin | List / create records |
+| `/api/databases/:db/tables/:table/records/:id` (GET, PATCH, DELETE) | API key or admin | Record CRUD |
+| `/api/databases/:db/query` (POST) | API key or admin | Raw SQL — **`SELECT` only for non-admin keys**; DDL/DML requires admin |
+
+### Raw SQL endpoint
+
+`POST /api/databases/:db/query` accepts `{ sql: string, params?: unknown[] }` and runs the statement with parameterised bindings.
+
+**Policy (MVP):**
+- **Non-admin API keys may only execute `SELECT` statements.** Any `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`, `REPLACE`, `VACUUM`, `ATTACH`, `DETACH`, `PRAGMA`, `REINDEX`, or `ANALYZE` statement is rejected with `403 FORBIDDEN` / `WRITE_REQUIRES_ADMIN` for non-admin keys.
+- **Admin keys / sessions may execute any statement.**
+- If the database is in read-only mode (per-database config), writes are rejected for everyone.
+
+> **Note:** The current implementation does not yet enforce the SELECT-only policy for non-admin keys — see `audits.md` M2.4. Until that lands, assume any API key can run any SQL via `/query` and only hand API keys to trusted services.
+
+## Timestamps & timezones
+
+**The backend is UTC-only.** All `created_at`, `updated_at`, activity log, analytics, and audit timestamps are stored and returned as UTC ISO-8601 strings via SQLite's `datetime('now')`. This is a hard invariant — do not attempt to shift the server timezone.
+
+The dashboard may offer a timezone selector for **display only** — converting UTC timestamps to the viewer's local time in the browser. This conversion never affects API output.
+
+## Audit logging
+
+Admin actions are recorded in the `_activity_log` table with the admin ID, action, target database, and the requesting IP. Logged actions include: `admin.create`, `admin.login`, `admin.logout`, `database.create`, `database.rename`, `database.delete`, `database.import`, `database.export`, `database.config.update`, `api_key.create`, `api_key.rotate`, `api_key.revoke`, `table.create`, `table.rename`, `table.delete`, `settings.update`.
+
+> **Retention & privacy note:** Activity logs store the requesting IP in plaintext for provenance. Boltstore does not auto-redact or expire the log. If your jurisdiction requires IP redaction or retention limits (e.g. GDPR), apply your own retention/hashing policy by periodically pruning `_activity_log` rows — this is an operator responsibility, not a Boltstore feature.
+
+## Admin panel
+
+The Vue 3 dashboard is served at `/dashboard`. In development, run the Vite dev server for HMR:
 
 ```bash
-# Via Authorization header (Bearer with blt_ prefix)
-curl -H "Authorization: Bearer blt_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" \
-  /api/myapp/collections/posts/records
+# Terminal 1: backend
+cd boltstore && bun run dev
 
-# Via X-API-Key header
-curl -H "X-API-Key: blt_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" \
-  /api/myapp/collections/posts/records
+# Terminal 2: admin dashboard with HMR
+cd boltstore/admin && npm run dev
 ```
 
-> **Important:** API keys are system-level credentials stored in the system meta database (`_boltstore.db`). The `:database` parameter in the admin API key routes is accepted for route consistency but **ignored** — keys are always stored in and verified against the system database. This means a scoped key with `allowed_databases: ["dbs_a1b2c3d4"]` can only access that specific database, but the key itself lives in the system database. Database identifiers must use the `dbs_` prefix (the internal database ID), not the application name.
+Open `http://localhost:5173/dashboard` for HMR, or `http://localhost:8080/dashboard` for the server-proxied build (no HMR). The server auto-detects the Vite dev server on port 5173.
 
-### Why Tokens Are in Both Databases
+To build the dashboard for production:
 
-The system meta database (`_boltstore.db`) stores:
-- `_databases` — registry of all application databases
-- `_api_keys` — API keys (global credentials)
-
-Each application database stores its own:
-- `_users` — user accounts for that application
-- `_tokens` — JWT token records for session tracking and revocation
-
-This separation means:
-- A user in app A cannot access app B's data, even with a valid JWT
-- API keys are global because they are stored in the system database, not tied to any single app
-- Deleting an application database removes all its users and tokens without affecting other apps or API keys
-
-## System Tables
-
-Collections whose names start with `_` (e.g. `_users`, `_tokens`, `_api_keys`) are **system tables** and are only accessible by admin users through the records API. Non-admin users cannot read or write them.
-
-Users update their own profile (email, password) via `PATCH /api/:database/auth/me` — not through the records API. For application-specific user data (avatars, bios, display names), create a separate collection with its own RLS rules.
-
-## Client-side LocalStore (Offline Cache)
-
-The `@boltstore/client` SDK includes an automatic offline queryable cache that persists records locally. In browsers, it uses `IndexedDbStore` (IndexedDB) by default — no configuration needed. The SDK is browser-first; support for other environments (Node.js, Bun, React Native) is planned for future releases.
-
-**How data flows:**
-
+```bash
+cd boltstore/admin && npm run build
+# Output lands in boltstore/admin/dist/ and is served by the server at /dashboard
 ```
-collection.create(data)       ──► localStore (optimistic) ──► SERVER ──► reconcile
-collection.list(options)      ──► SERVER ──► cache ──► return
-                                (fallback to localStore on network error)
-WebSocket event received      ──► localStore (auto-apply)
-Offline write                 ──► localStore (immediate) ──► queue ──► sync on reconnect
-```
-
-**Available stores (Phase 1 — browser):**
-
-| Store | Environment | Persistence | Dependencies |
-|---|---|---|---|
-| `IndexedDbStore` | Browser | Yes (IndexedDB) | None (browser built-in) |
-| `MemoryStore` | All | No (in-memory) | None |
-
-Additional stores (Bun, Node.js, React Native) will be available in future releases.
-
-**Security:** System collections (`_`-prefixed) are never cached — the client skips both reads and writes to the local store for any collection starting with `_`. This is defense-in-depth; the server already rejects non-admin access to system collections.
-
-**Usage (browser — defaults to IndexedDB automatically):**
-
-```typescript
-import { BoltstoreClient } from "@boltstore/client";
-
-const client = new BoltstoreClient({
-  baseUrl: "http://localhost:8080",
-  databaseId: "dbs_xxx",
-  // localStore defaults to IndexedDbStore in browser — no import needed
-});
-```
-
-See the [client README](https://github.com/boltstore/client) for the full API.
-
-## Row-Level Security (RLS)
-
-RLS policies are compiled from SQL-like expressions (e.g., `owner_id = $userId`) and cached in memory per pool.
-
-### Caching Latency
-
-RLS uses two in-memory caches that share a **30-second TTL** (`rls.ts:62`, `records/schema-cache.ts:15`):
-
-- **Policy cache** — RLS read/write rules are cached for up to 30s after fetch. After PATCHing a collection's RLS rules via the API, the old rules may still apply for that window.
-- **Schema cache** — Column definitions (`PRAGMA table_info`) are cached for 30s. Adding a column via PATCH may not be visible to writes for up to 30s.
-
-The cache is scoped to the `DatabasePool` instance (one per database per process). Calling `invalidateRLSCache()` clears the entry for the affected collection, but only on the same process — multi-process deployments expire independently.
-
-**Recommendation:** After changing RLS or schema, wait 30s or restart the server for immediate consistency.
-
-## Admin Elevation
-
-There is **no HTTP endpoint** for creating admin accounts. This is intentional — admin access controls the entire server (create/delete databases, manage all collections). Requiring a CLI step or pre-deployment seed prevents accidental self-elevation via HTTP and ensures at least one bootstrap admin pathway is always available.
-
-Admin credentials can be created through two channels:
-
-1. **CLI:** `boltstore admin` (or `bun run boltstore admin` from source) — interactive prompt that creates an admin user in the `_system` database (`cli/admin.ts:64`). After creation, log in at `POST /api/_system/auth/login`.
-2. **Pre-seeded API keys:** Insert an admin API key directly into `_system._api_keys` with `role: "admin"` during deployment automation.
-
-The `POST /api/_system/auth/register` endpoint explicitly rejects registrations — admin accounts cannot be created through the public registration flow.
-
-## API Tiers
-
-| Prefix | Access | Operations |
-|---|---|---|
-| `GET /api/health` | Public | Health check |
-| `POST /api/auth/*` | Public | Login, register |
-| `/api/collections/:collection/records` | Authenticated | CRUD on records (system tables excluded) |
-| `/api/admin/*` | Admin only | Schema changes, indexes, views, raw SQL, transactions, API key management |
-
-## Admin Panel
-
-> **Note:** The admin panel is not yet available. The `/admin` route currently returns a 404.
 
 ## Development
 
 ```bash
 git clone https://github.com/boltstore/boltstore.git
-cd boltstore
+cd boltstore/boltstore
 bun install
 ```
 
 ### Run the server from source
 
 ```bash
-JWT_SECRET="dev-secret-thats-at-least-32-bytes!!" bun run boltstore
+bun run dev          # watch mode, auto-restarts
+# or
+bun run boltstore serve
 ```
 
-> **Note:** `bolt` and `boltstore` are aliases — both point to `src/bin.ts`. Use whichever you prefer.
-
-Without a command argument, the server starts on port 8080. With a command argument, it dispatches to the corresponding CLI command.
+Without a command argument, `bun run boltstore` starts the server on port 8080.
 
 ### CLI commands
 
@@ -341,69 +257,28 @@ bun run boltstore init
 # Or generate JSON
 bun run boltstore init --json
 
-# Create an admin account (CLI-only, interactive prompt)
-bun run boltstore admin
-
-# List applications with their database IDs and paths
-bun run boltstore applications
-
-# Create a new application
-bun run boltstore applications --create myapp
-
-# Rename an application
-bun run boltstore applications --rename myapp "new-name"
-
-# Delete an application (irreversible — requires confirmation)
-bun run boltstore applications --delete myapp
-
-# Run pending migrations
-bun run boltstore migrate --db myapp --dir ./migrations
-
-# Rollback last migration
-bun run boltstore migrate:rollback --db myapp
-
-# List migration status
-bun run boltstore migrate:list --db myapp
-
-# Import data
-bun run boltstore db:import todos mydata.csv --db myapp --format csv
-
-# Export data (prints to stdout)
-bun run boltstore db:export todos --db myapp --format json
-
-# Create a backup
-bun run boltstore db:backup --db myapp --label "pre-deploy"
-
-# Restore from a backup file
-bun run boltstore db:restore ./data/backups/myapp-20260101.db --db myapp
-
-# Check server status
-bun run boltstore status
-
 # Show help
 bun run boltstore --help
 ```
+
+> The `admin`, `migrate`, `db:backup`, `db:restore`, `applications`, and `status` CLI commands documented in older versions of this README **do not exist** in the MVP. Admin creation is via the dashboard setup flow, not a CLI command.
 
 ### Build and run from dist
 
 ```bash
 bun run bolt:build
-JWT_SECRET="dev-secret-thats-at-least-32-bytes!!" cd boltstore && bun run start
+cd boltstore && bun run start
 ```
 
 ### Run tests
 
 ```bash
 bun run bolt:test
+# or
+cd boltstore && bun test
 ```
 
-### Watch mode
-
-```bash
-cd boltstore && bun run dev
-```
-
-### Compile a binary
+### Compile a standalone binary
 
 ```bash
 # macOS Apple Silicon
@@ -415,6 +290,27 @@ cd boltstore && bun run compile
 # Windows x64
 cd boltstore && bun run compile:windows
 ```
+
+## Known limitations (MVP)
+
+These are tracked in `audits.md` with severity ratings and fix plans.
+
+- **No built-in rate limiting.** The `RATE_LIMIT_*` env vars referenced in `docker-compose.yml` are reserved and not yet consumed. Place a reverse proxy / WAF / Cloudflare in front of the server for rate limiting. (`audits.md` C6.1)
+- **Raw SQL `/query` endpoint does not yet enforce SELECT-only for non-admin keys.** Until it does, treat any API key as capable of running arbitrary SQL on its database. (`audits.md` M2.4)
+- **Session tokens are stored hashed-at-rest is not yet implemented** — sessions are currently plaintext in `_sessions`. Treat the meta DB file as a crown-jewels secret. (`audits.md` C5.1)
+- **No session expiry / rotation / "logout all".** A session token is valid until explicitly logged out. (`audits.md` H5.2)
+- **`trustedProxies` is parsed but not yet enforced.** `X-Forwarded-For` / `X-Real-IP` / `cf-connecting-ip` are trusted unconditionally, so clients can spoof their IP in audit logs. Run behind a trusted proxy and do not expose the server directly to the internet. (`audits.md` H13.1)
+- **Import endpoint has no upper size bound** and buffers the entire file in memory. Limit upload size at the reverse proxy. (`audits.md` H6.2)
+- **`requestTimeoutMs` is advisory** — the timer fires and returns 408 to the client, but the underlying SQLite query continues to run. (`audits.md` M6.4)
+- **Per-database CORS is checked after auth** in some routes, which can leak API-key validity to unauthorized origins via timing. (`audits.md` H4.1)
+- **Database pools are never evicted** — every database ever touched stays open with its read connections. Fine for small fleet sizes; matters for very large multi-tenant deployments. (`audits.md` H9.1)
+- **The YAML config parser is minimal** — flat key/value pairs and simple arrays only. No nested maps, anchors, or flow style. (`audits.md` L13.8)
+
+See `audits.md` for the complete list and the fix plan for each.
+
+## Plugin system (future)
+
+Boltstore includes a minimal plugin interface (`src/plugin.ts`) and event emitter (`src/events.ts`) as **reserved infrastructure**. No plugins are loaded yet and no events are emitted. Once plugin loading is implemented (post-MVP), plugins will be able to subscribe to `query`, `database:create`, `table:create`, and other events to add features like RLS-style enforcement, custom validation, or analytics enrichment without modifying core.
 
 ## Publishing
 
