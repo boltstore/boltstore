@@ -8,3 +8,4 @@ data/
 boltstore.yaml
 boltstore.yml
 boltstore.json
+.DS_Store
