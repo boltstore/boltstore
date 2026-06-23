@@ -23,7 +23,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="entry in filteredEvents" :key="entry.id" class="hover:bg-bolt-hover transition-colors">
+            <tr v-for="entry in filteredEvents" :key="entry.id" class="hover:bg-bolt-hover transition-colors cursor-pointer" @click="selected = entry">
               <td class="px-5 py-3">
                 <div class="flex items-center gap-2">
                   <span class="w-6 h-6 rounded-full flex items-center justify-center" :class="getIcon(entry.action).bgClass">
@@ -53,11 +53,57 @@
         </div>
       </div>
     </div>
+
+    <div
+      v-if="selected"
+      class="fixed inset-0 z-50 flex items-center justify-center"
+      style="background: rgba(0,0,0,0.6);"
+      @click="selected = null"
+    >
+      <div class="bg-bolt-card border border-border-default rounded-lg w-full max-w-md mx-4 p-5 shadow-2xl" @click.stop>
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-medium text-text-primary">Event Details</h3>
+          <button class="btn-ghost btn-sm text-text-muted" @click="selected = null">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="space-y-2 text-xs">
+          <div class="flex justify-between py-1.5 border-b border-border-subtle">
+            <span class="text-text-muted">Event</span>
+            <span class="text-text-primary font-medium">{{ formatAction(selected.action) }}</span>
+          </div>
+          <div class="flex justify-between py-1.5 border-b border-border-subtle">
+            <span class="text-text-muted">Database</span>
+            <span class="text-text-primary">{{ selected.database_name || '—' }}</span>
+          </div>
+          <div class="flex justify-between py-1.5 border-b border-border-subtle">
+            <span class="text-text-muted">Admin</span>
+            <span class="text-text-primary">{{ selected.admin_email || '—' }}</span>
+          </div>
+          <div class="flex justify-between py-1.5 border-b border-border-subtle">
+            <span class="text-text-muted">Target</span>
+            <span class="text-text-primary">{{ selected.target || '—' }}</span>
+          </div>
+          <div class="flex justify-between py-1.5 border-b border-border-subtle">
+            <span class="text-text-muted">IP Address</span>
+            <span class="text-text-primary font-mono">{{ selected.ip || '—' }}</span>
+          </div>
+          <div class="flex justify-between py-1.5 border-b border-border-subtle">
+            <span class="text-text-muted">Time</span>
+            <span class="text-text-primary">{{ formatLocalTime(selected.created_at) }}</span>
+          </div>
+          <div v-if="parsedDetails" class="pt-1">
+            <div class="text-text-muted mb-1">Details</div>
+            <pre class="bg-bolt-elevated border border-border-subtle rounded-md p-3 text-[11px] text-text-secondary font-mono whitespace-pre-wrap">{{ parsedDetails }}</pre>
+          </div>
+        </div>
+      </div>
+    </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue"
+import { ref, computed, onMounted, onUnmounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import { api, type ActivityEntry } from "../api/client"
 
@@ -66,8 +112,26 @@ const entries = ref<ActivityEntry[]>([])
 const total = ref(0)
 const limit = 20
 const offset = ref(0)
+const selected = ref<ActivityEntry | null>(null)
 
-onMounted(() => load())
+const parsedDetails = computed(() => {
+  if (!selected.value?.details) return null
+  try {
+    return JSON.stringify(JSON.parse(selected.value.details), null, 2)
+  } catch {
+    return selected.value.details
+  }
+})
+
+onMounted(() => {
+  load()
+  window.addEventListener("keydown", onKeyDown, { capture: true })
+})
+onUnmounted(() => window.removeEventListener("keydown", onKeyDown, { capture: true }))
+
+function onKeyDown(e: KeyboardEvent) {
+  if (e.key === "Escape" && selected.value) selected.value = null
+}
 
 async function load() {
   try {
@@ -120,6 +184,11 @@ function formatTime(dateStr: string) {
   if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
   return `${days}d ago`
+}
+
+function formatLocalTime(dateStr: string) {
+  if (!dateStr) return "—"
+  return new Date(dateStr + "Z").toLocaleString()
 }
 
 interface IconDef {

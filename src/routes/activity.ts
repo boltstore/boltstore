@@ -63,7 +63,10 @@ export function registerActivityRoutes(router: Router, manager: DatabaseManager)
     const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0);
     const total = (manager.getMetaPool().read().query("SELECT COUNT(*) as c FROM _activity_log").get() as any)?.c ?? 0;
     const rows = manager.getMetaPool().read().query(
-      "SELECT id, admin_id, action, database_name, target, details, ip, created_at FROM _activity_log ORDER BY created_at DESC LIMIT ? OFFSET ?"
+      `SELECT a.id, a.admin_id, a.action, a.database_name, a.target, a.details, a.ip, a.created_at, adm.email as admin_email
+       FROM _activity_log a
+       LEFT JOIN _admins adm ON adm.id = a.admin_id
+       ORDER BY a.created_at DESC LIMIT ? OFFSET ?`
     ).all(limit, offset);
     return jsonResponse({ data: rows, meta: { total, limit, offset } });
   });

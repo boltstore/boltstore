@@ -51,6 +51,7 @@ export interface ActivityEntry {
   details: string | null
   ip: string | null
   created_at: string
+  admin_email?: string | null
 }
 
 export interface HealthResponse {
@@ -100,4 +101,8 @@ export interface QueryResult {
 export interface DbConfig {
   cors_origins?: string[]
   [key: string]: unknown
+}
+
+export interface GlobalSettings {
+  timezone: string
 }

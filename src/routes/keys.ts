@@ -57,13 +57,15 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
     const key = generateApiKey();
     const hash = await hashKey(key);
 
+    const existing = metaPool.read().query("SELECT label FROM _api_keys WHERE id = ? AND database_name = ?").get(params.keyId, params.name) as { label: string } | null;
+    if (!existing) return errorResponse("NOT_FOUND", "API key not found.", 404);
+
     const result = metaPool.write().run(
       "UPDATE _api_keys SET hash = ? WHERE id = ? AND database_name = ?",
       [hash, params.keyId, params.name]
     );
-    if (result.changes === 0) return errorResponse("NOT_FOUND", "API key not found.", 404);
 
-    logActivity(manager, { action: "api_key.rotate", admin_id: getAdminId(req, manager), database_name: params.name, target: params.keyId, ip: getClientIp(req) });
+    logActivity(manager, { action: "api_key.rotate", admin_id: getAdminId(req, manager), database_name: params.name, target: params.keyId, details: { label: existing.label }, ip: getClientIp(req) });
     return jsonResponse({ data: { id: params.keyId, key } });
   });
 

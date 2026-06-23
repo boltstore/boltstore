@@ -12,6 +12,7 @@ import { registerConfigRoutes } from "./routes/config";
 import { registerTransferRoutes } from "./routes/transfer";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerActivityRoutes } from "./routes/activity";
+import { registerSettingsRoutes } from "./routes/settings";
 
 export interface ServerConfig {
   port: number;
@@ -89,6 +90,7 @@ export function createRouter(config: { manager?: DatabaseManager; adminKey?: str
     registerTransferRoutes(router, manager);
     registerAdminRoutes(router, manager, config.adminKey);
     registerActivityRoutes(router, manager);
+    registerSettingsRoutes(router, manager);
   }
   return router;
 }

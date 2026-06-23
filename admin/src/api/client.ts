@@ -13,6 +13,7 @@ import type {
   QueryResult,
   DbConfig,
   AdminInfo,
+  GlobalSettings,
 } from "./types"
 
 const STORAGE_TOKEN = "boltstore_session"
@@ -224,6 +225,14 @@ export const api = {
   // Activity
   listActivity: (limit = 20, offset = 0) =>
     request<ApiResponse<ActivityEntry[]>>(`/api/activity?limit=${limit}&offset=${offset}`),
+
+  // Settings
+  getSettings: () => request<ApiResponse<GlobalSettings>>("/api/settings"),
+  updateSettings: (settings: Partial<GlobalSettings>) =>
+    request<ApiResponse<GlobalSettings>>("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify(settings),
+    }),
 
   // Export
   exportDatabase: async (name: string) => {

@@ -87,7 +87,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("VALIDATION", "Imported file failed integrity check.", 400);
     }
 
-    logActivity(manager, { action: "database.import", admin_id: getAdminId(req, manager), database_name: dbName, ip: getClientIp(req) });
+    logActivity(manager, { action: "database.import", admin_id: getAdminId(req, manager), database_name: dbName, details: { file: fileField.name }, ip: getClientIp(req) });
     return jsonResponse({ data: { name: dbName, file: fileField.name } }, 201);
   });
 }

@@ -38,7 +38,7 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
     const passwordHash = await Bun.password.hash(body.password, { algorithm: "bcrypt", cost: 10 });
     metaPool.write().run("INSERT INTO _admins (id, email, password_hash) VALUES (?, ?, ?)", [id, body.email, passwordHash]);
 
-    logActivity(manager, { action: "admin.create", admin_id: id, ip: getClientIp(req) });
+    logActivity(manager, { action: "admin.create", admin_id: id, details: { email: body.email }, ip: getClientIp(req) });
     return jsonResponse({ data: { id, email: body.email } }, 201);
   });
 

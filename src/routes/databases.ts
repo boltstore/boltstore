@@ -20,7 +20,7 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("VALIDATION", "Use only lowercase letters, numbers, hyphens, and underscores, starting with a letter or number.", 400);
     }
     const info = manager.createDatabase(body.name, body.group);
-    logActivity(manager, { action: "database.create", admin_id: getAdminId(req, manager), database_name: body.name, ip: getClientIp(req) });
+    logActivity(manager, { action: "database.create", admin_id: getAdminId(req, manager), database_name: body.name, details: body.group ? { group: body.group } : undefined, ip: getClientIp(req) });
     return jsonResponse({ data: info }, 201);
   });
 

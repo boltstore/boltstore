@@ -217,7 +217,11 @@
         <div class="p-5 pt-4 space-y-4">
           <div>
             <label class="label">Database Name</label>
-            <input type="text" class="input-field" :value="dbName" readonly>
+            <div class="flex items-center gap-2">
+              <input type="text" class="input-field" v-model="editableName">
+              <button v-if="editableName !== dbName" class="btn-primary btn-sm shrink-0" :disabled="renaming" @click="saveName">{{ renaming ? 'Saving...' : 'Save' }}</button>
+            </div>
+            <p v-if="nameSaved" class="text-[10px] text-green-400 mt-1">Name updated</p>
           </div>
           <div>
             <label class="label">Group</label>
@@ -512,6 +516,9 @@ const newKeyValue = ref("")
 const dbConfig = ref<Record<string, unknown>>({})
 const apiKeys = ref<{ id: string; name: string; key: string; lastUsed: string }[]>([])
 const groupSaved = ref(false)
+const nameSaved = ref(false)
+const renaming = ref(false)
+const editableName = ref("")
 const deletingRows = ref<number[]>([])
 
 function onKeyDown(e: KeyboardEvent) {
@@ -541,7 +548,8 @@ watch(() => route.params.table, (table) => {
   }
 })
 
-watch(dbName, () => {
+watch(dbName, (name) => {
+  editableName.value = name
   selectedTable.value = ""
   tables.value = []
   tableColumns.value = []
@@ -789,6 +797,19 @@ async function saveGroup(group: string) {
     groupSaved.value = true
     setTimeout(() => groupSaved.value = false, 2000)
   } catch {}
+}
+
+async function saveName() {
+  const newName = editableName.value.trim()
+  if (!newName || newName === dbName.value) return
+  renaming.value = true
+  try {
+    await api.renameDatabase(dbName.value, newName)
+    nameSaved.value = true
+    setTimeout(() => nameSaved.value = false, 2000)
+    router.replace(`/databases/${newName}/${activeTab.value}/settings`)
+  } catch {}
+  renaming.value = false
 }
 
 async function saveReadonly() {
