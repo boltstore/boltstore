@@ -11,30 +11,41 @@ export interface AuthResult {
   isAdmin: boolean;
 }
 
-export async function isAdminRequest(request: Request, manager?: DatabaseManager): Promise<boolean> {
+export interface AdminSession {
+  adminId: string;
+}
+
+export async function resolveAdminSession(request: Request, manager?: DatabaseManager): Promise<AdminSession | null> {
   const auth = request.headers.get("Authorization");
-  if (!auth?.startsWith("Bearer ")) return false;
+  if (!auth?.startsWith("Bearer ")) return null;
   const token = auth.slice(7).trim();
-  if (!token) return false;
+  if (!token) return null;
 
   // Check admin key from config/env (constant-time compare)
   const adminKey = Bun.env.BOLTSTORE_ADMIN_KEY;
-  if (adminKey && timingSafeEqual(token, adminKey)) return true;
+  if (adminKey && timingSafeEqual(token, adminKey)) {
+    return { adminId: "admin_key" };
+  }
 
   // Check session token from _sessions table (lookup by hash)
   if (manager) {
     try {
       const hashHex = await sha256Hex(token);
       const row = manager.getMetaPool().read()
-        .query("SELECT 1 FROM _sessions WHERE token_hash = ?")
-        .get(hashHex);
-      if (row) return true;
+        .query("SELECT admin_id FROM _sessions WHERE token_hash = ? AND (expires_at IS NULL OR expires_at > datetime('now'))")
+        .get(hashHex) as { admin_id: string } | null;
+      if (row) return { adminId: row.admin_id };
     } catch (err) {
       logger.warn("Session lookup failed in isAdminRequest", { error: err instanceof Error ? err.message : String(err) });
     }
   }
 
-  return false;
+  return null;
+}
+
+export async function isAdminRequest(request: Request, manager?: DatabaseManager): Promise<boolean> {
+  const session = await resolveAdminSession(request, manager);
+  return session !== null;
 }
 
 export async function authenticateApiKey(

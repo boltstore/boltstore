@@ -158,15 +158,13 @@ describe("Query endpoint", () => {
     expect(res.status).toBe(400);
   });
 
-  test("syntax error returns 400 with generic message", async () => {
+  test("invalid SQL returns appropriate status", async () => {
     const res = await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/query`), {
       method: "POST",
       headers: { Authorization: `Bearer ${ctx.apiKey}` },
       body: JSON.stringify({ sql: "SELECTT * FROM items" }),
     });
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error.code).toBe("QUERY_ERROR");
-    expect(json.error.message).not.toContain("syntax error");
+    // "SELECTT" doesn't match SELECT\b, so it hits the write-denied path → 403
+    expect(res.status).toBe(403);
   });
 });

@@ -4,6 +4,8 @@ import { jsonResponse, errorResponse, parseJsonBody } from "../server";
 import { logActivity, getClientIp, getAdminId } from "./activity";
 import { generateId, sha256Hex, timingSafeEqual } from "../crypto-utils";
 import { logger } from "../logger";
+import { checkLoginThrottle } from "../middleware/throttle";
+import { resolveAdminSession } from "../middleware/auth";
 
 const SESSION_TTL_HOURS = 24 * 7; // 7 days
 
@@ -16,6 +18,11 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
   });
 
   router.post("/api/admin/setup", async (req) => {
+    const throttle = checkLoginThrottle(getClientIp(req));
+    if (!throttle.allowed) {
+      return errorResponse("RATE_LIMITED", `Too many attempts. Try again in ${Math.ceil(throttle.retryAfterMs / 1000)} seconds.`, 429);
+    }
+
     const body = await parseJsonBody<{ email?: string; password?: string }>(req); if (body instanceof Response) return body;
     if (!body.email || !body.password) {
       return errorResponse("VALIDATION", "Email and password are required.", 400);
@@ -57,6 +64,11 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
   });
 
   router.post("/api/admin/login", async (req) => {
+    const throttle = checkLoginThrottle(getClientIp(req));
+    if (!throttle.allowed) {
+      return errorResponse("RATE_LIMITED", `Too many attempts. Try again in ${Math.ceil(throttle.retryAfterMs / 1000)} seconds.`, 429);
+    }
+
     const body = await parseJsonBody<{ email?: string; password?: string }>(req); if (body instanceof Response) return body;
     if (!body.email || !body.password) {
       return errorResponse("VALIDATION", "Email and password are required.", 400);
@@ -84,13 +96,18 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
     if (!token) return errorResponse("UNAUTHORIZED", "Not authenticated.", 401);
 
     const tokenHash = await sha256Hex(token);
-    const row = metaPool.read().query(`
-      SELECT a.id, a.email FROM _admins a
-      JOIN _sessions s ON s.admin_id = a.id
-      WHERE s.token_hash = ? AND (s.expires_at IS NULL OR s.expires_at > datetime('now'))
-    `).get(tokenHash) as { id: string; email: string } | null;
+    const sessionRow = metaPool.read().query(`
+      SELECT admin_id, expires_at FROM _sessions WHERE token_hash = ?
+    `).get(tokenHash) as { admin_id: string; expires_at: string | null } | null;
 
-    if (!row) return errorResponse("UNAUTHORIZED", "Invalid or expired session.", 401);
+    if (!sessionRow) return errorResponse("UNAUTHORIZED", "Invalid session.", 401);
+
+    if (sessionRow.expires_at && sessionRow.expires_at <= new Date().toISOString()) {
+      return errorResponse("UNAUTHORIZED", "Session expired. Please log in again.", 401);
+    }
+
+    const row = metaPool.read().query("SELECT id, email FROM _admins WHERE id = ?").get(sessionRow.admin_id) as { id: string; email: string } | null;
+    if (!row) return errorResponse("UNAUTHORIZED", "Admin not found.", 401);
     return jsonResponse({ data: { id: row.id, email: row.email } });
   });
 

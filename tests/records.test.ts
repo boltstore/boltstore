@@ -149,13 +149,15 @@ describe("Records endpoint", () => {
   });
 
   test("filter with $and operator", async () => {
+    // After update, Post 1 has views=100, Post 2 has views=20 — both tech, both > 15
     const res = await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/tables/posts/records?filter={"$and":[{"category":"tech"},{"views":{"$gt":15}}]}`), { headers: { Authorization: `Bearer ${ctx.apiKey}` } });
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data).toHaveLength(1);
+    expect(json.data).toHaveLength(2);
   });
 
   test("filter with $or operator", async () => {
+    // After delete, only Post 1 (tech) and Post 2 (tech) remain — both match category=tech, design has no records
     const res = await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/tables/posts/records?filter={"$or":[{"category":"tech"},{"category":"design"}]}`), { headers: { Authorization: `Bearer ${ctx.apiKey}` } });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -163,10 +165,11 @@ describe("Records endpoint", () => {
   });
 
   test("filter with $in operator", async () => {
+    // After update, Post 1 has views=100 (not in [10,20]), Post 2 has views=20 (in [10,20])
     const res = await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/tables/posts/records?filter={"views":{"$in":[10,20]}}`), { headers: { Authorization: `Bearer ${ctx.apiKey}` } });
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data).toHaveLength(2);
+    expect(json.data).toHaveLength(1);
   });
 
   test("filter with $like operator", async () => {

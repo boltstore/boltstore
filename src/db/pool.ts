@@ -81,11 +81,11 @@ export class DatabasePool {
     let finished = false;
     const t = setTimeout(() => {
       if (finished) return;
-      try {
-        db.run("SELECT 1");
-      } catch {
-        // Best-effort interrupt; Bun/Node SQLite abort is limited.
-      }
+      logger.warn("Query timeout exceeded (advisory only — query continues)", {
+        path: this.config.path,
+        type: isReadOnly ? "read" : "write",
+        timeout_ms: timeout,
+      });
     }, timeout);
     return () => {
       finished = true;

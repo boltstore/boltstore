@@ -56,17 +56,11 @@ export interface LogEntry {
   [key: string]: unknown;
 }
 
-let requestCounter = 0;
-
 /**
- * Generate a unique request ID for tracing.
+ * Generate a unique request ID for tracing using crypto.randomUUID().
  */
 export function generateRequestId(): string {
-  requestCounter++;
-  const random = new Uint8Array(6);
-  crypto.getRandomValues(random);
-  const rnd = Buffer.from(random).toString("base64url").replace(/=+$/, "");
-  return `req-${Date.now()}-${requestCounter}-${rnd}`;
+  return `req-${crypto.randomUUID()}`;
 }
 
 // ---------------------------------------------------------------------------

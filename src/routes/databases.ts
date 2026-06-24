@@ -74,16 +74,28 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     }
 
     const metaWrite = metaPool.write();
-    metaWrite.run("BEGIN");
-    metaWrite.run("PRAGMA defer_foreign_keys = ON");
-    metaWrite.run("UPDATE _databases SET name = ?, file_path = ? WHERE name = ?", [body.name, newPath, oldName]);
-    metaWrite.run("UPDATE _api_keys SET database_name = ? WHERE database_name = ?", [body.name, oldName]);
-    metaWrite.run("COMMIT");
+    try {
+      metaWrite.run("BEGIN");
+      metaWrite.run("PRAGMA defer_foreign_keys = ON");
+      metaWrite.run("UPDATE _databases SET name = ?, file_path = ? WHERE name = ?", [body.name, newPath, oldName]);
+      metaWrite.run("UPDATE _api_keys SET database_name = ? WHERE database_name = ?", [body.name, oldName]);
+      metaWrite.run("COMMIT");
+    } catch (err: unknown) {
+      metaWrite.run("ROLLBACK");
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error("Rename meta update failed — database may be in inconsistent state", { from: oldName, to: body.name, error: msg });
+      return errorResponse("DATABASE_ERROR", "Failed to update database metadata during rename.", 500);
+    }
 
     manager.closePool(oldName);
-    try { rmSync(row.file_path); } catch (err) { logger.warn("Failed to remove old db file", { path: row.file_path, error: err instanceof Error ? err.message : String(err) }); }
-    try { rmSync(row.file_path + "-wal", { force: true }); } catch {}
-    try { rmSync(row.file_path + "-shm", { force: true }); } catch {}
+    // Best-effort cleanup of old files; rename succeeds even if cleanup fails
+    const cleanupResults: string[] = [];
+    try { rmSync(row.file_path); cleanupResults.push("main"); } catch (err) { logger.warn("Failed to remove old db file during rename", { path: row.file_path, error: err instanceof Error ? err.message : String(err) }); }
+    try { rmSync(row.file_path + "-wal", { force: true }); cleanupResults.push("wal"); } catch {}
+    try { rmSync(row.file_path + "-shm", { force: true }); cleanupResults.push("shm"); } catch {}
+    if (cleanupResults.length === 0) {
+      logger.warn("All old database files could not be cleaned up during rename", { from: oldName });
+    }
 
     logActivity(manager, { action: "database.rename", admin_id: await getAdminId(req, manager), database_name: oldName, details: { from: oldName, to: body.name }, ip: getClientIp(req) });
     return jsonResponse({ data: { name: body.name } });

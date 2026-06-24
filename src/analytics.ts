@@ -92,7 +92,9 @@ export class AnalyticsManager {
         this.lastPruneAt = now;
       }
     } catch (err) {
-      logger.warn("Analytics flush failed", { error: err instanceof Error ? err.message : String(err) });
+      logger.warn("Analytics flush failed, re-queueing events", { error: err instanceof Error ? err.message : String(err) });
+      // Re-queue the batch so events are not lost on transient failures
+      this.buffer.unshift(...batch);
     }
   }
 

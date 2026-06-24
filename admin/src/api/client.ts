@@ -92,7 +92,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (ct.includes("application/json")) {
     return res.json()
   }
-  return res as unknown as T
+  // Non-JSON response — throw instead of casting to T, which would hide bugs
+  const text = await res.text().catch(() => "")
+  throw new ApiClientError(res.status, "UNEXPECTED_RESPONSE", `Expected JSON but got ${ct}: ${text.slice(0, 200)}`)
 }
 
 export const api = {

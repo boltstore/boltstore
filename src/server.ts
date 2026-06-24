@@ -64,10 +64,20 @@ export function errorResponse(code: string, message: string, status = 400, detai
   return jsonResponse({ error: { code, message, details } }, status);
 }
 
-export async function parseJsonBody<T = unknown>(request: Request): Promise<T | Response> {
+export async function parseJsonBody<T = unknown>(request: Request, maxBodySize?: number): Promise<T | Response> {
   try {
-    return await request.json() as T;
-  } catch {
+    let text: string;
+    if (maxBodySize) {
+      text = await request.text();
+      if (text.length > maxBodySize) {
+        return errorResponse("PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBodySize / 1024 / 1024}MB limit.`, 413);
+      }
+    } else {
+      text = await request.text();
+    }
+    return JSON.parse(text) as T;
+  } catch (err) {
+    if (err instanceof Response) return err;
     return errorResponse("INVALID_JSON", "Invalid or empty JSON in request body.", 400);
   }
 }
@@ -142,6 +152,13 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
 
       // Serve dashboard static files
       if (pathname.startsWith("/dashboard")) {
+        // Security headers for the dashboard SPA
+        const cspHeaders: Record<string, string> = {
+          "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self';",
+          "X-Content-Type-Options": "nosniff",
+          "X-Frame-Options": "DENY",
+          "Referrer-Policy": "same-origin",
+        };
         const devUrl = config.devDashboardUrl;
         if (devUrl) {
           const targetUrl = devUrl + pathname + url.search;
@@ -157,10 +174,10 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           : `${import.meta.dir}/../admin/dist${pathname.replace("/dashboard", "")}`;
         const file = Bun.file(filePath);
         const exists = await file.exists();
-        if (exists) return new Response(file);
+        if (exists) return new Response(file, { headers: cspHeaders });
         // SPA fallback: serve index.html for all dashboard routes
         const indexFile = Bun.file(`${import.meta.dir}/../admin/dist/index.html`);
-        if (await indexFile.exists()) return new Response(indexFile);
+        if (await indexFile.exists()) return new Response(indexFile, { headers: cspHeaders });
         return errorResponse("NOT_FOUND", "Dashboard not built. Run 'cd admin && npm run build'.", 404);
       }
 
@@ -172,9 +189,11 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           return handlePreflight(request.headers.get("Origin"), corsConfig);
         }
 
-        const contentLength = request.headers.get("Content-Length");
-        if (contentLength && parseInt(contentLength, 10) > maxBodySize && !pathname.startsWith("/api/databases/import")) {
-          return errorResponse("PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBodySize / 1024 / 1024}MB limit.`, 413);
+        if (!pathname.startsWith("/api/databases/import")) {
+          const contentLength = request.headers.get("Content-Length");
+          if (contentLength && parseInt(contentLength, 10) > maxBodySize) {
+            return errorResponse("PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBodySize / 1024 / 1024}MB limit.`, 413);
+          }
         }
 
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -217,7 +236,6 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
 
         const durationMs = Math.round(performance.now() - startTime);
         logger.info(`${method} ${pathname} ${response.status}`, { ...logMeta, status: response.status, duration_ms: durationMs });
-        flushLogger();
         return response;
       } catch (err) {
         const origin = request.headers.get("Origin");

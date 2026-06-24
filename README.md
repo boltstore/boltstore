@@ -124,10 +124,10 @@ There is **no CLI admin command**. Admin accounts are created via the dashboard'
 3. Subsequent admin creation requires either an existing admin session **or** the bootstrap key (`BOLTSTORE_ADMIN_KEY`).
 
 **Bootstrap key semantics (important):**
-- The bootstrap key is intended to provision **exactly one** admin account and then be consumed. Set `BOLTSTORE_ADMIN_KEY` in your env / config only during initial deployment.
-- Treat it as a one-shot provisioning secret. After the first admin exists, unset it from the environment and restart the server.
-- The current implementation does not yet auto-consume the key after first use — see `audits.md` H1.4. Until that lands, **unset `BOLTSTORE_ADMIN_KEY` after provisioning your first admin** to prevent it from being reused.
-- Compare against the key is not yet constant-time — keep the key secret and rotate the env value if you suspect exposure.
+- The bootstrap key is intended to provision **exactly one** admin account and then be consumed. After the first admin is created via bootstrap, a `bootstrap_consumed` meta flag is set and the key cannot be used again.
+- Treat it as a one-shot provisioning secret. Set `BOLTSTORE_ADMIN_KEY` in your env / config only during initial deployment, then unset it.
+- Comparison is constant-time (`timingSafeEqual`).
+- **Login / setup throttling:** Admin login and setup endpoints are throttled per-IP (5 attempts per 15-minute window) to prevent brute-force attacks. Local/loopback requests are not throttled.
 
 ### API keys
 
@@ -293,17 +293,10 @@ cd boltstore && bun run compile:windows
 
 ## Known limitations (MVP)
 
-These are tracked in `audits.md` with severity ratings and fix plans.
+These are tracked in `audits.md` with severity ratings.
 
-- **No built-in rate limiting.** The `RATE_LIMIT_*` env vars referenced in `docker-compose.yml` are reserved and not yet consumed. Place a reverse proxy / WAF / Cloudflare in front of the server for rate limiting. (`audits.md` C6.1)
-- **Raw SQL `/query` endpoint does not yet enforce SELECT-only for non-admin keys.** Until it does, treat any API key as capable of running arbitrary SQL on its database. (`audits.md` M2.4)
-- **Session tokens are stored hashed-at-rest is not yet implemented** — sessions are currently plaintext in `_sessions`. Treat the meta DB file as a crown-jewels secret. (`audits.md` C5.1)
-- **No session expiry / rotation / "logout all".** A session token is valid until explicitly logged out. (`audits.md` H5.2)
-- **`trustedProxies` is parsed but not yet enforced.** `X-Forwarded-For` / `X-Real-IP` / `cf-connecting-ip` are trusted unconditionally, so clients can spoof their IP in audit logs. Run behind a trusted proxy and do not expose the server directly to the internet. (`audits.md` H13.1)
-- **Import endpoint has no upper size bound** and buffers the entire file in memory. Limit upload size at the reverse proxy. (`audits.md` H6.2)
+- **No built-in rate limiting for the data API.** Admin login/setup has a per-IP throttle (5 attempts per 15 min), but the data API (records, tables, query) is intentionally unthrottled — in the Turso-like model, developers hold one API key for their backend server. Place a reverse proxy / WAF / Cloudflare in front of the server if you need data-API rate limiting.
 - **`requestTimeoutMs` is advisory** — the timer fires and returns 408 to the client, but the underlying SQLite query continues to run. (`audits.md` M6.4)
-- **Per-database CORS is checked after auth** in some routes, which can leak API-key validity to unauthorized origins via timing. (`audits.md` H4.1)
-- **Database pools are never evicted** — every database ever touched stays open with its read connections. Fine for small fleet sizes; matters for very large multi-tenant deployments. (`audits.md` H9.1)
 - **The YAML config parser is minimal** — flat key/value pairs and simple arrays only. No nested maps, anchors, or flow style. (`audits.md` L13.8)
 
 See `audits.md` for the complete list and the fix plan for each.

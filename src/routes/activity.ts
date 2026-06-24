@@ -1,8 +1,8 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
-import { isAdminRequest } from "../middleware/auth";
-import { generateId, sha256Hex } from "../crypto-utils";
+import { isAdminRequest, resolveAdminSession } from "../middleware/auth";
+import { generateId } from "../crypto-utils";
 import { logger } from "../logger";
 
 export interface ActivityEvent {
@@ -51,20 +51,8 @@ export function getClientIp(request: Request): string | undefined {
 }
 
 export async function getAdminId(request: Request, manager: DatabaseManager): Promise<string | undefined> {
-  const auth = request.headers.get("Authorization");
-  if (!auth?.startsWith("Bearer ")) return undefined;
-  const token = auth.slice(7).trim();
-  if (!token) return undefined;
-  try {
-    const hashHex = await sha256Hex(token);
-    const row = manager.getMetaPool().read()
-      .query("SELECT admin_id FROM _sessions WHERE token_hash = ?")
-      .get(hashHex) as { admin_id: string } | null;
-    return row?.admin_id;
-  } catch (err) {
-    logger.warn("getAdminId session lookup failed", { error: err instanceof Error ? err.message : String(err) });
-    return undefined;
-  }
+  const session = await resolveAdminSession(request, manager);
+  return session?.adminId;
 }
 
 export function registerActivityRoutes(router: Router, manager: DatabaseManager): void {

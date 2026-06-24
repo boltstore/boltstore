@@ -197,6 +197,10 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const result = buildSelectSQL(params.table, query);
     if (result instanceof Response) return result;
     const { sql, countSql, params: bindParams } = result;
+    // COUNT and SELECT run on the same read connection sequentially.
+    // Between the two queries a write could change row count, causing total
+    // to not match rows.length. Acceptable for an analytics-ish API —
+    // full consistency would require a read transaction on the read connection.
     const total = (readDb.query(countSql).get(...toBindings(bindParams.slice(0, -2))) as { total?: number })?.total ?? 0;
     const rows = readDb.query(sql).all(...toBindings(bindParams)) as Record<string, unknown>[];
 

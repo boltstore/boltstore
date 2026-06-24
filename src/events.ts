@@ -44,4 +44,7 @@ export class EventEmitter {
   }
 }
 
+// Reserved for the plugin system — no events are currently emitted to globalEmitter.
+// Emit sites will be added when plugin loading lands (see plugin.ts).
+// This is not dead code; it is intentionally reserved infrastructure.
 export const globalEmitter = new EventEmitter();

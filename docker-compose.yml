@@ -22,10 +22,10 @@ services:
       PORT: 8080
       DATABASE_PATH: /app/data
       LOG_LEVEL: info
-      SERVER_TIMEZONE: UTC
-      CORS_ORIGINS: "*"
-      RATE_LIMIT_PUBLIC: 100
-      RATE_LIMIT_AUTH: 1000
+      # Backend is UTC-only — no timezone config needed.
+      # Rate limiting is the operator's responsibility (reverse proxy / WAF).
+      # Set CORS_ORIGINS to an explicit comma-separated list in production.
+      # CORS_ORIGINS: "https://app.example.com,https://admin.example.com"
     volumes:
       # Persist SQLite databases across container restarts
       - boltstore-data:/app/data
