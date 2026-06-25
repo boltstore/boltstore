@@ -264,20 +264,13 @@
           <div>
             <label class="label">Database URL</label>
           <div class="flex items-center justify-between gap-2">
-              <input type="text" class="input-field" :value="`https://api.boltstore.local/v1/dbs/${dbName}`" readonly>
+              <input type="text" class="input-field" :value="`${serverUrl}/api/databases/${dbName}`" readonly>
               <button class="btn-secondary btn-sm flex items-center gap-1 shrink-0" @click="copyUrl">
                 <svg v-if="!urlCopied" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                 <svg v-else class="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                 {{ urlCopied ? 'Copied' : 'Copy' }}
               </button>
             </div>
-          </div>
-
-          <div>
-            <button class="btn-secondary btn-sm flex items-center gap-1" @click="exportDatabase">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
-              Download Database
-            </button>
           </div>
 
           <div>
@@ -647,7 +640,8 @@ const apiKeys = ref<{ id: string; name: string; key: string; lastUsed: string }[
 const groupSaved = ref(false)
 const nameSaved = ref(false)
 const renaming = ref(false)
-const editableName = ref("")
+const editableName = ref(dbName.value)
+const serverUrl = ref("")
 const deletingRows = ref<number[]>([])
 const dbAnalytics = ref<DatabaseAnalytics | null>(null)
 const showRenameTableModal = ref(false)
@@ -702,6 +696,7 @@ watch(dbName, (name) => {
   tableColumns.value = []
   dataRows.value = []
   loadConfig()
+  loadServerUrl()
   loadKeys()
   loadTables()
   loadAnalytics()
@@ -945,6 +940,7 @@ async function applySchema() {
 
 onMounted(() => {
   loadConfig()
+  loadServerUrl()
   loadKeys()
   loadTables()
   loadAnalytics()
@@ -955,6 +951,15 @@ async function loadConfig() {
     const res = await api.getConfig(dbName.value)
     dbConfig.value = res.data
   } catch {}
+}
+
+async function loadServerUrl() {
+  try {
+    const res = await api.getSettings()
+    serverUrl.value = res.data.resolved_server_url || `http://${window.location.host}`
+  } catch {
+    serverUrl.value = `http://${window.location.host}`
+  }
 }
 
 async function loadAnalytics() {
@@ -1123,7 +1128,7 @@ async function revokeKey() {
 }
 
 function copyUrl() {
-  navigator.clipboard.writeText(`${window.location.origin}/api/databases/${dbName.value}`)
+  navigator.clipboard.writeText(`${serverUrl.value}/api/databases/${dbName.value}`)
   urlCopied.value = true
   setTimeout(() => urlCopied.value = false, 2000)
 }

@@ -16,7 +16,13 @@ export function registerSettingsRoutes(router: Router, manager: DatabaseManager)
   router.get("/api/settings", async (req) => {
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const row = metaPool.read().query("SELECT value FROM _meta WHERE key = ?").get(SETTINGS_KEY) as { value: string } | null;
-    const settings = row ? { ...DEFAULT_SETTINGS, ...JSON.parse(row.value) } : DEFAULT_SETTINGS;
+    const settings: Record<string, unknown> = row ? { ...DEFAULT_SETTINGS, ...JSON.parse(row.value) } : { ...DEFAULT_SETTINGS };
+
+    const host = new URL(req.url).host;
+    settings.resolved_server_url = settings.server_url && typeof settings.server_url === "string" && settings.server_url.trim()
+      ? settings.server_url.trim()
+      : `http://${host}`;
+
     return jsonResponse({ data: settings });
   });
 

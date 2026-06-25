@@ -106,6 +106,8 @@ export interface DbConfig {
 
 export interface GlobalSettings {
   timezone: string
+  server_url?: string
+  resolved_server_url?: string
 }
 
 export interface AnalyticsOverview {

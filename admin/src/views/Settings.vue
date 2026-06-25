@@ -4,6 +4,11 @@
       <h3 class="text-sm font-medium text-text-primary px-5 py-4 border-b border-border-default">General</h3>
       <div class="p-5 pt-4 space-y-4">
         <div>
+          <label class="label">Server URL</label>
+          <input type="text" class="input-field" v-model="serverUrl" placeholder="http://localhost:8080">
+          <p class="description">The public URL clients use to reach this server. Leave empty to auto-detect.</p>
+        </div>
+        <div>
           <label class="label">Timezone</label>
           <select v-model="timezone" class="input-field appearance-none" style="font-family:Inter">
             <optgroup label="UTC">
@@ -468,6 +473,7 @@ import AppLayout from "../components/layout/AppLayout.vue"
 import { api } from "../api/client"
 
 const timezone = ref("UTC")
+const serverUrl = ref("")
 const saving = ref(false)
 const success = ref(false)
 
@@ -475,6 +481,7 @@ async function load() {
   try {
     const res = await api.getSettings()
     timezone.value = res.data.timezone || "UTC"
+    serverUrl.value = res.data.server_url || ""
   } catch {}
 }
 
@@ -482,7 +489,7 @@ async function save() {
   saving.value = true
   success.value = false
   try {
-    await api.updateSettings({ timezone: timezone.value })
+    await api.updateSettings({ timezone: timezone.value, server_url: serverUrl.value || undefined })
     success.value = true
     setTimeout(() => { success.value = false }, 3000)
   } catch {}
