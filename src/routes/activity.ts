@@ -72,11 +72,21 @@ export function registerActivityRoutes(router: Router, manager: DatabaseManager)
   });
 }
 
+function sanitizeDetails(details: Record<string, unknown> | undefined): string | null {
+  if (!details) return null;
+  const SECRET_KEYS = ["key", "token_hash", "password", "secret"];
+  const sanitized: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(details)) {
+    sanitized[k] = SECRET_KEYS.some(sk => k.toLowerCase().includes(sk)) ? "***" : v;
+  }
+  return JSON.stringify(sanitized);
+}
+
 export function logActivity(manager: DatabaseManager, event: ActivityEvent): void {
   try {
     manager.getMetaPool().write().run(
       "INSERT INTO _activity_log (id, admin_id, action, database_name, target, details, ip) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [generateId("act_", 16), event.admin_id ?? null, event.action, event.database_name ?? null, event.target ?? null, event.details ? JSON.stringify(event.details) : null, event.ip ?? null]
+      [generateId("act_", 16), event.admin_id ?? null, event.action, event.database_name ?? null, event.target ?? null, sanitizeDetails(event.details), event.ip ?? null]
     );
   } catch (err) {
     logger.warn("Failed to write activity log", { action: event.action, error: err instanceof Error ? err.message : String(err) });

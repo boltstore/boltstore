@@ -177,6 +177,7 @@ import MetricCard from "../components/ui/MetricCard.vue"
 import TabButton from "../components/ui/TabButton.vue"
 import QueryChart from "../components/ui/QueryChart.vue"
 import { api, type AnalyticsOverview, type TopQuery, type QueryLogEntry } from "../api/client"
+import { formatBytes } from "../utils/time"
 
 const timeRanges = ["24h", "7d", "30d"]
 const activeRange = ref("24h")
@@ -197,7 +198,9 @@ async function loadAll() {
   try {
     const res = await api.getAnalyticsOverview(activeRange.value)
     overview.value = res.data
-  } catch {}
+  } catch (err) {
+    console.error("Failed to load analytics overview", err)
+  }
   try {
     const vol = await api.getVolume(activeRange.value)
     chartLabels.value = vol.data.slots
@@ -208,37 +211,38 @@ async function loadAll() {
     rowsWrittenValues.value = vol.data.rows_written ?? []
     rowsReadMax.value = vol.data.max_read ?? 1
     rowsWrittenMax.value = vol.data.max_written ?? 1
-  } catch {}
+  } catch (err) {
+    console.error("Failed to load volume data", err)
+  }
   try {
     const res = await api.getTopQueries(activeRange.value)
     topQueries.value = res.data
-  } catch {}
+  } catch (err) {
+    console.error("Failed to load top queries", err)
+  }
   try {
-    const dbs = await api.listDatabases()
-    const rows: typeof dbList.value = []
-    for (const db of dbs.data) {
-      try {
-        const a = await api.getDatabaseAnalytics(db.name, activeRange.value)
-        const errRate = a.data.queries > 0 ? ((a.data.errorCount / a.data.queries) * 100).toFixed(2) : "0"
-        rows.push({
-          name: db.name,
-          queries: a.data.queries.toLocaleString(),
-          writes: a.data.writes.toLocaleString(),
-          errors: `${errRate}%`,
-          errorClass: a.data.errorCount === 0 ? "text-green-400" : a.data.errorCount < 10 ? "text-yellow-400" : "text-red-400",
-          latency: `${a.data.avgLatencyMs}ms`,
-          storage: formatBytes(a.data.storageBytes),
-        })
-      } catch {
-        rows.push({ name: db.name, queries: "—", writes: "—", errors: "—", errorClass: "text-text-muted", latency: "—", storage: "—" })
+    const analytics = await api.getAllDatabaseAnalytics(activeRange.value)
+    dbList.value = analytics.data.map(a => {
+      const errRate = a.queries > 0 ? ((a.errorCount / a.queries) * 100).toFixed(2) : "0"
+      return {
+        name: a.database,
+        queries: a.queries.toLocaleString(),
+        writes: a.writes.toLocaleString(),
+        errors: `${errRate}%`,
+        errorClass: a.errorCount === 0 ? "text-green-400" : a.errorCount < 10 ? "text-yellow-400" : "text-red-400",
+        latency: `${a.avgLatencyMs}ms`,
+        storage: formatBytes(a.storageBytes),
       }
-    }
-    dbList.value = rows
-  } catch {}
+    })
+  } catch (err) {
+    console.error("Failed to load database analytics", err)
+  }
   try {
     const err = await api.getErrors(20)
     errorLog.value = err.data
-  } catch {}
+  } catch (err) {
+    console.error("Failed to load error log", err)
+  }
 }
 
 onMounted(loadAll)
@@ -249,20 +253,6 @@ function formatTime(dateStr: string) {
   return new Date(dateStr + "Z").toLocaleString()
 }
 
-function formatBytes(bytes: number) {
-  if (bytes === 0) return "0 B"
-  const units = ["B", "KB", "MB", "GB", "TB"]
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
 </script>
 
-<style scoped>
-.top-queries-table td.query-cell {
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow: visible;
-  text-overflow: clip;
-  max-width: 50%;
-}
-</style>
+

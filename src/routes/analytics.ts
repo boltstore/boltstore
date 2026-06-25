@@ -3,6 +3,7 @@ import { DatabaseManager } from "../db/manager";
 import { AnalyticsManager } from "../analytics";
 import { jsonResponse, errorResponse } from "../server";
 import { isAdminRequest } from "../middleware/auth";
+import { validateDbName } from "../validation";
 
 interface QueryStatsRow { c: number; avg_ms: number; errors: number; writes: number }
 interface StorageTotalRow { total: number }
@@ -28,7 +29,7 @@ function parseRange(url: URL): { since: string; groupFmt: string } {
   const range = url.searchParams.get("range") || "24h";
   switch (range) {
     case "7d": return { since: "-7 days", groupFmt: "'%Y-%m-%d'" };
-    case "30d": return { since: "-30 days", groupFmt: "'%Y-%W'" };
+    case "30d": return { since: "-30 days", groupFmt: "'%Y-%m-%d'" };
     default: return { since: "-1 day", groupFmt: "'%H'" };
   }
 }
@@ -109,6 +110,8 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
 
   router.get("/api/analytics/:database/overview", async (req, params) => {
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    const dbNameErr = validateDbName(params.database);
+    if (dbNameErr) return dbNameErr;
     const url = new URL(req.url);
     const { since } = parseRange(url);
     const db = pool.read();
@@ -140,8 +143,46 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     });
   });
 
+  router.get("/api/analytics/databases", async (req) => {
+    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    const url = new URL(req.url);
+    const { since } = parseRange(url);
+    const db = pool.read();
+
+    const queryStats = db.query(
+      `SELECT database, COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY database`
+    ).all(since) as { database: string; c: number; avg_ms: number; errors: number; writes: number; rows_read: number; rows_written: number }[];
+
+    const storageRows = db.query(
+      "SELECT database, size_bytes, table_count FROM _storage_snapshots WHERE id IN (SELECT MAX(id) FROM _storage_snapshots GROUP BY database)"
+    ).all() as { database: string; size_bytes: number; table_count: number }[];
+    const storageMap: Record<string, { size_bytes: number; table_count: number }> = {};
+    for (const s of storageRows) storageMap[s.database] = s;
+
+    const dbNames = manager.listDatabases().map(d => d.name);
+    const data = dbNames.map(name => {
+      const q = queryStats.find(s => s.database === name);
+      const s = storageMap[name];
+      return {
+        database: name,
+        queries: q?.c ?? 0,
+        writes: q?.writes ?? 0,
+        avgLatencyMs: Math.round((q?.avg_ms ?? 0) * 10) / 10,
+        errorCount: q?.errors ?? 0,
+        rows_read: q?.rows_read ?? 0,
+        rows_written: q?.rows_written ?? 0,
+        storageBytes: s?.size_bytes ?? 0,
+        tableCount: s?.table_count ?? 0,
+      };
+    });
+
+    return jsonResponse({ data });
+  });
+
   router.get("/api/analytics/:database/queries", async (req, params) => {
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    const dbNameErr = validateDbName(params.database);
+    if (dbNameErr) return dbNameErr;
     const url = new URL(req.url);
     const { since } = parseRange(url);
     const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "20", 10) || 20, 1), 100);
@@ -158,6 +199,8 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
 
   router.get("/api/analytics/:database/size", async (req, params) => {
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    const dbNameErr = validateDbName(params.database);
+    if (dbNameErr) return dbNameErr;
     const db = pool.read();
     const rows = db.query(
       "SELECT size_bytes, table_count, timestamp FROM _storage_snapshots WHERE database = ? ORDER BY timestamp DESC LIMIT 100"
@@ -198,104 +241,42 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const metaRow = manager.getMetaPool().read().query("SELECT value FROM _meta WHERE key = 'global_settings'").get() as { value: string } | null;
     const settings = metaRow ? { timezone: "UTC", ...JSON.parse(metaRow.value) } : { timezone: "UTC" };
     const tzAdj = getTzSign(settings.timezone);
-
     const sinceExpr = tzAdj ? `datetime('now', '${tzAdj}', '${since}')` : `datetime('now', '${since}')`;
     const tzTimestamp = tzAdj ? `datetime(timestamp, '${tzAdj}')` : "timestamp";
-    const rows = db.query(
-      `SELECT strftime(${groupFmt}, ${tzTimestamp}) as slot, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE ${tzTimestamp} >= ${sinceExpr} GROUP BY slot ORDER BY slot`
-    ).all() as { slot: string; count: number; errors: number; rows_read: number; rows_written: number }[];
-    const lookup: Record<string, number> = {};
-    const errorLookup: Record<string, number> = {};
-    const rowsReadLookup: Record<string, number> = {};
-    const rowsWrittenLookup: Record<string, number> = {};
-    for (const r of rows) { lookup[r.slot] = r.count; errorLookup[r.slot] = r.errors; rowsReadLookup[r.slot] = r.rows_read; rowsWrittenLookup[r.slot] = r.rows_written; }
 
-    const now = getTzDate(settings.timezone);
-    let slots: string[];
-    if (range === "7d") {
-      slots = [];
-      const end = new Date(now);
-      end.setUTCDate(end.getUTCDate() + 1);
-      for (let i = 7; i >= 0; i--) {
-        const d = new Date(end);
-        d.setUTCDate(d.getUTCDate() - i);
-        slots.push(d.toISOString().slice(0, 10));
-      }
-    } else if (range === "30d") {
-      const dayRows = db.query(
-        `SELECT strftime('%Y-%m-%d', ${tzTimestamp}) as day, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE ${tzTimestamp} >= ${sinceExpr} GROUP BY day ORDER BY day`
-      ).all() as { day: string; count: number; errors: number; rows_read: number; rows_written: number }[];
-      const dayLookup: Record<string, number> = {};
-      const dayErrorLookup: Record<string, number> = {};
-      const dayReadLookup: Record<string, number> = {};
-      const dayWriteLookup: Record<string, number> = {};
-      for (const r of dayRows) { dayLookup[r.day] = r.count; dayErrorLookup[r.day] = r.errors; dayReadLookup[r.day] = r.rows_read; dayWriteLookup[r.day] = r.rows_written; }
-      slots = [];
-      const end = new Date(now);
-      end.setUTCDate(end.getUTCDate() + 7);
-      const endSunday = new Date(end);
-      endSunday.setUTCDate(endSunday.getUTCDate() - endSunday.getUTCDay());
-      for (let i = 4; i >= 0; i--) {
-        const d = new Date(endSunday);
-        d.setUTCDate(d.getUTCDate() - i * 7);
-        slots.push(d.toISOString().slice(0, 10));
-      }
-      const counts = slots.map(s => {
-        let total = 0;
-        const d = new Date(s + "T00:00:00Z");
-        for (let j = 0; j < 7; j++) {
-          const dayStr = d.toISOString().slice(0, 10);
-          total += dayLookup[dayStr] || 0;
-          d.setUTCDate(d.getUTCDate() + 1);
-        }
-        return total;
-      });
-      const errors = slots.map(s => {
-        let total = 0;
-        const d = new Date(s + "T00:00:00Z");
-        for (let j = 0; j < 7; j++) {
-          const dayStr = d.toISOString().slice(0, 10);
-          total += dayErrorLookup[dayStr] || 0;
-          d.setUTCDate(d.getUTCDate() + 1);
-        }
-        return total;
-      });
-      const reads = slots.map(s => {
-        let total = 0;
-        const d = new Date(s + "T00:00:00Z");
-        for (let j = 0; j < 7; j++) {
-          const dayStr = d.toISOString().slice(0, 10);
-          total += dayReadLookup[dayStr] || 0;
-          d.setUTCDate(d.getUTCDate() + 1);
-        }
-        return total;
-      });
-      const writes = slots.map(s => {
-        let total = 0;
-        const d = new Date(s + "T00:00:00Z");
-        for (let j = 0; j < 7; j++) {
-          const dayStr = d.toISOString().slice(0, 10);
-          total += dayWriteLookup[dayStr] || 0;
-          d.setUTCDate(d.getUTCDate() + 1);
-        }
-        return total;
-      });
+    if (range === "24h") {
+      const hourSlots = Array.from({ length: 24 }, (_, i) => `(printf('%02d', ${i}))`).join(", ");
+      const query = db.query(
+        `WITH slots(s) AS (VALUES ${hourSlots})
+         SELECT slots.s as slot, COALESCE(q.c, 0) as count, COALESCE(q.e, 0) as errors, COALESCE(q.r, 0) as rows_read, COALESCE(q.w, 0) as rows_written
+         FROM slots LEFT JOIN (
+           SELECT strftime('%H', ${tzTimestamp}) as s, COUNT(*) as c, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as e, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as r, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as w FROM _query_log WHERE ${tzTimestamp} >= ${sinceExpr} GROUP BY s
+         ) q ON q.s = slots.s ORDER BY slots.s`
+      ).all() as { slot: string; count: number; errors: number; rows_read: number; rows_written: number }[];
+      const slots = query.map(r => r.slot);
+      const counts = query.map(r => r.count);
+      const errors = query.map(r => r.errors);
+      const reads = query.map(r => r.rows_read);
+      const writes = query.map(r => r.rows_written);
       const max = Math.max(...counts, 1);
       const maxRead = Math.max(...reads, 1);
       const maxWrite = Math.max(...writes, 1);
       return jsonResponse({ data: { slots, counts, errors, max, rows_read: reads, rows_written: writes, max_read: maxRead, max_written: maxWrite } });
-    } else {
-      slots = [];
-      const endHour = now.getUTCHours() + 1;
-      for (let i = 24; i >= 0; i--) {
-        slots.push(String((endHour - i + 24) % 24).padStart(2, "0"));
-      }
     }
 
-    const counts = slots.map(s => lookup[s] || 0);
-    const errors = slots.map(s => errorLookup[s] || 0);
-    const reads = slots.map(s => rowsReadLookup[s] || 0);
-    const writes = slots.map(s => rowsWrittenLookup[s] || 0);
+    const query = db.query(
+      `WITH RECURSIVE slots(s) AS (SELECT date(${sinceExpr}) UNION ALL SELECT date(s, '+1 day') FROM slots WHERE s < date('now'))
+       SELECT strftime(${groupFmt}, slots.s) as slot, COALESCE(q.c, 0) as count, COALESCE(q.e, 0) as errors, COALESCE(q.r, 0) as rows_read, COALESCE(q.w, 0) as rows_written
+       FROM slots LEFT JOIN (
+         SELECT strftime(${groupFmt}, ${tzTimestamp}) as s, COUNT(*) as c, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as e, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as r, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as w FROM _query_log WHERE ${tzTimestamp} >= ${sinceExpr} GROUP BY s
+       ) q ON q.s = strftime(${groupFmt}, slots.s) ORDER BY slots.s`
+    ).all() as { slot: string; count: number; errors: number; rows_read: number; rows_written: number }[];
+
+    const slots = query.map(r => r.slot);
+    const counts = query.map(r => r.count);
+    const errors = query.map(r => r.errors);
+    const reads = query.map(r => r.rows_read);
+    const writes = query.map(r => r.rows_written);
     const max = Math.max(...counts, 1);
     const maxRead = Math.max(...reads, 1);
     const maxWrite = Math.max(...writes, 1);

@@ -23,10 +23,9 @@ export class AnalyticsManager {
   private dataDir: string;
   private timer: ReturnType<typeof setInterval> | null = null;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private pruneTimer: ReturnType<typeof setInterval> | null = null;
   private retentionDays: number;
   private buffer: QueryEvent[] = [];
-  private lastPruneAt = 0;
-  private readonly pruneIntervalMs = 3600 * 1000; // prune at most once per hour
 
   constructor(dataDir: string, retentionDays = DEFAULT_RETENTION_DAYS) {
     this.dataDir = dataDir;
@@ -34,6 +33,7 @@ export class AnalyticsManager {
     this.pool = new DatabasePool({ path: `${dataDir}/${ANALYTICS_DB}`, readConnections: 1 });
     this.init();
     this.startFlushTimer();
+    this.startPruneTimer();
   }
 
   private init(): void {
@@ -63,8 +63,11 @@ export class AnalyticsManager {
     try { db.run("ALTER TABLE _query_log ADD COLUMN sql_text TEXT"); } catch {}
     db.run("CREATE INDEX IF NOT EXISTS idx_query_log_timestamp ON _query_log(timestamp)");
     db.run("CREATE INDEX IF NOT EXISTS idx_query_log_database ON _query_log(database)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_storage_snapshots_db_id ON _storage_snapshots(database, id)");
   }
 
+  // In-memory buffer — up to 100 events (FLUSH_BATCH_SIZE) or 5 seconds
+  // (FLUSH_INTERVAL_MS) of analytics data is lost on process crash.
   recordQuery(event: QueryEvent): void {
     this.buffer.push(event);
     if (this.buffer.length >= FLUSH_BATCH_SIZE) {
@@ -88,11 +91,6 @@ export class AnalyticsManager {
       for (const e of batch) {
         stmt.run(e.database, e.table ?? null, e.operation, e.durationMs, e.rowCount, e.status, e.errorMessage ?? null, e.sqlText ?? null);
       }
-      const now = Date.now();
-      if (now - this.lastPruneAt > this.pruneIntervalMs) {
-        this.prune();
-        this.lastPruneAt = now;
-      }
     } catch (err) {
       logger.warn("Analytics flush failed, re-queueing events", { error: err instanceof Error ? err.message : String(err) });
       // Re-queue the batch so events are not lost on transient failures
@@ -109,6 +107,12 @@ export class AnalyticsManager {
     } catch (err) {
       logger.warn("Analytics prune failed", { error: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  private startPruneTimer(): void {
+    if (this.pruneTimer) return;
+    this.pruneTimer = setInterval(() => this.prune(), 3600_000);
+    if (typeof this.pruneTimer.unref === "function") this.pruneTimer.unref();
   }
 
   startSnapshotTimer(getDatabases: () => string[], getPool: (name: string) => DatabasePool | null): void {
@@ -156,6 +160,10 @@ export class AnalyticsManager {
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
+    }
+    if (this.pruneTimer) {
+      clearInterval(this.pruneTimer);
+      this.pruneTimer = null;
     }
     if (this.timer) {
       clearInterval(this.timer);

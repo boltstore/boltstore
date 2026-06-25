@@ -187,14 +187,19 @@ export class DatabaseManager {
   }
 
   registerDatabase(name: string, filePath: string, group?: string): DatabasePool {
-    const metaDb = this.metaPool.write();
-    const existing = metaDb.query("SELECT 1 FROM _databases WHERE name=?").get(name);
-    if (existing) {
-      throw Object.assign(new Error(`Database "${name}" already exists.`), { status: 409 });
-    }
     const now = new Date().toISOString();
     const config = group ? JSON.stringify({ group }) : "{}";
-    metaDb.run("INSERT INTO _databases (name, file_path, created_at, config) VALUES (?, ?, ?, ?)", [name, filePath, now, config]);
+    try {
+      this.metaPool.writeTransaction(() => {
+        this.metaPool.write().run("INSERT OR ABORT INTO _databases (name, file_path, created_at, config) VALUES (?, ?, ?, ?)", [name, filePath, now, config]);
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("UNIQUE") || msg.includes("PRIMARY KEY") || msg.includes("ABORT")) {
+        throw Object.assign(new Error(`Database "${name}" already exists.`), { status: 409 });
+      }
+      throw err;
+    }
     const pool = new DatabasePool({ path: filePath });
     this.appPools.set(name, { pool, lastUsed: Date.now() });
     this.startEvictionTimer();

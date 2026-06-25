@@ -167,6 +167,8 @@ export function stopLogger(): void {
   }
 }
 
+process.on("beforeExit", () => { flushLogs(); });
+
 export const logger = {
   debug(message: string, meta?: Partial<LogEntry>): void {
     writeLog({ level: "debug", message, timestamp: new Date().toISOString(), ...meta });

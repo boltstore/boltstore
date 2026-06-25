@@ -13,6 +13,7 @@ export interface TestContext {
   adminToken: string;
   apiKey: string;
   dbName: string;
+  prevAdminKey: string | undefined;
 }
 
 export async function setupTestServer(): Promise<TestContext> {
@@ -23,6 +24,7 @@ export async function setupTestServer(): Promise<TestContext> {
   const dbName = `testdb_${counter}`;
 
   mkdirSync(dataDir, { recursive: true });
+  const prevAdminKey = Bun.env.BOLTSTORE_ADMIN_KEY;
   Bun.env.BOLTSTORE_ADMIN_KEY = adminKey;
 
   const manager = new DatabaseManager({ dataDir });
@@ -71,7 +73,7 @@ export async function setupTestServer(): Promise<TestContext> {
     throw new Error(`No API key in create key response`);
   }
 
-  return { server, manager, dataDir, port, adminKey, adminToken, apiKey, dbName };
+  return { server, manager, dataDir, port, adminKey, adminToken, apiKey, dbName, prevAdminKey };
 }
 
 export async function teardownTestServer(ctx: TestContext): Promise<void> {
@@ -79,7 +81,11 @@ export async function teardownTestServer(ctx: TestContext): Promise<void> {
   ctx.manager.close();
   ctx.server.stop();
   try { rmSync(ctx.dataDir, { recursive: true, force: true }); } catch {}
-  delete Bun.env.BOLTSTORE_ADMIN_KEY;
+  if (ctx.prevAdminKey !== undefined) {
+    Bun.env.BOLTSTORE_ADMIN_KEY = ctx.prevAdminKey;
+  } else {
+    delete Bun.env.BOLTSTORE_ADMIN_KEY;
+  }
 }
 
 export function apiUrl(ctx: TestContext, path: string): string {

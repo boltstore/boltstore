@@ -44,7 +44,16 @@ const chartData = computed(() => ({
   ],
 }))
 
-const chartOptions = {
+const stepSize = computed(() => {
+  const m = props.max;
+  if (m <= 10) return 1;
+  if (m <= 50) return 5;
+  if (m <= 200) return 10;
+  if (m <= 1000) return 50;
+  return Math.ceil(m / 20);
+})
+
+const chartOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   animation: {
@@ -73,11 +82,11 @@ const chartOptions = {
       ticks: {
         color: "#6b7280",
         font: { size: 10 },
-        stepSize: 1,
+        stepSize: stepSize.value,
       },
     },
   },
-}
+}))
 </script>
 
 <style scoped>

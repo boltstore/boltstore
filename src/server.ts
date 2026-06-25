@@ -15,6 +15,7 @@ import { registerActivityRoutes, setTrustedProxies } from "./routes/activity";
 import { registerSettingsRoutes } from "./routes/settings";
 import { registerAnalyticsRoutes } from "./routes/analytics";
 import { AnalyticsManager } from "./analytics";
+import { resolve } from "node:path";
 
 export interface ServerConfig {
   port: number;
@@ -169,9 +170,13 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
             // fall through to static files if Vite dev server is unreachable
           }
         }
+        const baseDir = resolve(`${import.meta.dir}/../admin/dist`);
         const filePath = pathname === "/dashboard" || pathname === "/dashboard/"
-          ? `${import.meta.dir}/../admin/dist/index.html`
-          : `${import.meta.dir}/../admin/dist${pathname.replace("/dashboard", "")}`;
+          ? `${baseDir}/index.html`
+          : resolve(baseDir, `.${pathname.replace("/dashboard", "")}`);
+        if (!resolve(filePath).startsWith(baseDir)) {
+          return errorResponse("NOT_FOUND", "Not found.", 404);
+        }
         const file = Bun.file(filePath);
         const exists = await file.exists();
         if (exists) return new Response(file, { headers: cspHeaders });

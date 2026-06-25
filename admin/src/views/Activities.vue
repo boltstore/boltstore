@@ -106,6 +106,7 @@
 import { ref, computed, onMounted, onUnmounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import { api, type ActivityEntry } from "../api/client"
+import { formatTime } from "../utils/time"
 
 const eventFilter = ref("all")
 const entries = ref<ActivityEntry[]>([])
@@ -170,20 +171,6 @@ function formatDetail(entry: ActivityEntry) {
     } catch {}
   }
   return ""
-}
-
-function formatTime(dateStr: string) {
-  if (!dateStr) return ""
-  const d = new Date(dateStr + "Z")
-  const now = new Date()
-  const diff = now.getTime() - d.getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return "just now"
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
 }
 
 function formatLocalTime(dateStr: string) {

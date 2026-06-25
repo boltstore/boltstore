@@ -70,9 +70,6 @@ function parseEnvVars(): Partial<BoltstoreConfig> {
   if (Bun.env.PORT) config.port = parseInt(Bun.env.PORT, 10);
   if (Bun.env.DATABASE_PATH) config.databasePath = Bun.env.DATABASE_PATH;
   if (Bun.env.BOLTSTORE_ADMIN_KEY) config.adminKey = Bun.env.BOLTSTORE_ADMIN_KEY;
-  if (Bun.env.CORS_ORIGINS) config.corsOrigins = Bun.env.CORS_ORIGINS.split(",").map((s) => s.trim());
-  if (Bun.env.CORS_METHODS) config.corsMethods = Bun.env.CORS_METHODS.split(",").map((s) => s.trim());
-  if (Bun.env.CORS_HEADERS) config.corsHeaders = Bun.env.CORS_HEADERS.split(",").map((s) => s.trim());
   if (Bun.env.LOG_LEVEL) config.logLevel = Bun.env.LOG_LEVEL;
   if (Bun.env.MAX_BODY_SIZE) config.maxBodySize = parseInt(Bun.env.MAX_BODY_SIZE, 10);
   if (Bun.env.REQUEST_TIMEOUT_MS) config.requestTimeoutMs = parseInt(Bun.env.REQUEST_TIMEOUT_MS, 10);

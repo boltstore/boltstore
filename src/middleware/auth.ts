@@ -2,6 +2,8 @@ import { DatabaseManager } from "../db/manager";
 import { errorResponse } from "../server";
 import { logger } from "../logger";
 import { sha256Hex, timingSafeEqual } from "../crypto-utils";
+import { checkApiKeyThrottle } from "./throttle";
+import { getClientIp } from "../routes/activity";
 
 export interface AuthResult {
   authenticated: boolean;
@@ -66,6 +68,12 @@ export async function authenticateApiKey(
   // Admin check — admin key or session token can access any database
   if (await isAdminRequest(request, manager)) {
     return { authenticated: true, isAdmin: true, databaseName };
+  }
+
+  // Rate limit by IP + database to prevent brute-force
+  const throttle = checkApiKeyThrottle(getClientIp(request), databaseName);
+  if (!throttle.allowed) {
+    return errorResponse("RATE_LIMITED", `Too many attempts. Try again in ${Math.ceil(throttle.retryAfterMs / 1000)} seconds.`, 429);
   }
 
   // Look up key by database + hash in system database.

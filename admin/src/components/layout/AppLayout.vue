@@ -27,51 +27,19 @@
     </main>
     <GithubBadge />
 
-    <div
-      class="fixed inset-0 z-50"
-      :class="showCreateModal ? 'flex items-center justify-center' : 'hidden'"
-      style="background: rgba(0,0,0,0.6);"
-      @click="showCreateModal = false"
-    >
-      <div class="bg-bolt-card border border-border-default rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl" @click.stop>
-        <div class="flex items-center gap-3 mb-4">
-          <div class="w-10 h-10 rounded-full bg-accent-600/10 flex items-center justify-center shrink-0">
-            <svg class="w-5 h-5 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-          </div>
-          <div>
-            <h3 class="text-sm font-medium text-text-primary">Create Database</h3>
-            <p class="text-xs text-text-muted mt-0.5">Add a new database to your project.</p>
-          </div>
-        </div>
-        <div class="mb-4">
-          <label class="block text-xs font-medium text-text-secondary mb-1.5">Database Name</label>
-          <input type="text" class="input-field" placeholder="e.g. my-database" v-model="newDbName">
-        </div>
-        <div class="mb-4">
-          <label class="block text-xs font-medium text-text-secondary mb-1.5">Group</label>
-          <select class="input-field" v-model="newDbGroup">
-            <option value="">default</option>
-            <option value="production">production</option>
-            <option value="staging">staging</option>
-          </select>
-        </div>
-        <div class="flex items-center justify-end gap-2">
-          <button class="btn-ghost btn-sm" @click="showCreateModal = false">Cancel</button>
-          <button class="btn-primary btn-sm" @click="createDatabase">Create</button>
-        </div>
-      </div>
-    </div>
+    <CreateDatabaseModal :show="showCreateModal" @close="showCreateModal = false" @created="onDatabaseCreated" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue"
+import { ref, onMounted } from "vue"
 import { useRouter } from "vue-router"
 import { useSidebar } from "../../composables/useSidebar"
-import { hasSession, api } from "../../api/client"
+import { hasSession } from "../../api/client"
 import Sidebar from "./Sidebar.vue"
 import MobileOverlay from "./MobileOverlay.vue"
 import GithubBadge from "../ui/GithubBadge.vue"
+import CreateDatabaseModal from "../database/CreateDatabaseModal.vue"
 
 withDefaults(
   defineProps<{
@@ -87,34 +55,17 @@ withDefaults(
 const { toggle: toggleSidebar } = useSidebar()
 const router = useRouter()
 const showCreateModal = ref(false)
-const newDbName = ref("")
-const newDbGroup = ref("")
 
 function handleCreateDatabase() {
-  newDbName.value = ""
-  newDbGroup.value = ""
   showCreateModal.value = true
 }
 
-async function createDatabase() {
-  const name = newDbName.value.trim()
-  if (!name) return
-  try {
-    await api.createDatabase(name, newDbGroup.value || undefined)
-    showCreateModal.value = false
-    newDbName.value = ""
-    newDbGroup.value = ""
-    router.push(`/databases/${name}`)
-  } catch {}
-}
-
-function onKeyDown(e: KeyboardEvent) {
-  if (e.key === "Escape" && showCreateModal.value) showCreateModal.value = false
+function onDatabaseCreated(name: string) {
+  showCreateModal.value = false
+  router.push(`/databases/${name}`)
 }
 
 onMounted(() => {
   if (!hasSession()) router.push("/login")
-  window.addEventListener("keydown", onKeyDown, { capture: true })
 })
-onUnmounted(() => window.removeEventListener("keydown", onKeyDown, { capture: true }))
 </script>

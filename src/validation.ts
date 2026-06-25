@@ -44,15 +44,17 @@ export function validateIdentifiers(names: string[], kind: "table" | "column"): 
   return null;
 }
 
-const SAFE_DEFAULT_PATTERN = /^[\w\s\-+.:@/]*$/;
-const DEFAULT_FORBIDDEN = /(;|--|\/\*|\*\/|'(?=(.*'.*'.*)))/;
+const LITERAL_DEFAULT = /^(?:[-+]?\d+\.?\d*|'[^']*'|NULL|TRUE|FALSE|CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME)$/i;
 
 export function validateColumnDefault(value: string): Response | null {
-  if (typeof value !== "string") return null;
-  if (DEFAULT_FORBIDDEN.test(value)) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    return errorResponse("VALIDATION", "Column default must be a string.", 400);
+  }
+  if (!LITERAL_DEFAULT.test(value)) {
     return errorResponse(
       "VALIDATION",
-      `Invalid column default value: contains forbidden characters (;, --, /*, */).`,
+      `Invalid column default: "${value}". Must be a literal (number, quoted string, NULL, TRUE, FALSE, or CURRENT_TIMESTAMP).`,
       400,
     );
   }

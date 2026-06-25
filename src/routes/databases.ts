@@ -6,6 +6,7 @@ import { logActivity, getClientIp, getAdminId } from "./activity";
 import { logger } from "../logger";
 import { validateDbName, isValidDbName } from "../validation";
 import { rmSync } from "node:fs";
+import { resolve } from "node:path";
 
 export function registerDatabaseRoutes(router: Router, manager: DatabaseManager): void {
   router.get("/api/databases", async (req) => {
@@ -62,7 +63,8 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     const row = metaPool.read().query("SELECT file_path FROM _databases WHERE name = ?").get(oldName) as { file_path: string } | null;
     if (!row) return errorResponse("NOT_FOUND", "Database not found.", 404);
 
-    const newPath = row.file_path.replace(oldName, body.name);
+    const dataDir = manager.getDataDir();
+    const newPath = resolve(dataDir, `${body.name}.db`);
     const pool = manager.get(oldName);
 
     try {

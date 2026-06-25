@@ -6,6 +6,7 @@ import { logActivity, getClientIp, getAdminId } from "./activity";
 import { logger } from "../logger";
 import { validateDbName, isValidDbName } from "../validation";
 import { rmSync } from "node:fs";
+import { resolve } from "node:path";
 
 const MAX_IMPORT_BYTES = 1024 * 1024 * 1024; // 1 GB cap on import
 
@@ -22,7 +23,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
     const exportPath = `${dataDir}/${params.name}_export.db`;
 
     try {
-      pool.write().run(`VACUUM INTO '${exportPath.replace(/'/g, "''")}'`);
+      pool.write().run(`VACUUM INTO '${resolve(exportPath).replace(/'/g, "''")}'`);
       const file = Bun.file(exportPath);
       const bytes = await file.bytes();
 

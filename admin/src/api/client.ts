@@ -245,6 +245,8 @@ export const api = {
   getAnalyticsOverview: (range = "24h") => request<ApiResponse<AnalyticsOverview>>(`/api/analytics/overview?range=${range}`),
   getDatabaseAnalytics: (name: string, range = "24h") =>
     request<ApiResponse<DatabaseAnalytics>>(`/api/analytics/${encodeURIComponent(name)}/overview?range=${range}`),
+  getAllDatabaseAnalytics: (range = "24h") =>
+    request<ApiResponse<DatabaseAnalytics[]>>(`/api/analytics/databases?range=${range}`),
   getQueryLog: (name: string, range = "24h", limit = 20, offset = 0) =>
     request<ApiResponse<QueryLogEntry[]>>(`/api/analytics/${encodeURIComponent(name)}/queries?range=${range}&limit=${limit}&offset=${offset}`),
   getStorageHistory: (name: string) =>

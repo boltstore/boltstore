@@ -66,41 +66,7 @@
       </div>
     </div>
 
-    <div
-      class="fixed inset-0 z-50"
-      :class="showCreate ? 'flex items-center justify-center' : 'hidden'"
-      style="background: rgba(0,0,0,0.6);"
-      @click="showCreate = false"
-    >
-      <div class="bg-bolt-card border border-border-default rounded-lg w-full max-w-sm mx-4 p-5 shadow-2xl" @click.stop>
-        <div class="flex items-center gap-3 mb-4">
-          <div class="w-10 h-10 rounded-full bg-accent-600/10 flex items-center justify-center shrink-0">
-            <svg class="w-5 h-5 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-          </div>
-          <div>
-            <h3 class="text-sm font-medium text-text-primary">Create Database</h3>
-            <p class="text-xs text-text-muted mt-0.5">Add a new database to your project.</p>
-          </div>
-        </div>
-        <div class="mb-4">
-          <label class="block text-xs font-medium text-text-secondary mb-1.5">Database Name</label>
-          <input type="text" class="input-field" placeholder="e.g. my-database" v-model="newDbName" @keydown.enter="createDatabase">
-        </div>
-        <div class="mb-4">
-          <label class="block text-xs font-medium text-text-secondary mb-1.5">Group</label>
-          <select class="input-field" v-model="newDbGroup">
-            <option value="">default</option>
-            <option value="production">production</option>
-            <option value="staging">staging</option>
-          </select>
-        </div>
-        <p v-if="createError" class="text-xs text-red-400 mb-3">{{ createError }}</p>
-        <div class="flex items-center justify-end gap-2">
-          <button class="btn-ghost btn-sm" @click="showCreate = false">Cancel</button>
-          <button class="btn-primary btn-sm" :disabled="creating" @click="createDatabase">{{ creating ? 'Creating...' : 'Create' }}</button>
-        </div>
-      </div>
-    </div>
+    <CreateDatabaseModal :show="showCreate" @close="showCreate = false" @created="onDatabaseCreated" />
 
     <div
       class="fixed inset-0 z-50"
@@ -174,7 +140,9 @@
 import { ref, computed, onMounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import Badge from "../components/ui/Badge.vue"
+import CreateDatabaseModal from "../components/database/CreateDatabaseModal.vue"
 import { api, type DatabaseInfo, type DatabaseAnalytics } from "../api/client"
+import { formatBytes } from "../utils/time"
 
 const databases = ref<DatabaseInfo[]>([])
 
@@ -188,11 +156,7 @@ const sortedDatabases = computed(() => {
 const showCreate = ref(false)
 const showDelete = ref(false)
 const showImport = ref(false)
-const newDbName = ref("")
-const newDbGroup = ref("")
 const deletingName = ref("")
-const createError = ref("")
-const creating = ref(false)
 const deleting = ref(false)
 const importing = ref(false)
 const importFile = ref<File | null>(null)
@@ -206,26 +170,21 @@ onMounted(() => load())
 
 async function load() {
   try {
-    const res = await api.listDatabases()
-    databases.value = res.data
-    for (const db of res.data) {
-      try {
-        const a = await api.getDatabaseAnalytics(db.name)
-        dbAnalytics.value[db.name] = a.data
-      } catch {}
+    const [dbs, analytics] = await Promise.all([
+      api.listDatabases(),
+      api.getAllDatabaseAnalytics(),
+    ])
+    databases.value = dbs.data
+    for (const a of analytics.data) {
+      dbAnalytics.value[a.database] = a
     }
-  } catch {}
+  } catch (err) {
+    console.error("Failed to load databases", err)
+  }
 }
 
 function getDbAnalytics(name: string) {
   return dbAnalytics.value[name]
-}
-
-function formatBytes(bytes: number) {
-  if (bytes === 0) return "0 B"
-  const units = ["B", "KB", "MB", "GB", "TB"]
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
 }
 
 function groupColor(group?: string) {
@@ -240,21 +199,9 @@ function formatDate(dateStr: string) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
 }
 
-async function createDatabase() {
-  if (!newDbName.value.trim()) return
-  createError.value = ""
-  creating.value = true
-  try {
-    await api.createDatabase(newDbName.value.trim(), newDbGroup.value || undefined)
-    showCreate.value = false
-    newDbName.value = ""
-    newDbGroup.value = ""
-    await load()
-  } catch (e: unknown) {
-    createError.value = e instanceof Error ? e.message : "Failed to create database"
-  } finally {
-    creating.value = false
-  }
+function onDatabaseCreated() {
+  showCreate.value = false
+  load()
 }
 
 function confirmDelete(name: string) {

@@ -5,6 +5,7 @@ import { autoInitConfig } from "./cli/init";
 import { info, success } from "./cli-style";
 import { setLogLevel, type LogLevel } from "./logger";
 import type { BoltstoreConfig } from "./config";
+import { setupSessionCleanup } from "./routes/admin";
 
 export interface StartedServer {
   config: BoltstoreConfig;
@@ -27,6 +28,7 @@ export async function startServer(): Promise<StartedServer> {
     },
   );
   manager.setAnalytics(analytics);
+  setupSessionCleanup(manager);
 
   // Detect Vite dev server for dashboard HMR
   let devDashboardUrl: string | undefined;

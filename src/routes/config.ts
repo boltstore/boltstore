@@ -3,12 +3,17 @@ import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse, parseJsonBody } from "../server";
 import { isAdminRequest } from "../middleware/auth";
 import { logActivity, getClientIp, getAdminId } from "./activity";
+import { validateDbName } from "../validation";
+
+const ALLOWED_CONFIG_KEYS = new Set(["cors_origins", "readonly"]);
 
 export function registerConfigRoutes(router: Router, manager: DatabaseManager): void {
   const metaPool = manager.getMetaPool();
 
   router.get("/api/databases/:name/config", async (req, params) => {
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    const nameErr = validateDbName(params.name);
+    if (nameErr) return nameErr;
     const row = metaPool.read().query("SELECT config FROM _databases WHERE name = ?").get(params.name) as { config: string } | null;
     if (!row) return errorResponse("NOT_FOUND", "Database not found.", 404);
     return jsonResponse({ data: JSON.parse(row.config) });
@@ -16,7 +21,14 @@ export function registerConfigRoutes(router: Router, manager: DatabaseManager): 
 
   router.patch("/api/databases/:name/config", async (req, params) => {
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    const nameErr = validateDbName(params.name);
+    if (nameErr) return nameErr;
     const body = await parseJsonBody<Record<string, any>>(req); if (body instanceof Response) return body;
+
+    const unknownKeys = Object.keys(body).filter(k => !ALLOWED_CONFIG_KEYS.has(k));
+    if (unknownKeys.length > 0) {
+      return errorResponse("VALIDATION", `Unknown config keys: ${unknownKeys.join(", ")}. Allowed: ${[...ALLOWED_CONFIG_KEYS].join(", ")}`, 400);
+    }
 
     const row = metaPool.read().query("SELECT config FROM _databases WHERE name = ?").get(params.name) as { config: string } | null;
     if (!row) return errorResponse("NOT_FOUND", "Database not found.", 404);

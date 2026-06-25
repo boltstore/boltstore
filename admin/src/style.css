@@ -15,7 +15,7 @@
   --color-text-primary: #f5f5f5;
   --color-text-secondary: #a0a0a0;
   --color-text-muted: #666666;
-  --color-text-disabled: #444444;
+  --color-text-disabled: #777777;
 
   --color-accent-50: #e0f7ff;
   --color-accent-100: #b3ecff;
@@ -334,6 +334,11 @@ input.input-field:read-only {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 200px;
+}
+.data-table td.no-truncate {
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
 }
 .data-table tr:hover td {
   background: var(--color-bolt-hover);
@@ -870,6 +875,23 @@ input.input-field:read-only {
   display: block;
 }
 
+.top-queries-table {
+  table-layout: fixed;
+}
+.top-queries-table td.query-cell {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: 50%;
+}
+.top-queries-table th:not(:first-child) {
+  width: 10%;
+}
+.top-queries-table th.text-right {
+  text-align: right;
+}
+
 .code-keyword {
   color: #c678dd;
 }
@@ -1118,6 +1140,20 @@ input.input-field:read-only {
   height: 1px;
   background: var(--color-border-default);
   margin: 1rem 0;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 100;
+}
+
+@media (max-width: 768px) {
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 .glow {

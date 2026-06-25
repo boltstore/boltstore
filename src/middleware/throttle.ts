@@ -52,3 +52,31 @@ export function checkLoginThrottle(ip: string | undefined): { allowed: boolean; 
 
   return { allowed: true, retryAfterMs: 0 };
 }
+
+const API_KEY_WINDOW_MS = 60_000;
+const MAX_API_KEY_ATTEMPTS = 20;
+
+export function checkApiKeyThrottle(ip: string | undefined, databaseName: string): { allowed: boolean; retryAfterMs: number } {
+  if (!ip || ip === "127.0.0.1" || ip === "::1" || ip === "unknown") {
+    return { allowed: true, retryAfterMs: 0 };
+  }
+
+  const now = Date.now();
+  const key = `apikey:${ip}:${databaseName}`;
+  let bucket = attempts.get(key);
+
+  if (!bucket || now >= bucket.resetAt) {
+    bucket = { count: 0, resetAt: now + API_KEY_WINDOW_MS };
+    attempts.set(key, bucket);
+    startCleanup();
+  }
+
+  bucket.count++;
+  const remaining = bucket.resetAt - now;
+
+  if (bucket.count > MAX_API_KEY_ATTEMPTS) {
+    return { allowed: false, retryAfterMs: remaining };
+  }
+
+  return { allowed: true, retryAfterMs: 0 };
+}

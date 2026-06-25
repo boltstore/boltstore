@@ -137,6 +137,7 @@ import Badge from "../components/ui/Badge.vue"
 import TabButton from "../components/ui/TabButton.vue"
 import QueryChart from "../components/ui/QueryChart.vue"
 import { api, type HealthResponse, type DatabaseInfo, type ActivityEntry, type AnalyticsOverview } from "../api/client"
+import { formatTime, formatBytes } from "../utils/time"
 
 const timeRanges = ["24h", "7d", "30d"]
 const activeRange = ref("24h")
@@ -177,13 +178,6 @@ onMounted(loadAll)
 
 watch(activeRange, loadAll)
 
-function formatBytes(bytes: number) {
-  if (bytes === 0) return "0 B"
-  const units = ["B", "KB", "MB", "GB", "TB"]
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
-
 function formatDate(dateStr: string) {
   if (!dateStr) return ""
   const d = new Date(dateStr.endsWith("Z") ? dateStr : dateStr + "Z")
@@ -194,20 +188,6 @@ function groupColor(group?: string) {
   if (group === "production") return "bg-blue-400"
   if (group === "staging") return "bg-yellow-400"
   return "bg-gray-400"
-}
-
-function formatTime(dateStr: string) {
-  if (!dateStr) return ""
-  const d = new Date(dateStr + "Z")
-  const now = new Date()
-  const diff = now.getTime() - d.getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return "just now"
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
 }
 
 function formatAction(action: string) {

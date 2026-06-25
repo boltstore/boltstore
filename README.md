@@ -192,7 +192,7 @@ Tables whose names start with `_` (e.g. `_boltstore` internal tables) are system
 - **Admin keys / sessions may execute any statement.**
 - If the database is in read-only mode (per-database config), writes are rejected for everyone.
 
-> **Note:** The current implementation does not yet enforce the SELECT-only policy for non-admin keys — see `audits.md` M2.4. Until that lands, assume any API key can run any SQL via `/query` and only hand API keys to trusted services.
+> **Note:** The SELECT-only policy for non-admin keys is not yet enforced. Until that lands, assume any API key can run any SQL via `/query` and only hand API keys to trusted services.
 
 ## Timestamps & timezones
 
@@ -293,13 +293,9 @@ cd boltstore && bun run compile:windows
 
 ## Known limitations (MVP)
 
-These are tracked in `audits.md` with severity ratings.
-
-- **No built-in rate limiting for the data API.** Admin login/setup has a per-IP throttle (5 attempts per 15 min), but the data API (records, tables, query) is intentionally unthrottled — in the Turso-like model, developers hold one API key for their backend server. Place a reverse proxy / WAF / Cloudflare in front of the server if you need data-API rate limiting.
-- **`requestTimeoutMs` is advisory** — the timer fires and returns 408 to the client, but the underlying SQLite query continues to run. (`audits.md` M6.4)
-- **The YAML config parser is minimal** — flat key/value pairs and simple arrays only. No nested maps, anchors, or flow style. (`audits.md` L13.8)
-
-See `audits.md` for the complete list and the fix plan for each.
+- **No built-in rate limiting for the data API.** Admin login/setup has a per-IP throttle (5 attempts per 15 min), but the data API (records, tables, query) is intentionally unthrottled. Place a reverse proxy / WAF / Cloudflare in front of the server if you need data-API rate limiting.
+- **`requestTimeoutMs` is advisory** — the timer fires and returns 408 to the client, but the underlying SQLite query continues to run.
+- **The YAML config parser is minimal** — flat key/value pairs and simple arrays only. No nested maps, anchors, or flow style.
 
 ## Plugin system (future)
 

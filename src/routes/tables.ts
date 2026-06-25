@@ -112,7 +112,7 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
 
     const pool = manager.get(params.db);
     const db = pool.read();
-    const columns = db.query(`PRAGMA table_info('${params.table.replace(/'/g, "''")}')`).all();
+    const columns = db.query(`PRAGMA table_info("${params.table}")`).all();
     if (!columns || columns.length === 0) {
       return errorResponse("NOT_FOUND", `Table "${params.table}" not found.`, 404);
     }

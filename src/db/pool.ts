@@ -214,6 +214,10 @@ export class DatabasePool {
    * Execute a function within a transaction on the write connection.
    * All operations are serialized through this single connection.
    *
+   * WAL mode allows concurrent reads inside a write transaction —
+   * SELECTs work normally without blocking. Read queries inside
+   * writeTransaction are safe but prefer `read()` for read-only work.
+   *
    * Uses explicit BEGIN/COMMIT. WAL checkpointing is deferred — SQLite's
    * WAL mode handles checkpointing automatically. Explicit checkpoints
    * on every commit added ~5-15ms latency per write transaction.

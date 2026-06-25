@@ -144,3 +144,19 @@ function extractToken(req: Request): string | null {
   if (auth?.startsWith("Bearer ")) return auth.slice(7).trim();
   return null;
 }
+
+const SESSION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
+export function setupSessionCleanup(manager: DatabaseManager): void {
+  const metaPool = manager.getMetaPool();
+  const clean = () => {
+    try {
+      const r = metaPool.write().run("DELETE FROM _sessions WHERE expires_at IS NOT NULL AND expires_at < datetime('now')");
+      if (r.changes > 0) logger.info("Session cleanup", { pruned: r.changes });
+    } catch (err) {
+      logger.warn("Session cleanup failed", { error: err instanceof Error ? err.message : String(err) });
+    }
+  };
+  setInterval(clean, SESSION_CLEANUP_INTERVAL_MS);
+  clean();
+}

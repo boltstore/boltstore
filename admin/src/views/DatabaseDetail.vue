@@ -11,7 +11,7 @@
     </template>
     <template #header-right>
       <div class="flex items-center gap-2">
-        <button class="btn-ghost btn-sm flex items-center gap-1 hidden sm:inline-flex" @click="exportDatabase">
+        <button class="btn-ghost btn-sm flex items-center gap-1 hidden sm:inline-flex" :disabled="loadingExport" @click="exportDatabase">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
           Download
         </button>
@@ -125,7 +125,7 @@
         <div class="px-4 py-2 border-b border-border-default bg-bolt-elevated">
           <span class="text-xs text-text-muted">{{ sqlResultText }}</span>
         </div>
-        <div class="overflow-x-auto">
+        <div class="overflow-x-auto" style="max-width: 100%; overflow-x: auto;">
           <table class="data-table" v-if="sqlColumns.length > 0">
             <thead>
               <tr>
@@ -235,7 +235,7 @@
             <label class="label">Database Name</label>
             <div class="flex items-center gap-2">
               <input type="text" class="input-field" v-model="editableName">
-              <button v-if="editableName !== dbName" class="btn-primary btn-sm shrink-0" :disabled="renaming" @click="saveName">{{ renaming ? 'Saving...' : 'Save' }}</button>
+              <button v-if="editableName !== dbName" class="btn-primary btn-sm shrink-0" :disabled="renaming || loadingRename" @click="saveName">{{ renaming ? 'Saving...' : 'Save' }}</button>
             </div>
             <p v-if="nameSaved" class="text-[10px] text-green-400 mt-1">Name updated</p>
           </div>
@@ -343,6 +343,7 @@
         <div class="form-group">
           <label>Table Name</label>
           <input type="text" class="input-field" placeholder="table_name" v-model="newTableName">
+          <p v-if="tableNameError" class="text-xs text-red-400 mt-1">{{ tableNameError }}</p>
         </div>
         <p class="text-[10px] text-text-muted mt-3 mb-2">Columns</p>
         <div class="space-y-2">
@@ -559,7 +560,7 @@
         </div>
         <div class="flex items-center justify-end gap-2">
           <button class="btn-ghost btn-sm" @click="showDeleteDatabaseModal = false">Cancel</button>
-          <button class="btn-primary btn-sm bg-red-600 hover:bg-red-500 border-red-500/50" @click="deleteDatabase">Delete Database</button>
+          <button class="btn-primary btn-sm bg-red-600 hover:bg-red-500 border-red-500/50" :disabled="loadingDelete" @click="deleteDatabase">Delete Database</button>
         </div>
       </div>
     </div>
@@ -612,6 +613,7 @@
 
 <script setup lang="ts">
 import { ref, h, computed, watch, onMounted, onUnmounted } from "vue"
+import { formatBytes, formatTimeAgo } from "../utils/time"
 import { useRoute, useRouter } from "vue-router"
 import AppLayout from "../components/layout/AppLayout.vue"
 import DataTable, { type ColumnDef } from "../components/ui/DataTable.vue"
@@ -640,6 +642,9 @@ const apiKeys = ref<{ id: string; name: string; key: string; lastUsed: string }[
 const groupSaved = ref(false)
 const nameSaved = ref(false)
 const renaming = ref(false)
+const loadingRename = ref(false)
+const loadingExport = ref(false)
+const loadingDelete = ref(false)
 const editableName = ref(dbName.value)
 const serverUrl = ref("")
 const deletingRows = ref<number[]>([])
@@ -657,6 +662,12 @@ const newTableColumns = ref([{ name: "", type: "text", primary_key: false, auto_
 const addingTable = ref(false)
 const addTableError = ref("")
 const addRecordError = ref("")
+const tableNameError = computed(() => {
+  const name = newTableName.value.trim()
+  if (!name) return ""
+  if (!/^[a-zA-Z_]\w*$/.test(name)) return "Invalid table name: must start with letter/underscore followed by letters, digits, or underscores"
+  return ""
+})
 const tableFeedback = ref("")
 
 function onKeyDown(e: KeyboardEvent) {
@@ -725,7 +736,20 @@ function selectTable(name: string) {
   tableColumns.value = []
   dataRows.value = []
   selectedTable.value = name
+  loadSchemaForTable(name)
   router.push(`/databases/${dbName.value}/${activeTab.value}/${name}`)
+}
+
+async function loadSchemaForTable(name: string) {
+  if (tableColumns.value.length > 0) return
+  try {
+    const schema = await api.getTableSchema(dbName.value, name)
+    tableColumns.value = schema.data.columns.map(c => ({
+      key: c.name,
+      label: c.name,
+      type: c.type.toLowerCase().startsWith("int") || c.type.toLowerCase().startsWith("real") ? "integer" : "text",
+    }))
+  } catch {}
 }
 
 async function loadRecords() {
@@ -749,16 +773,6 @@ async function loadRecords() {
         label: key,
         type: typeof res.data[0][key] === "number" ? "integer" : "text",
       }))
-    }
-    if (tableColumns.value.length === 0) {
-      try {
-        const schema = await api.getTableSchema(dbName.value, selectedTable.value)
-        tableColumns.value = schema.data.columns.map(c => ({
-          key: c.name,
-          label: c.name,
-          type: c.type.toLowerCase().startsWith("int") || c.type.toLowerCase().startsWith("real") ? "integer" : "text",
-        }))
-      } catch {}
     }
     recordTiming.value = Math.round(performance.now() - start)
   } catch (e: unknown) {
@@ -969,13 +983,6 @@ async function loadAnalytics() {
   } catch {}
 }
 
-function formatBytes(bytes: number) {
-  if (bytes === 0) return "0 B"
-  const units = ["B", "KB", "MB", "GB", "TB"]
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
-
 async function saveGroup(group: string) {
   dbConfig.value.group = group || undefined
   try {
@@ -989,13 +996,16 @@ async function saveName() {
   const newName = editableName.value.trim()
   if (!newName || newName === dbName.value) return
   renaming.value = true
+  loadingRename.value = true
   try {
     await api.renameDatabase(dbName.value, newName)
     nameSaved.value = true
     setTimeout(() => nameSaved.value = false, 2000)
     router.replace(`/databases/${newName}/${activeTab.value}/settings`)
-  } catch {}
-  renaming.value = false
+  } catch {} finally {
+    renaming.value = false
+    loadingRename.value = false
+  }
 }
 
 async function saveReadonly() {
@@ -1005,6 +1015,7 @@ async function saveReadonly() {
 }
 
 async function exportDatabase() {
+  loadingExport.value = true
   try {
     const blob = await api.exportDatabase(dbName.value)
     const url = URL.createObjectURL(blob)
@@ -1013,7 +1024,9 @@ async function exportDatabase() {
     a.download = `${dbName.value}.db`
     a.click()
     URL.revokeObjectURL(url)
-  } catch {}
+  } catch {} finally {
+    loadingExport.value = false
+  }
 }
 
 async function loadKeys() {
@@ -1026,19 +1039,6 @@ async function loadKeys() {
       lastUsed: k.last_used_at ? formatTimeAgo(k.last_used_at) : "never",
     }))
   } catch {}
-}
-
-function formatTimeAgo(dateStr: string) {
-  const d = new Date(dateStr.endsWith("Z") ? dateStr : dateStr + "Z")
-  const now = new Date()
-  const diff = now.getTime() - d.getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return "just now"
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
 }
 
 function handleDelete(rows: number[]) {
@@ -1140,10 +1140,13 @@ function copyKey() {
 }
 
 async function deleteDatabase() {
+  loadingDelete.value = true
   try {
     await api.deleteDatabase(dbName.value)
     router.push("/databases")
-  } catch {}
+  } catch {} finally {
+    loadingDelete.value = false
+  }
 }
 
 function startRename(t: { name: string }) {
@@ -1223,24 +1226,4 @@ async function createTable() {
 }
 </script>
 
-<style scoped>
-.top-queries-table {
-  table-layout: fixed;
-}
-.top-queries-table td.query-cell {
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow: visible;
-  text-overflow: clip;
-  max-width: 35%;
-}
-.top-queries-table th:not(:first-child) {
-  width: 10%;
-}
-.top-queries-table th {
-  text-align: left;
-}
-.top-queries-table th.text-right {
-  text-align: right;
-}
-</style>
+

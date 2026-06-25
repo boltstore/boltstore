@@ -50,13 +50,8 @@ export function parseYaml(raw: string): Record<string, unknown> {
 
       // Check if next line might start an array (empty value + indented list follows)
       if (rawValue === "" || rawValue === "null" || rawValue === "~") {
-        // Could be an array start — set currentKey to collect items
-        if (rawValue === "" || rawValue === "null") {
-          result[key] = rawValue === "null" ? null : "";
-        } else {
-          result[key] = null;
-        }
-        // Don't set currentKey for empty strings — wait for indented items
+        // Start collecting array items; don't overwrite existing value yet
+        if (rawValue !== "") result[key] = null;
         currentKey = key;
         currentArray = [];
       } else {
