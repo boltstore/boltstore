@@ -33,6 +33,47 @@ function parseRange(url: URL): { since: string; groupFmt: string } {
   }
 }
 
+function getTzOffsetMinutes(tz: string): number {
+  try {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(now);
+    const p = (type: string) => parseInt(parts.find(x => x.type === type)?.value || "0", 10);
+    const localMs = Date.UTC(p("year"), p("month") - 1, p("day"), p("hour"), p("minute"));
+    const utcMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes());
+    return (localMs - utcMs) / 60000;
+  } catch { return 0; }
+}
+
+function getTzDate(tz: string): Date {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(new Date());
+    const p = (type: string) => parseInt(parts.find(x => x.type === type)?.value || "0", 10);
+    return new Date(Date.UTC(p("year"), p("month") - 1, p("day"), p("hour"), p("minute"), p("second")));
+  } catch { return new Date(); }
+}
+
+function getTzSign(tz: string): string {
+  const offset = getTzOffsetMinutes(tz);
+  if (offset === 0) return "";
+  const totalMinutes = Math.abs(offset);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const sign = offset > 0 ? "+" : "-";
+  return minutes > 0 ? `${sign}${hours} hours ${minutes} minutes` : `${sign}${hours} hours`;
+}
+
 export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager, analytics: AnalyticsManager): void {
   const pool = analytics.getPool();
 
@@ -153,16 +194,23 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const range = url.searchParams.get("range") || "24h";
     const { since, groupFmt } = parseRange(url);
     const db = pool.read();
+
+    const metaRow = manager.getMetaPool().read().query("SELECT value FROM _meta WHERE key = 'global_settings'").get() as { value: string } | null;
+    const settings = metaRow ? { timezone: "UTC", ...JSON.parse(metaRow.value) } : { timezone: "UTC" };
+    const tzAdj = getTzSign(settings.timezone);
+
+    const sinceExpr = tzAdj ? `datetime('now', '${tzAdj}', ${since})` : `datetime('now', ${since})`;
+    const tzTimestamp = tzAdj ? `datetime(timestamp, '${tzAdj}')` : "timestamp";
     const rows = db.query(
-      `SELECT strftime(${groupFmt}, timestamp) as slot, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY slot ORDER BY slot`
-    ).all(since) as { slot: string; count: number; errors: number; rows_read: number; rows_written: number }[];
+      `SELECT strftime(${groupFmt}, ${tzTimestamp}) as slot, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE ${tzTimestamp} >= ${sinceExpr} GROUP BY slot ORDER BY slot`
+    ).all() as { slot: string; count: number; errors: number; rows_read: number; rows_written: number }[];
     const lookup: Record<string, number> = {};
     const errorLookup: Record<string, number> = {};
     const rowsReadLookup: Record<string, number> = {};
     const rowsWrittenLookup: Record<string, number> = {};
     for (const r of rows) { lookup[r.slot] = r.count; errorLookup[r.slot] = r.errors; rowsReadLookup[r.slot] = r.rows_read; rowsWrittenLookup[r.slot] = r.rows_written; }
 
-    const now = new Date();
+    const now = getTzDate(settings.timezone);
     let slots: string[];
     if (range === "7d") {
       slots = [];
@@ -175,8 +223,8 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       }
     } else if (range === "30d") {
       const dayRows = db.query(
-        `SELECT strftime('%Y-%m-%d', timestamp) as day, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY day ORDER BY day`
-      ).all("-30 days") as { day: string; count: number; errors: number; rows_read: number; rows_written: number }[];
+        `SELECT strftime('%Y-%m-%d', ${tzTimestamp}) as day, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE ${tzTimestamp} >= ${sinceExpr} GROUP BY day ORDER BY day`
+      ).all() as { day: string; count: number; errors: number; rows_read: number; rows_written: number }[];
       const dayLookup: Record<string, number> = {};
       const dayErrorLookup: Record<string, number> = {};
       const dayReadLookup: Record<string, number> = {};
