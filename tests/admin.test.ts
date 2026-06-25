@@ -28,21 +28,24 @@ describe("Admin Dashboard", () => {
 
   test("serves dashboard index at /dashboard", async () => {
     const res = await fetch(`http://localhost:${TEST_PORT}/dashboard`);
-    expect(res.status).toBe(200);
     const text = await res.text();
+    if (res.status !== 200) console.log("Dashboard test failed", { status: res.status, body: text.slice(0, 200) });
+    expect(res.status).toBe(200);
     expect(text).toContain("Boltstore");
     expect(text).toContain("</html>");
   });
 
   test("serves dashboard at /dashboard/ (trailing slash)", async () => {
     const res = await fetch(`http://localhost:${TEST_PORT}/dashboard/`);
+    if (res.status !== 200) console.log("Dashboard trailing slash failed", { status: res.status });
     expect(res.status).toBe(200);
   });
 
   test("SPA fallback for /dashboard/overview", async () => {
     const res = await fetch(`http://localhost:${TEST_PORT}/dashboard/overview`);
-    expect(res.status).toBe(200);
     const text = await res.text();
+    if (res.status !== 200) console.log("SPA fallback failed", { status: res.status, body: text.slice(0, 200) });
+    expect(res.status).toBe(200);
     expect(text).toContain("</html>");
   });
 

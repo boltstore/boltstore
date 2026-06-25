@@ -17,6 +17,7 @@ import { registerSettingsRoutes } from "./routes/settings";
 import { registerAnalyticsRoutes } from "./routes/analytics";
 import { AnalyticsManager } from "./analytics";
 import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 
 export interface ServerConfig {
   port: number;
@@ -180,7 +181,13 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
             // fall through to static files if Vite dev server is unreachable
           }
         }
-        const baseDir = resolve(process.cwd(), "admin/dist");
+        const baseDir = (() => {
+          const cwdDir = resolve(process.cwd(), "admin/dist");
+          if (existsSync(cwdDir)) return cwdDir;
+          const metaDir = resolve(`${import.meta.dir}/../admin/dist`);
+          if (existsSync(metaDir)) return metaDir;
+          return cwdDir;
+        })();
         const filePath = pathname === "/dashboard" || pathname === "/dashboard/"
           ? `${baseDir}/index.html`
           : resolve(baseDir, `.${pathname.replace("/dashboard", "")}`);
@@ -193,6 +200,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         // SPA fallback: serve index.html for all dashboard routes
         const indexFile = Bun.file(resolve(process.cwd(), "admin/dist/index.html"));
         if (await indexFile.exists()) return new Response(indexFile, { headers: cspHeaders });
+        logger.warn("Dashboard file not found", { baseDir, filePath, cwd: process.cwd() });
         return errorResponse("NOT_FOUND", "Dashboard not built. Run 'cd admin && npm run build'.", 404);
       }
 
