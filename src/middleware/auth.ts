@@ -17,14 +17,19 @@ export interface AdminSession {
   adminId: string;
 }
 
+let configuredAdminKey: string | undefined;
+
+export function setAdminKey(key: string | undefined): void {
+  configuredAdminKey = key;
+}
+
 export async function resolveAdminSession(request: Request, manager?: DatabaseManager): Promise<AdminSession | null> {
   const auth = request.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return null;
   const token = auth.slice(7).trim();
   if (!token) return null;
 
-  // Check admin key from config/env (constant-time compare)
-  const adminKey = Bun.env.BOLTSTORE_ADMIN_KEY;
+  const adminKey = configuredAdminKey ?? Bun.env.BOLTSTORE_ADMIN_KEY;
   if (adminKey && timingSafeEqual(token, adminKey)) {
     return { adminId: "admin_key" };
   }

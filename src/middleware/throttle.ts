@@ -13,15 +13,19 @@ interface AttemptBucket {
 const attempts = new Map<string, AttemptBucket>();
 
 const CLEANUP_INTERVAL = 60_000;
+const MAX_MAP_SIZE = 50_000;
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+function pruneExpired(now: number): void {
+  for (const [key, bucket] of attempts) {
+    if (now >= bucket.resetAt) attempts.delete(key);
+  }
+}
 
 function startCleanup(): void {
   if (cleanupTimer) return;
   cleanupTimer = setInterval(() => {
-    const now = Date.now();
-    for (const [key, bucket] of attempts) {
-      if (now >= bucket.resetAt) attempts.delete(key);
-    }
+    pruneExpired(Date.now());
     if (attempts.size === 0 && cleanupTimer) {
       clearInterval(cleanupTimer);
       cleanupTimer = null;
@@ -38,13 +42,15 @@ export function checkLoginThrottle(ip: string | undefined): { allowed: boolean; 
   }
 
   const now = Date.now();
+  if (attempts.size > MAX_MAP_SIZE) pruneExpired(now);
   const key = `login:${ip}`;
   let bucket = attempts.get(key);
 
   if (!bucket || now >= bucket.resetAt) {
-    bucket = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    bucket = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };
     attempts.set(key, bucket);
     startCleanup();
+    return { allowed: true, retryAfterMs: 0 };
   }
 
   bucket.count++;
@@ -66,6 +72,7 @@ export function checkApiKeyThrottle(ip: string | undefined, databaseName: string
   }
 
   const now = Date.now();
+  if (attempts.size > MAX_MAP_SIZE) pruneExpired(now);
   const key = `apikey:${ip}:${databaseName}`;
   let bucket = attempts.get(key);
 

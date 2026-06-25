@@ -11,6 +11,7 @@ import { registerQueryRoutes } from "./routes/query";
 import { registerConfigRoutes } from "./routes/config";
 import { registerTransferRoutes } from "./routes/transfer";
 import { registerAdminRoutes } from "./routes/admin";
+import { setAdminKey } from "./middleware/auth";
 import { registerActivityRoutes, setTrustedProxies } from "./routes/activity";
 import { registerSettingsRoutes } from "./routes/settings";
 import { registerAnalyticsRoutes } from "./routes/analytics";
@@ -127,6 +128,7 @@ export function createRouter(config: { manager?: DatabaseManager; adminKey?: str
 }
 
 export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve> {
+  setAdminKey(config.adminKey);
   const router = createRouter({ manager: config.manager, adminKey: config.adminKey, analytics: config.analytics });
   const corsConfig = config.cors || defaultCorsConfig;
   const maxBodySize = (config.maxBodySize ?? 10) * 1024 * 1024;
