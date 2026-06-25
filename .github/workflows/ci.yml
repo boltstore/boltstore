@@ -23,4 +23,5 @@ jobs:
         working-directory: admin
       - run: npm run build
         working-directory: admin
+      - run: ls -la admin/dist/index.html
       - run: bun test
