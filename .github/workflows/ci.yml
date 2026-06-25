@@ -14,6 +14,13 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - run: bun install
       - run: bun run build
+      - run: npm install
+        working-directory: admin
+      - run: npm run build
+        working-directory: admin
       - run: bun test

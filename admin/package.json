@@ -1,6 +1,6 @@
 {
   "name": "@boltstore/dashboard",
-  "version": "0.8.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@boltstore/client": "../../client",
+    "@boltstore/client": "^1.0.0",
     "chart.js": "^4.5.1",
     "vue": "^3.5.0",
     "vue-chartjs": "^5.3.3",
