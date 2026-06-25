@@ -6,7 +6,7 @@ import { checkReadOnly } from "../middleware/readonly";
 import { recordAnalytics } from "./analytics";
 import { logger } from "../logger";
 import { toBindings } from "../db/cast";
-import { isValidIdentifier, validateIdentifier, validateIdentifiers } from "../validation";
+import { isValidIdentifier, validateIdentifier, validateIdentifiers, validateRowId } from "../validation";
 import { MAX_RECORD_LIMIT, DEFAULT_RECORD_LIMIT } from "../validation";
 
 const MAX_LIMIT = MAX_RECORD_LIMIT;
@@ -40,10 +40,12 @@ function buildWhereClause(filter: Record<string, unknown>, params: unknown[], pa
           case "$lt": clauses.push(`"${key}" < ?`); params.push(operand); break;
           case "$lte": clauses.push(`"${key}" <= ?`); params.push(operand); break;
           case "$in": {
-            const arr = Array.isArray(operand) ? operand : String(operand).split(",");
-            const placeholders = arr.map(() => "?").join(",");
+            if (!Array.isArray(operand)) {
+              throw new FilterValidationError(`$in operator requires an array value at "${path}"`);
+            }
+            const placeholders = operand.map(() => "?").join(",");
             clauses.push(`"${key}" IN (${placeholders})`);
-            params.push(...arr);
+            params.push(...operand);
             break;
           }
           case "$like": clauses.push(`"${key}" LIKE ?`); params.push(operand); break;
@@ -154,7 +156,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const records = Array.isArray(body) ? body : [body];
     const inserted: Record<string, unknown>[] = [];
     const firstKeys = Object.keys(records[0] || {});
-    const insertSql = `INSERT INTO "${params.table}" (${firstKeys.map(k => `"${k}"`).join(", ")}) VALUES (${firstKeys.map(() => "?").join(", ")})`;
+    const insertSql = `INSERT INTO "${params.table}" (${firstKeys.map(k => `"${k}"`).join(", ")}) VALUES (${firstKeys.map(() => "?").join(", ")})`; // Representative SQL from first record only
 
     for (const record of records) {
       const keys = Object.keys(record);
@@ -224,6 +226,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
 
     const tableErr = validateIdentifier(params.table, "table");
     if (tableErr) return tableErr;
+    const idErr = validateRowId(params.id);
+    if (idErr) return idErr;
 
     const start = performance.now();
     const pool = manager.get(params.db);
@@ -247,6 +251,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
 
     const tableErr = validateIdentifier(params.table, "table");
     if (tableErr) return tableErr;
+    const idErr = validateRowId(params.id);
+    if (idErr) return idErr;
 
     const start = performance.now();
     const body = await parseJsonBody<Record<string, unknown>>(req); if (body instanceof Response) return body;
@@ -284,6 +290,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
 
     const tableErr = validateIdentifier(params.table, "table");
     if (tableErr) return tableErr;
+    const idErr = validateRowId(params.id);
+    if (idErr) return idErr;
 
     const start = performance.now();
     const pool = manager.get(params.db);

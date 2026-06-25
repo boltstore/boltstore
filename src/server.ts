@@ -76,7 +76,11 @@ export async function parseJsonBody<T = unknown>(request: Request, maxBodySize?:
     } else {
       text = await request.text();
     }
-    return JSON.parse(text) as T;
+    const parsed = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null) {
+      return errorResponse("VALIDATION", "Request body must be a JSON object or array.", 400);
+    }
+    return parsed as T;
   } catch (err) {
     if (err instanceof Response) return err;
     return errorResponse("INVALID_JSON", "Invalid or empty JSON in request body.", 400);
@@ -131,6 +135,9 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
   const trustedProxies = config.trustedProxies ?? [];
   setTrustedProxies(trustedProxies);
 
+  // TLS is not configured here — use a reverse proxy (nginx, Caddy, Cloudflare)
+  // for TLS termination in production. Bun.serve() supports built-in TLS via the
+  // `tls: { key, cert }` option if you prefer not to use a proxy.
   const server = Bun.serve({
     port: config.port,
     async fetch(request: Request, srv?: any): Promise<Response> {
@@ -156,6 +163,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         // Security headers for the dashboard SPA
         const cspHeaders: Record<string, string> = {
           "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self';",
+          "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
           "X-Content-Type-Options": "nosniff",
           "X-Frame-Options": "DENY",
           "Referrer-Policy": "same-origin",
@@ -198,6 +206,13 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           const contentLength = request.headers.get("Content-Length");
           if (contentLength && parseInt(contentLength, 10) > maxBodySize) {
             return errorResponse("PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBodySize / 1024 / 1024}MB limit.`, 413);
+          }
+          if (!contentLength && (method === "POST" || method === "PUT" || method === "PATCH")) {
+            const bodyBytes = await request.arrayBuffer();
+            if (bodyBytes.byteLength > maxBodySize) {
+              return errorResponse("PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBodySize / 1024 / 1024}MB limit.`, 413);
+            }
+            request = new Request(request.url, { method, headers: request.headers, body: bodyBytes.byteLength > 0 ? bodyBytes : undefined });
           }
         }
 

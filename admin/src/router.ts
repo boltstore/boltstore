@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router"
+import { hasSession } from "./api/client"
 
 const router = createRouter({
   history: createWebHistory("/dashboard"),
@@ -37,6 +38,14 @@ const router = createRouter({
     { path: "/:pathMatch(.*)*", name: "not-found", component: () => import("./views/NotFound.vue") },
     { path: "/error/:code", name: "error", component: () => import("./views/ErrorPage.vue") },
   ],
+})
+
+router.beforeEach((to) => {
+  if (to.path === "/login") {
+    if (hasSession()) return "/overview"
+    return
+  }
+  if (!hasSession()) return "/login"
 })
 
 export default router

@@ -199,7 +199,7 @@ async function loadAll() {
     const res = await api.getAnalyticsOverview(activeRange.value)
     overview.value = res.data
   } catch (err) {
-    console.error("Failed to load analytics overview", err)
+    console.error("Failed to load analytics overview", (err as Error).message || String(err))
   }
   try {
     const vol = await api.getVolume(activeRange.value)
@@ -212,13 +212,13 @@ async function loadAll() {
     rowsReadMax.value = vol.data.max_read ?? 1
     rowsWrittenMax.value = vol.data.max_written ?? 1
   } catch (err) {
-    console.error("Failed to load volume data", err)
+    console.error("Failed to load volume data", (err as Error).message || String(err))
   }
   try {
     const res = await api.getTopQueries(activeRange.value)
     topQueries.value = res.data
   } catch (err) {
-    console.error("Failed to load top queries", err)
+    console.error("Failed to load top queries", (err as Error).message || String(err))
   }
   try {
     const analytics = await api.getAllDatabaseAnalytics(activeRange.value)
@@ -235,13 +235,13 @@ async function loadAll() {
       }
     })
   } catch (err) {
-    console.error("Failed to load database analytics", err)
+    console.error("Failed to load database analytics", (err as Error).message || String(err))
   }
   try {
     const err = await api.getErrors(20)
     errorLog.value = err.data
   } catch (err) {
-    console.error("Failed to load error log", err)
+    console.error("Failed to load error log", (err as Error).message || String(err))
   }
 }
 

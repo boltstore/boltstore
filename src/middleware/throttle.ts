@@ -6,6 +6,10 @@ interface AttemptBucket {
   resetAt: number;
 }
 
+// Rate limit state is process-local (in-memory Map).
+// In a multi-instance deployment behind a load balancer, each instance
+// maintains independent counters. Use a Redis-backed rate limiter or
+// consistent-hash load balancing for distributed deployments.
 const attempts = new Map<string, AttemptBucket>();
 
 const CLEANUP_INTERVAL = 60_000;
@@ -80,3 +84,9 @@ export function checkApiKeyThrottle(ip: string | undefined, databaseName: string
 
   return { allowed: true, retryAfterMs: 0 };
 }
+
+// Data API endpoints (records, tables, query) are intentionally unthrottled.
+// Boltstore is a server-to-server DBaaS — API keys are issued to developers,
+// not end users. A per-IP throttle on data endpoints would harm legitimate
+// backend workloads. Rate limiting for the data plane belongs at the reverse
+// proxy or WAF layer if needed.

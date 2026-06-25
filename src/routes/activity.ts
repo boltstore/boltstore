@@ -28,9 +28,13 @@ function isTrustedProxy(ip: string): boolean {
 export function getClientIp(request: Request): string | undefined {
   const directIp = request.headers.get("x-boltstore-direct-ip");
 
-  // If we know the direct connection IP, only trust forwarded headers
-  // when the direct connection is from a trusted proxy.
-  const trustForwarded = !directIp || isTrustedProxy(directIp);
+  // Never trust forwarded headers when we cannot determine the direct connection IP.
+  // Default to the direct connection IP if available, otherwise return undefined
+  // (callers should handle the missing-IP case gracefully).
+  if (!directIp) return undefined;
+
+  // Only trust forwarded headers when the direct connection is from a trusted proxy.
+  const trustForwarded = isTrustedProxy(directIp);
 
   if (trustForwarded) {
     const cf = request.headers.get("cf-connecting-ip");
@@ -77,7 +81,8 @@ function sanitizeDetails(details: Record<string, unknown> | undefined): string |
   const SECRET_KEYS = ["key", "token_hash", "password", "secret"];
   const sanitized: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(details)) {
-    sanitized[k] = SECRET_KEYS.some(sk => k.toLowerCase().includes(sk)) ? "***" : v;
+    // Only exact key matches are redacted; nested objects are not recursively inspected.
+    sanitized[k] = SECRET_KEYS.some(sk => k.toLowerCase() === sk) ? "***" : v;
   }
   return JSON.stringify(sanitized);
 }

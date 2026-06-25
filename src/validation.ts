@@ -44,7 +44,7 @@ export function validateIdentifiers(names: string[], kind: "table" | "column"): 
   return null;
 }
 
-const LITERAL_DEFAULT = /^(?:[-+]?\d+\.?\d*|'[^']*'|NULL|TRUE|FALSE|CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME)$/i;
+const LITERAL_DEFAULT = /^(?:[-+]?\d+\.?\d*|'[^']*'|NULL|TRUE|FALSE|CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|(?:date|time|datetime|strftime)\(.+\))$/i;
 
 export function validateColumnDefault(value: string): Response | null {
   if (value === undefined || value === null) return null;
@@ -57,6 +57,15 @@ export function validateColumnDefault(value: string): Response | null {
       `Invalid column default: "${value}". Must be a literal (number, quoted string, NULL, TRUE, FALSE, or CURRENT_TIMESTAMP).`,
       400,
     );
+  }
+  return null;
+}
+
+const VALID_ROWID = /^[0-9]+$/;
+
+export function validateRowId(id: string): Response | null {
+  if (typeof id !== "string" || !VALID_ROWID.test(id) || id.length > 20 || BigInt(id) > 9007199254740991n) {
+    return errorResponse("VALIDATION", "Invalid record ID. Must be a positive integer.", 400);
   }
   return null;
 }

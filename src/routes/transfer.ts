@@ -7,6 +7,7 @@ import { logger } from "../logger";
 import { validateDbName, isValidDbName } from "../validation";
 import { rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { generateId } from "../crypto-utils";
 
 const MAX_IMPORT_BYTES = 1024 * 1024 * 1024; // 1 GB cap on import
 
@@ -20,7 +21,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
     }
 
     const pool = manager.get(params.name);
-    const exportPath = `${dataDir}/${params.name}_export.db`;
+    const exportPath = `${dataDir}/${params.name}_export_${generateId("exp_", 16)}.db`;
 
     try {
       pool.write().run(`VACUUM INTO '${resolve(exportPath).replace(/'/g, "''")}'`);
@@ -78,7 +79,8 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
     const bytes = await fileField.bytes();
 
     // Validate it's a valid SQLite file (header: "SQLite format 3\0")
-    if (bytes.length < 100 || bytes[0] !== 0x53) {
+    const SQLITE3_HEADER = [0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00];
+    if (bytes.length < 100 || !SQLITE3_HEADER.every((b, i) => bytes[i] === b)) {
       return errorResponse("VALIDATION", "File does not appear to be a valid SQLite database.", 400);
     }
 

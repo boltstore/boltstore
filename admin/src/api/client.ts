@@ -22,21 +22,35 @@ import type {
 } from "./types"
 
 const STORAGE_TOKEN = "boltstore_session"
+const memoryStore = new Map<string, string>()
+
+function storage(): {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+  removeItem(key: string): void
+} {
+  if (typeof sessionStorage !== "undefined") return sessionStorage
+  return {
+    getItem: (k) => memoryStore.get(k) ?? null,
+    setItem: (k, v) => { memoryStore.set(k, v) },
+    removeItem: (k) => { memoryStore.delete(k) },
+  }
+}
 
 function getBaseUrl(): string {
   return window.location.origin
 }
 
 function getToken(): string | null {
-  return localStorage.getItem(STORAGE_TOKEN)
+  return storage().getItem(STORAGE_TOKEN)
 }
 
 export function saveSession(token: string) {
-  localStorage.setItem(STORAGE_TOKEN, token)
+  storage().setItem(STORAGE_TOKEN, token)
 }
 
 export function clearSession() {
-  localStorage.removeItem(STORAGE_TOKEN)
+  storage().removeItem(STORAGE_TOKEN)
 }
 
 export function hasSession(): boolean {

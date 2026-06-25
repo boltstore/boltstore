@@ -179,7 +179,7 @@ async function load() {
       dbAnalytics.value[a.database] = a
     }
   } catch (err) {
-    console.error("Failed to load databases", err)
+    console.error("Failed to load databases", (err as Error).message || String(err))
   }
 }
 

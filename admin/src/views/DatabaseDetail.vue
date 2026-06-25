@@ -1097,7 +1097,7 @@ async function saveRecord() {
 function openSchemaEditor(name: string) {
   schemaError.value = ""
   schemaSuccess.value = ""
-  schemaDdl.value = `-- Edit schema for ${name}\nALTER TABLE ${name} ADD COLUMN new_field TEXT;`
+  schemaDdl.value = `-- Edit schema for ${name}\nALTER TABLE "${name}" ADD COLUMN "new_field" TEXT;`
   showSchemaDrawer.value = true
 }
 

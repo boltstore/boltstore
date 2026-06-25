@@ -34,7 +34,7 @@ export async function resolveAdminSession(request: Request, manager?: DatabaseMa
     try {
       const hashHex = await sha256Hex(token);
       const row = manager.getMetaPool().read()
-        .query("SELECT admin_id FROM _sessions WHERE token_hash = ? AND (expires_at IS NULL OR expires_at > datetime('now'))")
+        .query("SELECT admin_id FROM _sessions WHERE token_hash = ? AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))")
         .get(hashHex) as { admin_id: string } | null;
       if (row) return { adminId: row.admin_id };
     } catch (err) {
@@ -93,8 +93,8 @@ export async function authenticateApiKey(
     return errorResponse("UNAUTHORIZED", "Invalid API key.", 401);
   }
 
-  // Update last_used_at
-  db.run("UPDATE _api_keys SET last_used_at = datetime('now') WHERE id = ?", [row.id]);
+  // Update last_used_at on the write connection
+  manager.getMetaPool().write().run("UPDATE _api_keys SET last_used_at = datetime('now') WHERE id = ?", [row.id]);
 
   return { authenticated: true, databaseName, keyId: row.id, label: row.label, isAdmin: false };
 }
