@@ -7,7 +7,7 @@ import { isAdminRequest } from "../middleware/auth";
 interface QueryStatsRow { c: number; avg_ms: number; errors: number; writes: number }
 interface StorageTotalRow { total: number }
 interface StorageRow { size_bytes: number; table_count: number }
-interface TopTableRow { table_name: string; calls: number; avg_ms: number; writes: number; total_rows: number }
+interface TopTableRow { sql_text: string | null; calls: number; avg_ms: number; writes: number; total_rows: number }
 interface CountRow { c: number }
 
 export function recordAnalytics(manager: DatabaseManager, event: {
@@ -18,6 +18,7 @@ export function recordAnalytics(manager: DatabaseManager, event: {
   rowCount: number;
   status: string;
   errorMessage?: string;
+  sqlText?: string;
 }): void {
   const a = manager.getAnalytics();
   if (a) a.recordQuery(event);
@@ -78,7 +79,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     ).get(params.database) as StorageRow) ?? { size_bytes: 0, table_count: 0 };
 
     const topTables = db.query(
-      `SELECT table_name, COUNT(*) as calls, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(row_count), 0) as total_rows FROM _query_log WHERE database = ? AND table_name IS NOT NULL AND timestamp >= datetime('now', ?) GROUP BY table_name ORDER BY calls DESC LIMIT 10`
+      `SELECT COALESCE(sql_text, operation) as sql_text, COUNT(*) as calls, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(row_count), 0) as total_rows FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?) GROUP BY COALESCE(sql_text, operation) ORDER BY calls DESC LIMIT 10`
     ).all(params.database, since) as TopTableRow[];
 
     return jsonResponse({

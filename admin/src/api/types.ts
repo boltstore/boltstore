@@ -126,7 +126,7 @@ export interface DatabaseAnalytics {
   rows_read: number
   storageBytes: number
   tableCount: number
-  topTables: { table_name: string; calls: number; avg_ms: number; writes: number; total_rows: number }[]
+  topTables: { sql_text: string | null; calls: number; avg_ms: number; writes: number; total_rows: number }[]
 }
 
 export interface QueryLogEntry {

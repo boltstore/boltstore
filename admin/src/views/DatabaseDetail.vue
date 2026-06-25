@@ -201,23 +201,23 @@
         <span class="text-xs font-medium text-text-primary">Top Queries (last 24h)</span>
       </div>
       <div class="overflow-x-auto">
-        <table class="data-table">
+        <table class="data-table top-queries-table" style="table-layout:fixed">
           <thead>
             <tr>
-              <th>Query</th>
-              <th class="text-right">Calls</th>
-              <th class="text-right">Avg Time</th>
-              <th class="text-right">Total Time</th>
-              <th class="text-right">Rows</th>
+              <th style="width:50%">Query</th>
+              <th class="text-center whitespace-nowrap">Calls</th>
+              <th class="text-center whitespace-nowrap">Avg Time</th>
+              <th class="text-center whitespace-nowrap">Total Time</th>
+              <th class="text-center whitespace-nowrap">Rows</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="q in topQueries" :key="q.query">
-              <td><span class="font-mono text-xs text-accent-400">{{ q.query }}</span></td>
-              <td class="text-right text-text-secondary">{{ q.calls }}</td>
-              <td class="text-right text-text-secondary">{{ q.avgTime }}</td>
-              <td class="text-right text-text-secondary">{{ q.totalTime }}</td>
-              <td class="text-right text-text-secondary">{{ q.rows }}</td>
+              <td class="query-cell"><span class="font-mono text-xs text-accent-400">{{ q.query }}</span></td>
+              <td class="text-center text-text-secondary whitespace-nowrap">{{ q.calls }}</td>
+              <td class="text-center text-text-secondary whitespace-nowrap">{{ q.avgTime }}</td>
+              <td class="text-center text-text-secondary whitespace-nowrap">{{ q.totalTime }}</td>
+              <td class="text-center text-text-secondary whitespace-nowrap">{{ q.rows }}</td>
             </tr>
             <tr v-if="topQueries.length === 0">
               <td colspan="5" class="px-5 py-8 text-center text-sm text-text-muted">No query data yet. Run some queries to see analytics.</td>
@@ -900,7 +900,7 @@ watch(activeTab, (tab) => {
 const topQueries = computed(() => {
   if (!dbAnalytics.value?.topTables) return []
   return dbAnalytics.value.topTables.map(t => ({
-    query: t.table_name,
+    query: t.sql_text ?? t.operation,
     calls: t.calls.toLocaleString(),
     avgTime: `${t.avg_ms.toFixed(1)}ms`,
     totalTime: `${(t.calls * t.avg_ms / 1000).toFixed(1)}s`,
@@ -1217,3 +1217,16 @@ async function createTable() {
   addingTable.value = false
 }
 </script>
+
+<style scoped>
+.top-queries-table td.query-cell {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: 50%;
+}
+.top-queries-table th {
+  text-align: center;
+}
+</style>

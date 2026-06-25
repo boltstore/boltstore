@@ -15,6 +15,7 @@ interface QueryEvent {
   rowCount: number;
   status: string;
   errorMessage?: string;
+  sqlText?: string;
 }
 
 export class AnalyticsManager {
@@ -59,6 +60,7 @@ export class AnalyticsManager {
         timestamp   TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
+    try { db.run("ALTER TABLE _query_log ADD COLUMN sql_text TEXT"); } catch {}
     db.run("CREATE INDEX IF NOT EXISTS idx_query_log_timestamp ON _query_log(timestamp)");
     db.run("CREATE INDEX IF NOT EXISTS idx_query_log_database ON _query_log(database)");
   }
@@ -81,10 +83,10 @@ export class AnalyticsManager {
     try {
       const db = this.pool.write();
       const stmt = db.prepare(
-        "INSERT INTO _query_log (database, table_name, operation, duration_ms, row_count, status, error_msg) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO _query_log (database, table_name, operation, duration_ms, row_count, status, error_msg, sql_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
       );
       for (const e of batch) {
-        stmt.run(e.database, e.table ?? null, e.operation, e.durationMs, e.rowCount, e.status, e.errorMessage ?? null);
+        stmt.run(e.database, e.table ?? null, e.operation, e.durationMs, e.rowCount, e.status, e.errorMessage ?? null, e.sqlText ?? null);
       }
       const now = Date.now();
       if (now - this.lastPruneAt > this.pruneIntervalMs) {

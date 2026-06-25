@@ -40,7 +40,7 @@ export function registerQueryRoutes(router: Router, manager: DatabaseManager): v
     }
 
     if (!auth.isAdmin && !isSelectStatement(sql)) {
-      recordAnalytics(manager, { database: params.db, operation: "select", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: "Non-admin key attempted non-SELECT statement" });
+      recordAnalytics(manager, { database: params.db, operation: "select", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: "Non-admin key attempted non-SELECT statement", sqlText: sql });
       return errorResponse("WRITE_REQUIRES_ADMIN", "Non-admin API keys may only execute SELECT statements via /query. DDL, DML, PRAGMA, and ATTACH require an admin key.", 403);
     }
 
@@ -50,16 +50,16 @@ export function registerQueryRoutes(router: Router, manager: DatabaseManager): v
     try {
       if (isWrite) {
         const result = pool.write().run(sql, bindings);
-        recordAnalytics(manager, { database: params.db, operation: "update", durationMs: performance.now() - start, rowCount: result.changes, status: "ok" });
+        recordAnalytics(manager, { database: params.db, operation: "update", durationMs: performance.now() - start, rowCount: result.changes, status: "ok", sqlText: sql });
         return jsonResponse({ data: null, meta: { changes: result.changes } });
       }
       const rows = pool.read().query(sql).all(...bindings);
-      recordAnalytics(manager, { database: params.db, operation: "select", durationMs: performance.now() - start, rowCount: rows.length, status: "ok" });
+      recordAnalytics(manager, { database: params.db, operation: "select", durationMs: performance.now() - start, rowCount: rows.length, status: "ok", sqlText: sql });
       return jsonResponse({ data: rows });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn("Query endpoint error", { database: params.db, error: msg });
-      recordAnalytics(manager, { database: params.db, operation: "select", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: msg });
+      recordAnalytics(manager, { database: params.db, operation: "select", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: msg, sqlText: sql });
       return errorResponse("QUERY_ERROR", "Query execution failed. Check your SQL syntax or constraints.", 400);
     }
   });

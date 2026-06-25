@@ -153,6 +153,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
 
     const records = Array.isArray(body) ? body : [body];
     const inserted: Record<string, unknown>[] = [];
+    const firstKeys = Object.keys(records[0] || {});
+    const insertSql = `INSERT INTO "${params.table}" (${firstKeys.map(k => `"${k}"`).join(", ")}) VALUES (${firstKeys.map(() => "?").join(", ")})`;
 
     for (const record of records) {
       const keys = Object.keys(record);
@@ -170,12 +172,12 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.warn("Record insert failed", { database: params.db, table: params.table, error: msg });
-        recordAnalytics(manager, { database: params.db, table: params.table, operation: "insert", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: msg });
+        recordAnalytics(manager, { database: params.db, table: params.table, operation: "insert", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: msg, sqlText: insertSql });
         return errorResponse("INSERT_ERROR", "Failed to insert record. Check your data and table schema.", 400);
       }
     }
 
-    recordAnalytics(manager, { database: params.db, table: params.table, operation: "insert", durationMs: performance.now() - start, rowCount: records.length, status: "ok" });
+    recordAnalytics(manager, { database: params.db, table: params.table, operation: "insert", durationMs: performance.now() - start, rowCount: records.length, status: "ok", sqlText: insertSql });
     return jsonResponse({ data: records.length === 1 ? inserted[0] : inserted }, 201);
   });
 
@@ -207,7 +209,7 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const limit = Math.min(parseInt(query.get("limit") || String(DEFAULT_LIMIT), 10), MAX_LIMIT);
     const offset = parseInt(query.get("offset") || "0", 10);
 
-    recordAnalytics(manager, { database: params.db, table: params.table, operation: "select", durationMs: performance.now() - start, rowCount: rows.length, status: "ok" });
+    recordAnalytics(manager, { database: params.db, table: params.table, operation: "select", durationMs: performance.now() - start, rowCount: rows.length, status: "ok", sqlText: sql });
     return jsonResponse({
       data: rows,
       meta: { total, limit, offset },
@@ -225,12 +227,13 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
 
     const start = performance.now();
     const pool = manager.get(params.db);
-    const row = pool.read().query(`SELECT rowid, * FROM "${params.table}" WHERE rowid = ?`).get(params.id);
+    const getSql = `SELECT rowid, * FROM "${params.table}" WHERE rowid = ?`;
+    const row = pool.read().query(getSql).get(params.id);
     if (!row) {
-      recordAnalytics(manager, { database: params.db, table: params.table, operation: "select", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: "Record not found" });
+      recordAnalytics(manager, { database: params.db, table: params.table, operation: "select", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: "Record not found", sqlText: getSql });
       return errorResponse("NOT_FOUND", "Record not found.", 404);
     }
-    recordAnalytics(manager, { database: params.db, table: params.table, operation: "select", durationMs: performance.now() - start, rowCount: 1, status: "ok" });
+    recordAnalytics(manager, { database: params.db, table: params.table, operation: "select", durationMs: performance.now() - start, rowCount: 1, status: "ok", sqlText: getSql });
     return jsonResponse({ data: row });
   });
 
@@ -255,17 +258,18 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const setClause = keys.map(k => `"${k}" = ?`).join(", ");
     const vals = keys.map(k => body[k]);
     vals.push(params.id);
+    const updateSql = `UPDATE "${params.table}" SET ${setClause} WHERE rowid = ?`;
 
     const pool = manager.get(params.db);
     try {
-      pool.write().run(`UPDATE "${params.table}" SET ${setClause} WHERE rowid = ?`, toBindings(vals));
+      pool.write().run(updateSql, toBindings(vals));
       const updated = pool.read().query(`SELECT rowid, * FROM "${params.table}" WHERE rowid = ?`).get(params.id);
-      recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: 1, status: "ok" });
+      recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: 1, status: "ok", sqlText: updateSql });
       return jsonResponse({ data: updated });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn("Record update failed", { database: params.db, table: params.table, error: msg });
-      recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: msg });
+      recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: msg, sqlText: updateSql });
       return errorResponse("UPDATE_ERROR", "Failed to update record. Check your data and table schema.", 400);
     }
   });
@@ -283,8 +287,9 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
 
     const start = performance.now();
     const pool = manager.get(params.db);
-    pool.write().run(`DELETE FROM "${params.table}" WHERE rowid = ?`, [params.id]);
-    recordAnalytics(manager, { database: params.db, table: params.table, operation: "delete", durationMs: performance.now() - start, rowCount: 1, status: "ok" });
+    const deleteSql = `DELETE FROM "${params.table}" WHERE rowid = ?`;
+    pool.write().run(deleteSql, [params.id]);
+    recordAnalytics(manager, { database: params.db, table: params.table, operation: "delete", durationMs: performance.now() - start, rowCount: 1, status: "ok", sqlText: deleteSql });
     return jsonResponse({ data: { deleted: true } });
   });
 }
