@@ -37,7 +37,7 @@
                   <span class="font-medium text-text-primary">{{ db.name }}</span>
                 </div>
               </td>
-              <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name)?.queries?.toLocaleString() || '—' }}</td>
+              <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name)?.rows_read?.toLocaleString() || '—' }}</td>
               <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name)?.writes?.toLocaleString() || '—' }}</td>
               <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name) ? formatBytes(getDbAnalytics(db.name)!.storageBytes) : '—' }}</td>
               <td class="px-5 py-3 text-center">

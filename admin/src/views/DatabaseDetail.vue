@@ -904,7 +904,7 @@ const topQueries = computed(() => {
     calls: t.calls.toLocaleString(),
     avgTime: `${t.avg_ms.toFixed(1)}ms`,
     totalTime: `${(t.calls * t.avg_ms / 1000).toFixed(1)}s`,
-    rows: t.calls.toLocaleString(),
+    rows: t.total_rows.toLocaleString(),
   }))
 })
 

@@ -123,9 +123,10 @@ export interface DatabaseAnalytics {
   writes: number
   avgLatencyMs: number
   errorCount: number
+  rows_read: number
   storageBytes: number
   tableCount: number
-  topTables: { table_name: string; calls: number; avg_ms: number; writes: number }[]
+  topTables: { table_name: string; calls: number; avg_ms: number; writes: number; total_rows: number }[]
 }
 
 export interface QueryLogEntry {

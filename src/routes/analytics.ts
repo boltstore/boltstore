@@ -7,7 +7,7 @@ import { isAdminRequest } from "../middleware/auth";
 interface QueryStatsRow { c: number; avg_ms: number; errors: number; writes: number }
 interface StorageTotalRow { total: number }
 interface StorageRow { size_bytes: number; table_count: number }
-interface TopTableRow { table_name: string; calls: number; avg_ms: number; writes: number }
+interface TopTableRow { table_name: string; calls: number; avg_ms: number; writes: number; total_rows: number }
 interface CountRow { c: number }
 
 export function recordAnalytics(manager: DatabaseManager, event: {
@@ -70,15 +70,15 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const db = pool.read();
 
     const queries = (db.query(
-      `SELECT COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?)`
-    ).get(params.database, since) as QueryStatsRow) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0 };
+      `SELECT COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(row_count), 0) as rows_read FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?)`
+    ).get(params.database, since) as QueryStatsRow & { rows_read: number }) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0, rows_read: 0 };
 
     const storage = (db.query(
       "SELECT size_bytes, table_count FROM _storage_snapshots WHERE database = ? ORDER BY timestamp DESC LIMIT 1"
     ).get(params.database) as StorageRow) ?? { size_bytes: 0, table_count: 0 };
 
     const topTables = db.query(
-      `SELECT table_name, COUNT(*) as calls, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes FROM _query_log WHERE database = ? AND table_name IS NOT NULL AND timestamp >= datetime('now', ?) GROUP BY table_name ORDER BY calls DESC LIMIT 10`
+      `SELECT table_name, COUNT(*) as calls, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(row_count), 0) as total_rows FROM _query_log WHERE database = ? AND table_name IS NOT NULL AND timestamp >= datetime('now', ?) GROUP BY table_name ORDER BY calls DESC LIMIT 10`
     ).all(params.database, since) as TopTableRow[];
 
     return jsonResponse({
@@ -88,6 +88,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
         writes: queries.writes,
         avgLatencyMs: Math.round(queries.avg_ms * 10) / 10,
         errorCount: queries.errors,
+        rows_read: queries.rows_read,
         storageBytes: storage.size_bytes,
         tableCount: storage.table_count,
         topTables,
