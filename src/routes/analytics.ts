@@ -199,7 +199,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const settings = metaRow ? { timezone: "UTC", ...JSON.parse(metaRow.value) } : { timezone: "UTC" };
     const tzAdj = getTzSign(settings.timezone);
 
-    const sinceExpr = tzAdj ? `datetime('now', '${tzAdj}', ${since})` : `datetime('now', ${since})`;
+    const sinceExpr = tzAdj ? `datetime('now', '${tzAdj}', '${since}')` : `datetime('now', '${since}')`;
     const tzTimestamp = tzAdj ? `datetime(timestamp, '${tzAdj}')` : "timestamp";
     const rows = db.query(
       `SELECT strftime(${groupFmt}, ${tzTimestamp}) as slot, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE ${tzTimestamp} >= ${sinceExpr} GROUP BY slot ORDER BY slot`
