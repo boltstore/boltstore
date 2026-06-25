@@ -182,11 +182,17 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           }
         }
         const baseDir = (() => {
-          const cwdDir = resolve(process.cwd(), "admin/dist");
-          if (existsSync(cwdDir)) return cwdDir;
-          const metaDir = resolve(`${import.meta.dir}/../admin/dist`);
-          if (existsSync(metaDir)) return metaDir;
-          return cwdDir;
+          const candidates = [
+            resolve(process.cwd(), "admin/dist"),
+            `${import.meta.dir}/../admin/dist`,
+          ];
+          if (process.env.GITHUB_WORKSPACE) {
+            candidates.unshift(resolve(process.env.GITHUB_WORKSPACE, "admin/dist"));
+          }
+          for (const d of candidates) {
+            if (existsSync(d)) return d;
+          }
+          return candidates[0];
         })();
         const filePath = pathname === "/dashboard" || pathname === "/dashboard/"
           ? `${baseDir}/index.html`
