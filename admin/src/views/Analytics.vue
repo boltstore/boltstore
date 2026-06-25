@@ -98,30 +98,26 @@
         <div class="text-sm font-medium text-text-primary">Top Queries (All Databases)</div>
       </div>
       <div class="overflow-x-auto">
-        <table class="w-full text-sm">
+        <table class="w-full text-sm top-queries-table">
           <thead>
             <tr class="border-b border-border-default">
-              <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Database</th>
-              <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Table</th>
-              <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Operation</th>
+              <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated whitespace-nowrap">Database</th>
+              <th class="text-left px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Query</th>
               <th class="text-right px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Calls</th>
               <th class="text-right px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Avg Time</th>
               <th class="text-right px-5 py-3 text-xs font-medium text-text-muted uppercase tracking-wider bg-bolt-elevated">Total Rows</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="q in topQueries" :key="q.database + q.table_name + q.operation" class="hover:bg-bolt-hover transition-colors">
-              <td class="px-5 py-3 text-text-secondary">{{ q.database }}</td>
-              <td class="px-5 py-3 text-text-secondary">{{ q.table_name || '—' }}</td>
-              <td class="px-5 py-3">
-                <Badge :variant="q.operation === 'select' ? 'green' : q.operation === 'insert' ? 'blue' : q.operation === 'delete' ? 'red' : 'yellow'">{{ q.operation }}</Badge>
-              </td>
-              <td class="px-5 py-3 text-right text-text-secondary">{{ q.calls.toLocaleString() }}</td>
-              <td class="px-5 py-3 text-right text-text-secondary">{{ q.avg_ms.toFixed(1) }}ms</td>
-              <td class="px-5 py-3 text-right text-text-secondary">{{ q.total_rows.toLocaleString() }}</td>
+            <tr v-for="q in topQueries" :key="q.database + q.sql_text" class="hover:bg-bolt-hover transition-colors">
+              <td class="px-5 py-3 text-text-secondary whitespace-nowrap">{{ q.database }}</td>
+              <td class="px-5 py-3 query-cell"><span class="font-mono text-xs text-accent-400">{{ q.sql_text }}</span></td>
+              <td class="text-right px-5 py-3 text-text-secondary whitespace-nowrap tabular-nums">{{ q.calls.toLocaleString() }}</td>
+              <td class="text-right px-5 py-3 text-text-secondary whitespace-nowrap tabular-nums">{{ q.avg_ms.toFixed(1) }}ms</td>
+              <td class="text-right px-5 py-3 text-text-secondary whitespace-nowrap tabular-nums">{{ q.total_rows.toLocaleString() }}</td>
             </tr>
             <tr v-if="topQueries.length === 0">
-              <td colspan="6" class="px-5 py-8 text-center text-sm text-text-muted">No query data yet.</td>
+              <td colspan="5" class="px-5 py-8 text-center text-sm text-text-muted">No query data yet.</td>
             </tr>
           </tbody>
         </table>
@@ -163,7 +159,6 @@
 import { ref, watch, onMounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import MetricCard from "../components/ui/MetricCard.vue"
-import Badge from "../components/ui/Badge.vue"
 import TabButton from "../components/ui/TabButton.vue"
 import QueryChart from "../components/ui/QueryChart.vue"
 import { api, type AnalyticsOverview, type TopQuery, type QueryLogEntry } from "../api/client"
@@ -238,3 +233,13 @@ function formatBytes(bytes: number) {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
 }
 </script>
+
+<style scoped>
+.top-queries-table td.query-cell {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: 50%;
+}
+</style>

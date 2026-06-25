@@ -128,7 +128,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const { since } = parseRange(url);
     const db = pool.read();
     const rows = db.query(
-      `SELECT database, table_name, operation, COUNT(*) as calls, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(row_count), 0) as total_rows FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY database, table_name, operation ORDER BY calls DESC LIMIT 20`
+      `SELECT database, sql_text, calls, avg_ms, total_rows FROM (SELECT database, COALESCE(sql_text, operation) as sql_text, COUNT(*) as calls, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(row_count), 0) as total_rows, ROW_NUMBER() OVER (PARTITION BY database ORDER BY COUNT(*) DESC) as rn FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY database, COALESCE(sql_text, operation)) WHERE rn = 1 ORDER BY calls DESC`
     ).all(since);
     return jsonResponse({ data: rows });
   });

@@ -201,23 +201,23 @@
         <span class="text-xs font-medium text-text-primary">Top Queries (last 24h)</span>
       </div>
       <div class="overflow-x-auto">
-        <table class="data-table top-queries-table" style="table-layout:fixed">
+        <table class="data-table top-queries-table">
           <thead>
             <tr>
-              <th style="width:50%">Query</th>
-              <th class="text-center whitespace-nowrap">Calls</th>
-              <th class="text-center whitespace-nowrap">Avg Time</th>
-              <th class="text-center whitespace-nowrap">Total Time</th>
-              <th class="text-center whitespace-nowrap">Rows</th>
+              <th class="text-left">Query</th>
+              <th class="text-right whitespace-nowrap">Calls</th>
+              <th class="text-right whitespace-nowrap">Avg Time</th>
+              <th class="text-right whitespace-nowrap">Total Time</th>
+              <th class="text-right whitespace-nowrap">Rows</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="q in topQueries" :key="q.query">
               <td class="query-cell"><span class="font-mono text-xs text-accent-400">{{ q.query }}</span></td>
-              <td class="text-center text-text-secondary whitespace-nowrap">{{ q.calls }}</td>
-              <td class="text-center text-text-secondary whitespace-nowrap">{{ q.avgTime }}</td>
-              <td class="text-center text-text-secondary whitespace-nowrap">{{ q.totalTime }}</td>
-              <td class="text-center text-text-secondary whitespace-nowrap">{{ q.rows }}</td>
+              <td class="text-right text-text-secondary whitespace-nowrap tabular-nums">{{ q.calls }}</td>
+              <td class="text-right text-text-secondary whitespace-nowrap tabular-nums">{{ q.avgTime }}</td>
+              <td class="text-right text-text-secondary whitespace-nowrap tabular-nums">{{ q.totalTime }}</td>
+              <td class="text-right text-text-secondary whitespace-nowrap tabular-nums">{{ q.rows }}</td>
             </tr>
             <tr v-if="topQueries.length === 0">
               <td colspan="5" class="px-5 py-8 text-center text-sm text-text-muted">No query data yet. Run some queries to see analytics.</td>
@@ -1219,14 +1219,23 @@ async function createTable() {
 </script>
 
 <style scoped>
+.top-queries-table {
+  table-layout: fixed;
+}
 .top-queries-table td.query-cell {
   white-space: pre-wrap;
   word-break: break-word;
   overflow: visible;
   text-overflow: clip;
-  max-width: 50%;
+  max-width: 35%;
+}
+.top-queries-table th:not(:first-child) {
+  width: 10%;
 }
 .top-queries-table th {
-  text-align: center;
+  text-align: left;
+}
+.top-queries-table th.text-right {
+  text-align: right;
 }
 </style>

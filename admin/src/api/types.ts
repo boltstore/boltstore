@@ -149,8 +149,7 @@ export interface StorageSnapshot {
 
 export interface TopQuery {
   database: string
-  table_name: string | null
-  operation: string
+  sql_text: string
   calls: number
   avg_ms: number
   total_rows: number
