@@ -180,7 +180,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
             // fall through to static files if Vite dev server is unreachable
           }
         }
-        const baseDir = resolve(`${import.meta.dir}/../admin/dist`);
+        const baseDir = resolve(process.cwd(), "admin/dist");
         const filePath = pathname === "/dashboard" || pathname === "/dashboard/"
           ? `${baseDir}/index.html`
           : resolve(baseDir, `.${pathname.replace("/dashboard", "")}`);
@@ -191,7 +191,7 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         const exists = await file.exists();
         if (exists) return new Response(file, { headers: cspHeaders });
         // SPA fallback: serve index.html for all dashboard routes
-        const indexFile = Bun.file(`${import.meta.dir}/../admin/dist/index.html`);
+        const indexFile = Bun.file(resolve(process.cwd(), "admin/dist/index.html"));
         if (await indexFile.exists()) return new Response(indexFile, { headers: cspHeaders });
         return errorResponse("NOT_FOUND", "Dashboard not built. Run 'cd admin && npm run build'.", 404);
       }
