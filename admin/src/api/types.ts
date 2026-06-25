@@ -114,6 +114,8 @@ export interface AnalyticsOverview {
   writes: number
   avgLatencyMs: number
   errorCount: number
+  rows_read: number
+  rows_written: number
   totalStorageBytes: number
 }
 

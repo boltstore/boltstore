@@ -43,8 +43,8 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const db = pool.read();
 
     const queries = (db.query(
-      `SELECT COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes FROM _query_log WHERE timestamp >= datetime('now', ?)`
-    ).get(since) as QueryStatsRow) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0 };
+      `SELECT COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE timestamp >= datetime('now', ?)`
+    ).get(since) as QueryStatsRow & { rows_read: number; rows_written: number }) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0, rows_read: 0, rows_written: 0 };
 
     const totalStorage = (db.query(
       "SELECT COALESCE(SUM(size_bytes), 0) as total FROM _storage_snapshots WHERE id IN (SELECT MAX(id) FROM _storage_snapshots GROUP BY database)"
@@ -59,6 +59,8 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
         writes: queries.writes,
         avgLatencyMs: Math.round(queries.avg_ms * 10) / 10,
         errorCount: queries.errors,
+        rows_read: queries.rows_read,
+        rows_written: queries.rows_written,
         totalStorageBytes: totalStorage,
       },
     });
@@ -152,11 +154,13 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const { since, groupFmt } = parseRange(url);
     const db = pool.read();
     const rows = db.query(
-      `SELECT strftime(${groupFmt}, timestamp) as slot, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY slot ORDER BY slot`
-    ).all(since) as { slot: string; count: number; errors: number }[];
+      `SELECT strftime(${groupFmt}, timestamp) as slot, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY slot ORDER BY slot`
+    ).all(since) as { slot: string; count: number; errors: number; rows_read: number; rows_written: number }[];
     const lookup: Record<string, number> = {};
     const errorLookup: Record<string, number> = {};
-    for (const r of rows) { lookup[r.slot] = r.count; errorLookup[r.slot] = r.errors; }
+    const rowsReadLookup: Record<string, number> = {};
+    const rowsWrittenLookup: Record<string, number> = {};
+    for (const r of rows) { lookup[r.slot] = r.count; errorLookup[r.slot] = r.errors; rowsReadLookup[r.slot] = r.rows_read; rowsWrittenLookup[r.slot] = r.rows_written; }
 
     const now = new Date();
     let slots: string[];
@@ -171,11 +175,13 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       }
     } else if (range === "30d") {
       const dayRows = db.query(
-        `SELECT strftime('%Y-%m-%d', timestamp) as day, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY day ORDER BY day`
-      ).all("-30 days") as { day: string; count: number; errors: number }[];
+        `SELECT strftime('%Y-%m-%d', timestamp) as day, COUNT(*) as count, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY day ORDER BY day`
+      ).all("-30 days") as { day: string; count: number; errors: number; rows_read: number; rows_written: number }[];
       const dayLookup: Record<string, number> = {};
       const dayErrorLookup: Record<string, number> = {};
-      for (const r of dayRows) { dayLookup[r.day] = r.count; dayErrorLookup[r.day] = r.errors; }
+      const dayReadLookup: Record<string, number> = {};
+      const dayWriteLookup: Record<string, number> = {};
+      for (const r of dayRows) { dayLookup[r.day] = r.count; dayErrorLookup[r.day] = r.errors; dayReadLookup[r.day] = r.rows_read; dayWriteLookup[r.day] = r.rows_written; }
       slots = [];
       const end = new Date(now);
       end.setUTCDate(end.getUTCDate() + 7);
@@ -206,8 +212,30 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
         }
         return total;
       });
+      const reads = slots.map(s => {
+        let total = 0;
+        const d = new Date(s + "T00:00:00Z");
+        for (let j = 0; j < 7; j++) {
+          const dayStr = d.toISOString().slice(0, 10);
+          total += dayReadLookup[dayStr] || 0;
+          d.setUTCDate(d.getUTCDate() + 1);
+        }
+        return total;
+      });
+      const writes = slots.map(s => {
+        let total = 0;
+        const d = new Date(s + "T00:00:00Z");
+        for (let j = 0; j < 7; j++) {
+          const dayStr = d.toISOString().slice(0, 10);
+          total += dayWriteLookup[dayStr] || 0;
+          d.setUTCDate(d.getUTCDate() + 1);
+        }
+        return total;
+      });
       const max = Math.max(...counts, 1);
-      return jsonResponse({ data: { slots, counts, errors, max } });
+      const maxRead = Math.max(...reads, 1);
+      const maxWrite = Math.max(...writes, 1);
+      return jsonResponse({ data: { slots, counts, errors, max, rows_read: reads, rows_written: writes, max_read: maxRead, max_written: maxWrite } });
     } else {
       slots = [];
       const endHour = now.getUTCHours() + 1;
@@ -218,7 +246,11 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
 
     const counts = slots.map(s => lookup[s] || 0);
     const errors = slots.map(s => errorLookup[s] || 0);
+    const reads = slots.map(s => rowsReadLookup[s] || 0);
+    const writes = slots.map(s => rowsWrittenLookup[s] || 0);
     const max = Math.max(...counts, 1);
-    return jsonResponse({ data: { slots, counts, errors, max } });
+    const maxRead = Math.max(...reads, 1);
+    const maxWrite = Math.max(...writes, 1);
+    return jsonResponse({ data: { slots, counts, errors, max, rows_read: reads, rows_written: writes, max_read: maxRead, max_written: maxWrite } });
   });
 }

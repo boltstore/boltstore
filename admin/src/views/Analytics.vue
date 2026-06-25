@@ -55,6 +55,21 @@
       </div>
     </div>
 
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+      <div class="bg-bolt-card border border-border-default rounded-lg p-5">
+        <div class="text-sm font-medium text-text-primary mb-4">Rows Read</div>
+        <div class="h-48 rounded-md overflow-hidden border border-border-default bg-bolt-elevated/30 p-2">
+          <QueryChart :labels="chartLabels" :values="rowsReadValues" :max="rowsReadMax" />
+        </div>
+      </div>
+      <div class="bg-bolt-card border border-border-default rounded-lg p-5">
+        <div class="text-sm font-medium text-text-primary mb-4">Rows Written</div>
+        <div class="h-48 rounded-md overflow-hidden border border-border-default bg-bolt-elevated/30 p-2">
+          <QueryChart :labels="chartLabels" :values="rowsWrittenValues" :max="rowsWrittenMax" />
+        </div>
+      </div>
+    </div>
+
     <div class="bg-bolt-card border border-border-default rounded-lg overflow-hidden mb-6">
       <div class="px-5 py-4 border-b border-border-default">
         <div class="text-sm font-medium text-text-primary">Databases</div>
@@ -170,6 +185,10 @@ const chartLabels = ref<string[]>([])
 const chartValues = ref<number[]>([])
 const chartMax = ref(1)
 const errorValues = ref<number[]>([])
+const rowsReadValues = ref<number[]>([])
+const rowsWrittenValues = ref<number[]>([])
+const rowsReadMax = ref(1)
+const rowsWrittenMax = ref(1)
 const topQueries = ref<TopQuery[]>([])
 const dbList = ref<{ name: string; queries: string; writes: string; errors: string; errorClass: string; latency: string; storage: string }[]>([])
 const errorLog = ref<QueryLogEntry[]>([])
@@ -185,6 +204,10 @@ async function loadAll() {
     chartValues.value = vol.data.counts
     chartMax.value = vol.data.max
     errorValues.value = vol.data.errors
+    rowsReadValues.value = vol.data.rows_read ?? []
+    rowsWrittenValues.value = vol.data.rows_written ?? []
+    rowsReadMax.value = vol.data.max_read ?? 1
+    rowsWrittenMax.value = vol.data.max_written ?? 1
   } catch {}
   try {
     const res = await api.getTopQueries(activeRange.value)
