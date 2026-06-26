@@ -182,20 +182,39 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
 
         const indexPath = "admin/dist/index.html";
 
-        // When compiled with --embed, Bun.file() resolves files from the embedded store transparently
-        if (pathname === "/dashboard" || pathname === "/dashboard/") {
-          const file = Bun.file(indexPath);
+        const emb: any = (Bun as any).embeddedFiles;
+        const embMap = new Map<string, Uint8Array>();
+        if (Array.isArray(emb)) for (const f of emb) embMap.set(f.name, f.bytes);
+
+        const serveFile = async (path: string, contentType?: string) => {
+          if (embMap.size > 0) {
+            const bytes = embMap.get(path);
+            if (bytes) {
+              const h: Record<string, string> = { ...cspHeaders };
+              if (contentType) h["Content-Type"] = contentType;
+              return new Response(Buffer.from(bytes), { headers: h });
+            }
+            return null;
+          }
+          const file = Bun.file(path);
           if (await file.exists()) return new Response(file, { headers: cspHeaders });
+          return null;
+        };
+
+        if (pathname === "/dashboard" || pathname === "/dashboard/") {
+          const res = await serveFile(indexPath, "text/html");
+          if (res) return res;
         } else {
           const assetPath = `admin/dist${pathname.replace("/dashboard", "")}`;
-          const file = Bun.file(assetPath);
-          if (await file.exists()) return new Response(file, { headers: cspHeaders });
-          // SPA fallback — serve index.html for all dashboard routes
-          const indexFile = Bun.file(indexPath);
-          if (await indexFile.exists()) return new Response(indexFile, { headers: cspHeaders });
+          const res = await serveFile(assetPath);
+          if (res) return res;
+          const fb = await serveFile(indexPath, "text/html");
+          if (fb) return fb;
         }
 
-        return errorResponse("NOT_FOUND", "Dashboard not built. Run 'cd admin && npm run build'.", 404);
+        const embCount = embMap.size;
+        const embFirst = embCount > 0 ? [...embMap.keys()][0] : "none";
+        return errorResponse("NOT_FOUND", `Dashboard not found. Embedded: ${embCount}, first: ${embFirst}`, 404);
       }
 
       const logMeta = { request_id: requestId, method, path: pathname };
