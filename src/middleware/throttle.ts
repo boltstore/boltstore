@@ -64,7 +64,7 @@ export function checkLoginThrottle(ip: string | undefined): { allowed: boolean; 
 }
 
 const API_KEY_WINDOW_MS = 60_000;
-const MAX_API_KEY_ATTEMPTS = 20;
+const MAX_API_KEY_ATTEMPTS = 600;
 
 export function checkApiKeyThrottle(ip: string | undefined, databaseName: string): { allowed: boolean; retryAfterMs: number } {
   if (!ip || ip === "127.0.0.1" || ip === "::1" || ip === "unknown") {
