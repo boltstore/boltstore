@@ -38,9 +38,10 @@ jobs:
         run: npm install -g npm@latest
       - name: Publish to npm
         run: npm publish --provenance --access public
+        continue-on-error: true
 
   build-binaries:
-    needs: [test, publish]
+    needs: [test]
     strategy:
       matrix:
         include:
