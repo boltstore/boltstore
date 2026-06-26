@@ -40,7 +40,7 @@ jobs:
         run: npm publish --provenance --access public
 
   build-binaries:
-    needs: [test]
+    needs: [test, publish]
     strategy:
       matrix:
         include:
