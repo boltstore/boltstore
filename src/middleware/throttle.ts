@@ -64,9 +64,10 @@ export function checkLoginThrottle(ip: string | undefined): { allowed: boolean; 
 }
 
 const API_KEY_WINDOW_MS = 60_000;
-const MAX_API_KEY_ATTEMPTS = 600;
+const MAX_API_KEY_ATTEMPTS = parseInt(Bun.env.BOLTSTORE_API_KEY_RATE_LIMIT || "0", 10) || 0;
 
 export function checkApiKeyThrottle(ip: string | undefined, databaseName: string): { allowed: boolean; retryAfterMs: number } {
+  if (MAX_API_KEY_ATTEMPTS <= 0) return { allowed: true, retryAfterMs: 0 };
   if (!ip || ip === "127.0.0.1" || ip === "::1" || ip === "unknown") {
     return { allowed: true, retryAfterMs: 0 };
   }
