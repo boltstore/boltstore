@@ -180,37 +180,18 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
           }
         }
 
-        // Build embedded file map (populated when compiled with --embed)
-        const embedded: Map<string, Uint8Array> = new Map();
-        for (const f of (Bun as any).embeddedFiles || []) {
-          embedded.set(f.name, f.bytes);
-        }
+        const indexPath = "admin/dist/index.html";
 
-        const serveEmbedded = (key: string, contentType?: string) => {
-          const bytes = embedded.get(key);
-          if (!bytes) return null;
-          const headers: Record<string, string> = { ...cspHeaders };
-          if (contentType) headers["Content-Type"] = contentType;
-          return new Response(Buffer.from(bytes), { headers });
-        };
-
-        const indexKey = "admin/dist/index.html";
-        const assetKey = `admin/dist${pathname.replace("/dashboard", "")}`;
-
+        // When compiled with --embed, Bun.file() resolves files from the embedded store transparently
         if (pathname === "/dashboard" || pathname === "/dashboard/") {
-          const emb = serveEmbedded(indexKey, "text/html");
-          if (emb) return emb;
-          const file = Bun.file(indexKey);
+          const file = Bun.file(indexPath);
           if (await file.exists()) return new Response(file, { headers: cspHeaders });
         } else {
-          const emb = serveEmbedded(assetKey, assetKey.endsWith(".js") ? "text/javascript" : assetKey.endsWith(".css") ? "text/css" : undefined);
-          if (emb) return emb;
-          const file = Bun.file(assetKey);
+          const assetPath = `admin/dist${pathname.replace("/dashboard", "")}`;
+          const file = Bun.file(assetPath);
           if (await file.exists()) return new Response(file, { headers: cspHeaders });
-          // SPA fallback — serve index.html
-          const fallback = serveEmbedded(indexKey, "text/html");
-          if (fallback) return fallback;
-          const indexFile = Bun.file(indexKey);
+          // SPA fallback — serve index.html for all dashboard routes
+          const indexFile = Bun.file(indexPath);
           if (await indexFile.exists()) return new Response(indexFile, { headers: cspHeaders });
         }
 
