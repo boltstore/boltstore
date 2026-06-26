@@ -16,7 +16,7 @@ import { registerActivityRoutes, setTrustedProxies } from "./routes/activity";
 import { registerSettingsRoutes } from "./routes/settings";
 import { registerAnalyticsRoutes } from "./routes/analytics";
 import { AnalyticsManager } from "./analytics";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 
 export interface ServerConfig {
   port: number;
@@ -181,40 +181,27 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
         }
 
         const indexPath = "admin/dist/index.html";
-
-        const emb: any = (Bun as any).embeddedFiles;
-        const embMap = new Map<string, Uint8Array>();
-        if (Array.isArray(emb)) for (const f of emb) embMap.set(f.name, f.bytes);
-
-        const serveFile = async (path: string, contentType?: string) => {
-          if (embMap.size > 0) {
-            const bytes = embMap.get(path);
-            if (bytes) {
-              const h: Record<string, string> = { ...cspHeaders };
-              if (contentType) h["Content-Type"] = contentType;
-              return new Response(Buffer.from(bytes), { headers: h });
-            }
-            return null;
+        const candidates = [
+          resolve(dirname(process.execPath), indexPath),
+          resolve(process.cwd(), indexPath),
+          `${import.meta.dir}/../${indexPath}`,
+        ];
+        let baseDir = "";
+        for (const p of candidates) {
+          if (await Bun.file(p).exists()) {
+            baseDir = dirname(p);
+            break;
           }
-          const file = Bun.file(path);
-          if (await file.exists()) return new Response(file, { headers: cspHeaders });
-          return null;
-        };
+        }
+        if (!baseDir) return errorResponse("NOT_FOUND", "Dashboard not built. Run 'cd admin && npm run build'.", 404);
 
         if (pathname === "/dashboard" || pathname === "/dashboard/") {
-          const res = await serveFile(indexPath, "text/html");
-          if (res) return res;
-        } else {
-          const assetPath = `admin/dist${pathname.replace("/dashboard", "")}`;
-          const res = await serveFile(assetPath);
-          if (res) return res;
-          const fb = await serveFile(indexPath, "text/html");
-          if (fb) return fb;
+          return new Response(Bun.file(resolve(baseDir, "index.html")), { headers: cspHeaders });
         }
-
-        const embCount = embMap.size;
-        const embFirst = embCount > 0 ? [...embMap.keys()][0] : "none";
-        return errorResponse("NOT_FOUND", `Dashboard not found. Embedded: ${embCount}, first: ${embFirst}`, 404);
+        const assetPath = pathname.replace("/dashboard", "");
+        const file = Bun.file(resolve(baseDir, `.${assetPath}`));
+        if (await file.exists()) return new Response(file, { headers: cspHeaders });
+        return new Response(Bun.file(resolve(baseDir, "index.html")), { headers: cspHeaders });
       }
 
       const logMeta = { request_id: requestId, method, path: pathname };

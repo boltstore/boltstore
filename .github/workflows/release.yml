@@ -40,8 +40,25 @@ jobs:
         run: npm publish --provenance --access public
         continue-on-error: true
 
-  build-binaries:
+  build-admin:
     needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+        working-directory: admin
+      - run: npm run build
+        working-directory: admin
+      - run: tar czf admin-dist.tar.gz -C admin dist
+      - uses: actions/upload-artifact@v5
+        with:
+          name: admin-dist
+          path: admin-dist.tar.gz
+
+  build-binaries:
     strategy:
       matrix:
         include:
@@ -57,29 +74,23 @@ jobs:
           - target: bun-windows-x64
             os: windows-latest
             out: boltstore-windows-x64.exe
+    needs: [test]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - run: bun install
       - run: bun run build
-      - run: npm install
-        working-directory: admin
-      - run: npm run build
-        working-directory: admin
-      - run: bun build --compile --target=${{ matrix.target }} --outfile=${{ matrix.out }} --embed='admin/dist/**/*' ./src/entry.ts
+      - run: bun build --compile --target=${{ matrix.target }} --outfile=${{ matrix.out }} ./src/entry.ts
       - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.out }}
           path: ${{ matrix.out }}
 
   create-release:
-    needs: [test, build-binaries]
+    needs: [test, build-admin, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -88,8 +99,13 @@ jobs:
         with:
           pattern: boltstore-*
           merge-multiple: true
+      - uses: actions/download-artifact@v5
+        with:
+          name: admin-dist
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: boltstore-*
+          files: |
+            boltstore-*
+            admin-dist.tar.gz
           generate_release_notes: true
