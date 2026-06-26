@@ -17,7 +17,6 @@ import { registerSettingsRoutes } from "./routes/settings";
 import { registerAnalyticsRoutes } from "./routes/analytics";
 import { AnalyticsManager } from "./analytics";
 import { resolve } from "node:path";
-import { existsSync } from "node:fs";
 
 export interface ServerConfig {
   port: number;
@@ -163,7 +162,6 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
 
       // Serve dashboard static files
       if (pathname.startsWith("/dashboard")) {
-        // Security headers for the dashboard SPA
         const cspHeaders: Record<string, string> = {
           "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self';",
           "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
@@ -181,32 +179,41 @@ export function createServer(config: ServerConfig): ReturnType<typeof Bun.serve>
             // fall through to static files if Vite dev server is unreachable
           }
         }
-        const baseDir = (() => {
-          const candidates = [
-            resolve(process.cwd(), "admin/dist"),
-            `${import.meta.dir}/../admin/dist`,
-          ];
-          if (process.env.GITHUB_WORKSPACE) {
-            candidates.unshift(resolve(process.env.GITHUB_WORKSPACE, "admin/dist"));
-          }
-          for (const d of candidates) {
-            if (existsSync(d)) return d;
-          }
-          return candidates[0];
-        })();
-        const filePath = pathname === "/dashboard" || pathname === "/dashboard/"
-          ? `${baseDir}/index.html`
-          : resolve(baseDir, `.${pathname.replace("/dashboard", "")}`);
-        if (!resolve(filePath).startsWith(baseDir)) {
-          return errorResponse("NOT_FOUND", "Not found.", 404);
+
+        // Build embedded file map (populated when compiled with --embed)
+        const embedded: Map<string, Uint8Array> = new Map();
+        for (const f of (Bun as any).embeddedFiles || []) {
+          embedded.set(f.name, f.bytes);
         }
-        const file = Bun.file(filePath);
-        const exists = await file.exists();
-        if (exists) return new Response(file, { headers: cspHeaders });
-        // SPA fallback: serve index.html for all dashboard routes
-        const indexFile = Bun.file(resolve(process.cwd(), "admin/dist/index.html"));
-        if (await indexFile.exists()) return new Response(indexFile, { headers: cspHeaders });
-        logger.warn("Dashboard file not found", { baseDir, filePath, cwd: process.cwd() });
+
+        const serveEmbedded = (key: string, contentType?: string) => {
+          const bytes = embedded.get(key);
+          if (!bytes) return null;
+          const headers: Record<string, string> = { ...cspHeaders };
+          if (contentType) headers["Content-Type"] = contentType;
+          return new Response(Buffer.from(bytes), { headers });
+        };
+
+        const indexKey = "admin/dist/index.html";
+        const assetKey = `admin/dist${pathname.replace("/dashboard", "")}`;
+
+        if (pathname === "/dashboard" || pathname === "/dashboard/") {
+          const emb = serveEmbedded(indexKey, "text/html");
+          if (emb) return emb;
+          const file = Bun.file(indexKey);
+          if (await file.exists()) return new Response(file, { headers: cspHeaders });
+        } else {
+          const emb = serveEmbedded(assetKey, assetKey.endsWith(".js") ? "text/javascript" : assetKey.endsWith(".css") ? "text/css" : undefined);
+          if (emb) return emb;
+          const file = Bun.file(assetKey);
+          if (await file.exists()) return new Response(file, { headers: cspHeaders });
+          // SPA fallback — serve index.html
+          const fallback = serveEmbedded(indexKey, "text/html");
+          if (fallback) return fallback;
+          const indexFile = Bun.file(indexKey);
+          if (await indexFile.exists()) return new Response(indexFile, { headers: cspHeaders });
+        }
+
         return errorResponse("NOT_FOUND", "Dashboard not built. Run 'cd admin && npm run build'.", 404);
       }
 
