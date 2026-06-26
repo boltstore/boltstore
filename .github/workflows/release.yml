@@ -79,7 +79,7 @@ jobs:
           path: ${{ matrix.out }}
 
   create-release:
-    needs: [test, publish, build-binaries]
+    needs: [test, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
