@@ -25,8 +25,13 @@ function isTrustedProxy(ip: string): boolean {
   return configuredTrustedProxies.includes(ip);
 }
 
+function normalizeIp(ip: string): string {
+  return ip.replace(/^::ffff:/, "");
+}
+
 export function getClientIp(request: Request): string | undefined {
-  const directIp = request.headers.get("x-boltstore-direct-ip");
+  let directIp = request.headers.get("x-boltstore-direct-ip") ?? undefined;
+  if (directIp) directIp = normalizeIp(directIp);
 
   // Never trust forwarded headers when we cannot determine the direct connection IP.
   // Default to the direct connection IP if available, otherwise return undefined
