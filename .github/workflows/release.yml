@@ -72,7 +72,7 @@ jobs:
         working-directory: admin
       - run: npm run build
         working-directory: admin
-      - run: bun build --compile --target=${{ matrix.target }} --outfile=${{ matrix.out }} --embed='admin/dist/*' ./src/entry.ts
+      - run: bun build --compile --target=${{ matrix.target }} --outfile=${{ matrix.out }} --embed='admin/dist/**/*' ./src/entry.ts
       - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.out }}
