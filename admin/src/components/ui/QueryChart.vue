@@ -1,23 +1,24 @@
 <template>
   <div class="chart-container">
-    <Bar v-if="labels.length" :data="chartData" :options="chartOptions" />
+    <Line v-if="labels.length" :data="chartData" :options="chartOptions" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue"
-import { Bar } from "vue-chartjs"
+import { Line } from "vue-chartjs"
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
-  BarElement,
+  LineElement,
+  PointElement,
   Title,
   Tooltip,
   Filler,
 } from "chart.js"
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Filler)
+ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Title, Tooltip, Filler)
 
 const props = withDefaults(
   defineProps<{
@@ -36,10 +37,13 @@ const chartData = computed(() => ({
   datasets: [
     {
       data: props.values,
-      backgroundColor: props.error ? "#ef4444" : "#00d4ff",
-      hoverBackgroundColor: props.error ? "#f87171" : "#33ddff",
-      borderRadius: 2,
-      borderSkipped: false,
+      borderColor: props.error ? "#ef4444" : "#00d4ff",
+      backgroundColor: props.error ? "rgba(239,68,68,0.08)" : "rgba(0,212,255,0.08)",
+      fill: true,
+      tension: 0.3,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      borderWidth: 2,
     },
   ],
 }))
@@ -58,6 +62,10 @@ const chartOptions = computed(() => ({
   maintainAspectRatio: false,
   animation: {
     duration: 300,
+  },
+  interaction: {
+    mode: "nearest" as const,
+    intersect: false,
   },
   plugins: {
     tooltip: {

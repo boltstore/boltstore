@@ -1,10 +1,10 @@
 # Multi-stage Dockerfile for Boltstore
-# Stage 1: Build the TypeScript project
+# Stage 1: Build the TypeScript project and admin dashboard
 FROM oven/bun:1.3 AS builder
 
 WORKDIR /app
 
-# Copy package.json and install dependencies
+# Copy root package.json and install dependencies
 COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile
 
@@ -12,6 +12,12 @@ RUN bun install --frozen-lockfile
 COPY tsconfig.json ./
 COPY src ./src
 RUN bun run build
+
+# Build admin dashboard
+COPY admin/package.json admin/bun.lock* ./admin/
+RUN cd admin && bun install
+COPY admin/ ./admin/
+RUN cd admin && bun run build
 
 # Stage 2: Production runtime with multi-arch support
 FROM oven/bun:1.3 AS runtime
@@ -24,6 +30,7 @@ RUN bun install --frozen-lockfile --production
 
 # Copy built code
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/admin/dist ./admin/dist
 COPY --from=builder /app/src ./src
 COPY tsconfig.json ./
 

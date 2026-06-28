@@ -22,8 +22,8 @@
         <template #icon>
           <svg class="w-4 h-4 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
         </template>
-        <template #value>{{ analytics ? analytics.queries.toLocaleString() : '...' }}</template>
-        <template #subtext>{{ analytics ? `${analytics.errorCount} errors` : '' }}</template>
+        <template #value>{{ analytics ? formatCompact(analytics.queries) : '...' }}</template>
+        <template #subtext>{{ analytics ? `${formatCompact(analytics.errorCount)} errors` : '' }}</template>
       </MetricCard>
       <MetricCard>
         <template #title>Avg Latency (24h)</template>
@@ -137,7 +137,7 @@ import Badge from "../components/ui/Badge.vue"
 import TabButton from "../components/ui/TabButton.vue"
 import QueryChart from "../components/ui/QueryChart.vue"
 import { api, type HealthResponse, type DatabaseInfo, type ActivityEntry, type AnalyticsOverview } from "../api/client"
-import { formatTime, formatBytes } from "../utils/time"
+import { formatTime, formatBytes, formatCompact } from "../utils/time"
 
 const timeRanges = ["24h", "7d", "30d"]
 const activeRange = ref("24h")
@@ -150,7 +150,7 @@ const databases = ref<DatabaseInfo[]>([])
 const activities = ref<ActivityEntry[]>([])
 const analytics = ref<AnalyticsOverview | null>(null)
 
-async function loadAll() {
+async function loadStatic() {
   try {
     health.value = await api.health()
   } catch {}
@@ -166,17 +166,22 @@ async function loadAll() {
     const res = await api.getAnalyticsOverview(activeRange.value)
     analytics.value = res.data
   } catch {}
+}
+
+const userTimezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC"
+
+async function loadVolume() {
   try {
-    const vol = await api.getVolume(activeRange.value)
+    const vol = await api.getVolume(activeRange.value, userTimezone)
     chartLabels.value = vol.data.slots
     chartValues.value = vol.data.counts
     chartMax.value = vol.data.max
   } catch {}
 }
 
-onMounted(loadAll)
+onMounted(() => { loadStatic(); loadVolume(); })
 
-watch(activeRange, loadAll)
+watch(activeRange, loadVolume)
 
 function formatDate(dateStr: string) {
   if (!dateStr) return ""

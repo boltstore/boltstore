@@ -172,6 +172,37 @@ export class AnalyticsManager {
     this.pool.close();
   }
 
+  async ensureSnapshot(name: string, getPool: (name: string) => DatabasePool | null): Promise<void> {
+    const db = this.pool.read();
+    const existing = db.query("SELECT 1 FROM _storage_snapshots WHERE database = ? LIMIT 1").get(name);
+    if (existing) return;
+
+    let pool = getPool(name);
+    let openedTemp = false;
+    if (!pool) {
+      const path = `${this.dataDir}/${name}.db`;
+      const file = Bun.file(path);
+      if (!(await file.exists())) return;
+      pool = new DatabasePool({ path, readConnections: 1 });
+      openedTemp = true;
+    }
+    try {
+      const conn = pool.read();
+      const pageInfo = conn.query("PRAGMA page_count").get() as { page_count: number } | null;
+      const pageSize = conn.query("PRAGMA page_size").get() as { page_size: number } | null;
+      const tableCount = (conn.query("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name NOT GLOB '_*' AND name != 'sqlite_sequence'").get() as { c?: number })?.c ?? 0;
+      const sizeBytes = (pageInfo?.page_count ?? 0) * (pageSize?.page_size ?? 4096);
+      this.pool.write().run(
+        "INSERT INTO _storage_snapshots (database, size_bytes, table_count) VALUES (?, ?, ?)",
+        [name, sizeBytes, tableCount]
+      );
+    } catch (err) {
+      logger.warn("On-demand snapshot failed", { database: name, error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      if (openedTemp) pool.close();
+    }
+  }
+
   getPool(): DatabasePool {
     return this.pool;
   }

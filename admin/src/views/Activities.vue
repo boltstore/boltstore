@@ -46,7 +46,7 @@
         </table>
       </div>
       <div v-if="total > limit" class="flex items-center justify-between px-5 py-3 border-t border-border-default">
-        <div class="text-[10px] text-text-muted">{{ total }} total</div>
+        <div class="text-[10px] text-text-muted">{{ formatCompact(total) }} total</div>
         <div class="flex items-center gap-2">
           <button class="btn-ghost btn-sm text-xs" :disabled="offset === 0" @click="prevPage">Previous</button>
           <button class="btn-ghost btn-sm text-xs" :disabled="offset + limit >= total" @click="nextPage">Next</button>
@@ -106,7 +106,7 @@
 import { ref, computed, onMounted, onUnmounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import { api, type ActivityEntry } from "../api/client"
-import { formatTime } from "../utils/time"
+import { formatTime, formatCompact } from "../utils/time"
 
 const eventFilter = ref("all")
 const entries = ref<ActivityEntry[]>([])

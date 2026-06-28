@@ -266,8 +266,12 @@ export const api = {
   getStorageHistory: (name: string) =>
     request<ApiResponse<StorageSnapshot[]>>(`/api/analytics/${encodeURIComponent(name)}/size`),
   getTopQueries: (range = "24h") => request<ApiResponse<TopQuery[]>>(`/api/analytics/top-queries?range=${range}`),
-  getVolume: (range = "24h") => request<ApiResponse<{ slots: string[]; counts: number[]; errors: number[]; max: number; rows_read?: number[]; rows_written?: number[]; max_read?: number; max_written?: number }>>(`/api/analytics/volume?range=${range}`),
-  getErrors: (limit = 20) => request<ApiResponse<QueryLogEntry[]>>(`/api/analytics/errors?limit=${limit}`),
+  getVolume: (range = "24h", tz?: string) => {
+    let path = `/api/analytics/volume?range=${range}`;
+    if (tz) path += `&tz=${encodeURIComponent(tz)}`;
+    return request<ApiResponse<{ slots: string[]; counts: number[]; errors: number[]; max: number; rows_read?: number[]; rows_written?: number[]; max_read?: number; max_written?: number }>>(path);
+  },
+  getErrors: (limit = 20, range = "24h") => request<ApiResponse<QueryLogEntry[]>>(`/api/analytics/errors?range=${range}&limit=${limit}`),
 
   // Export
   exportDatabase: async (name: string) => {

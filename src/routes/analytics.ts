@@ -75,8 +75,29 @@ function getTzSign(tz: string): string {
   return minutes > 0 ? `${sign}${hours} hours ${minutes} minutes` : `${sign}${hours} hours`;
 }
 
+function formatTzKey(date: Date, hourly: boolean): string {
+  const yh = date.getUTCFullYear();
+  const mh = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const dh = String(date.getUTCDate()).padStart(2, '0');
+  if (hourly) {
+    return `${yh}-${mh}-${dh} ${String(date.getUTCHours()).padStart(2, '0')}:00:00`;
+  }
+  return `${yh}-${mh}-${dh}`;
+}
+
 export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager, analytics: AnalyticsManager): void {
   const pool = analytics.getPool();
+
+  const getPool = (name: string) => {
+    try { return manager.getPoolIfExists(name); } catch { return null; }
+  };
+  const ensureAllSnapshots = async (db: ReturnType<typeof pool.read>) => {
+    const dbNames = manager.listDatabases().map(d => d.name);
+    for (const name of dbNames) {
+      const exists = db.query("SELECT 1 FROM _storage_snapshots WHERE database = ? LIMIT 1").get(name);
+      if (!exists) await analytics.ensureSnapshot(name, getPool);
+    }
+  };
 
   router.get("/api/analytics/overview", async (req) => {
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
@@ -88,6 +109,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       `SELECT COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE timestamp >= datetime('now', ?)`
     ).get(since) as QueryStatsRow & { rows_read: number; rows_written: number }) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0, rows_read: 0, rows_written: 0 };
 
+    await ensureAllSnapshots(db);
     const totalStorage = (db.query(
       "SELECT COALESCE(SUM(size_bytes), 0) as total FROM _storage_snapshots WHERE id IN (SELECT MAX(id) FROM _storage_snapshots GROUP BY database)"
     ).get() as StorageTotalRow)?.total ?? 0;
@@ -120,9 +142,15 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       `SELECT COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(row_count), 0) as rows_read FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?)`
     ).get(params.database, since) as QueryStatsRow & { rows_read: number }) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0, rows_read: 0 };
 
-    const storage = (db.query(
+    let storage = db.query(
       "SELECT size_bytes, table_count FROM _storage_snapshots WHERE database = ? ORDER BY timestamp DESC LIMIT 1"
-    ).get(params.database) as StorageRow) ?? { size_bytes: 0, table_count: 0 };
+    ).get(params.database) as StorageRow | undefined;
+    if (!storage) {
+      await analytics.ensureSnapshot(params.database, getPool);
+      storage = (db.query(
+        "SELECT size_bytes, table_count FROM _storage_snapshots WHERE database = ? ORDER BY timestamp DESC LIMIT 1"
+      ).get(params.database) as StorageRow) ?? { size_bytes: 0, table_count: 0 };
+    }
 
     const topTables = db.query(
       `SELECT COALESCE(sql_text, operation) as sql_text, COUNT(*) as calls, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(row_count), 0) as total_rows FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?) GROUP BY COALESCE(sql_text, operation) ORDER BY calls DESC LIMIT 10`
@@ -153,6 +181,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       `SELECT database, COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY database`
     ).all(since) as { database: string; c: number; avg_ms: number; errors: number; writes: number; rows_read: number; rows_written: number }[];
 
+    await ensureAllSnapshots(db);
     const storageRows = db.query(
       "SELECT database, size_bytes, table_count FROM _storage_snapshots WHERE id IN (SELECT MAX(id) FROM _storage_snapshots GROUP BY database)"
     ).all() as { database: string; size_bytes: number; table_count: number }[];
@@ -235,51 +264,122 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const url = new URL(req.url);
     const range = url.searchParams.get("range") || "24h";
-    const { since, groupFmt } = parseRange(url);
     const db = pool.read();
 
     const metaRow = manager.getMetaPool().read().query("SELECT value FROM _meta WHERE key = 'global_settings'").get() as { value: string } | null;
     const settings = metaRow ? { timezone: "UTC", ...JSON.parse(metaRow.value) } : { timezone: "UTC" };
-    const tzAdj = getTzSign(settings.timezone);
-    const sinceExpr = tzAdj ? `datetime('now', '${tzAdj}', '${since}')` : `datetime('now', '${since}')`;
+    const tz = url.searchParams.get("tz") || settings.timezone;
+    const tzAdj = getTzSign(tz);
     const tzTimestamp = tzAdj ? `datetime(timestamp, '${tzAdj}')` : "timestamp";
 
+    const now = getTzDate(tz);
+
+    interface Slot { label: string; start: Date; end: Date }
+    const slots: Slot[] = [];
+
     if (range === "24h") {
-      const hourSlots = Array.from({ length: 24 }, (_, i) => `(printf('%02d', ${i}))`).join(", ");
-      const query = db.query(
-        `WITH slots(s) AS (VALUES ${hourSlots})
-         SELECT slots.s as slot, COALESCE(q.c, 0) as count, COALESCE(q.e, 0) as errors, COALESCE(q.r, 0) as rows_read, COALESCE(q.w, 0) as rows_written
-         FROM slots LEFT JOIN (
-           SELECT strftime('%H', ${tzTimestamp}) as s, COUNT(*) as c, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as e, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as r, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as w FROM _query_log WHERE ${tzTimestamp} >= ${sinceExpr} GROUP BY s
-         ) q ON q.s = slots.s ORDER BY slots.s`
-      ).all() as { slot: string; count: number; errors: number; rows_read: number; rows_written: number }[];
-      const slots = query.map(r => r.slot);
-      const counts = query.map(r => r.count);
-      const errors = query.map(r => r.errors);
-      const reads = query.map(r => r.rows_read);
-      const writes = query.map(r => r.rows_written);
-      const max = Math.max(...counts, 1);
-      const maxRead = Math.max(...reads, 1);
-      const maxWrite = Math.max(...writes, 1);
-      return jsonResponse({ data: { slots, counts, errors, max, rows_read: reads, rows_written: writes, max_read: maxRead, max_written: maxWrite } });
+      const rightmost = new Date(now);
+      rightmost.setUTCMinutes(0, 0, 0);
+      if (now.getUTCMinutes() > 0 || now.getUTCSeconds() > 0 || now.getUTCMilliseconds() > 0) {
+        rightmost.setUTCHours(rightmost.getUTCHours() + 1);
+      }
+      for (let i = 23; i >= 0; i--) {
+        const end = new Date(rightmost);
+        end.setUTCHours(end.getUTCHours() - i);
+        const start = new Date(end);
+        start.setUTCHours(start.getUTCHours() - 1);
+        slots.push({ label: `${String(end.getUTCHours()).padStart(2, '0')}:00`, start, end });
+      }
+    } else if (range === "7d") {
+      const rightmost = new Date(now);
+      rightmost.setUTCMinutes(0, 0, 0);
+      const hoursSinceMidnight = rightmost.getUTCHours();
+      if (hoursSinceMidnight > 0) {
+        rightmost.setTime(rightmost.getTime() + (24 - hoursSinceMidnight) * 3600000);
+      }
+      for (let i = 6; i >= 0; i--) {
+        const end = new Date(rightmost);
+        end.setUTCDate(end.getUTCDate() - i);
+        const start = new Date(end);
+        start.setUTCDate(start.getUTCDate() - 1);
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        slots.push({ label: `${months[end.getUTCMonth()]} ${end.getUTCDate()}`, start, end });
+      }
+    } else {
+      const rightmost = new Date(now);
+      rightmost.setUTCMinutes(0, 0, 0);
+      const hoursSinceMidnight = rightmost.getUTCHours();
+      if (hoursSinceMidnight > 0) {
+        rightmost.setTime(rightmost.getTime() + (24 - hoursSinceMidnight) * 3600000);
+      }
+      const daysUntilNextSunday = (7 - rightmost.getUTCDay()) % 7;
+      if (daysUntilNextSunday > 0) {
+        rightmost.setTime(rightmost.getTime() + daysUntilNextSunday * 86400000);
+      } else {
+        rightmost.setTime(rightmost.getTime() + 7 * 86400000);
+      }
+      for (let i = 4; i >= 0; i--) {
+        const end = new Date(rightmost);
+        end.setUTCDate(end.getUTCDate() - i * 7);
+        const start = new Date(end);
+        start.setUTCDate(start.getUTCDate() - 7);
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        slots.push({ label: `${months[start.getUTCMonth()]} ${start.getUTCDate()}`, start, end });
+      }
     }
 
-    const query = db.query(
-      `WITH RECURSIVE slots(s) AS (SELECT date(${sinceExpr}) UNION ALL SELECT date(s, '+1 day') FROM slots WHERE s < date('now'))
-       SELECT strftime(${groupFmt}, slots.s) as slot, COALESCE(q.c, 0) as count, COALESCE(q.e, 0) as errors, COALESCE(q.r, 0) as rows_read, COALESCE(q.w, 0) as rows_written
-       FROM slots LEFT JOIN (
-         SELECT strftime(${groupFmt}, ${tzTimestamp}) as s, COUNT(*) as c, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as e, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as r, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as w FROM _query_log WHERE ${tzTimestamp} >= ${sinceExpr} GROUP BY s
-       ) q ON q.s = strftime(${groupFmt}, slots.s) ORDER BY slots.s`
-    ).all() as { slot: string; count: number; errors: number; rows_read: number; rows_written: number }[];
+    const tzOffsetMs = now.getTime() - Date.now();
+    const windowStart = new Date(slots[0].start.getTime() - tzOffsetMs).toISOString().replace("T", " ").replace("Z", "");
+    const windowEnd = new Date(slots[slots.length - 1].end.getTime() - tzOffsetMs).toISOString().replace("T", " ").replace("Z", "");
 
-    const slots = query.map(r => r.slot);
-    const counts = query.map(r => r.count);
-    const errors = query.map(r => r.errors);
-    const reads = query.map(r => r.rows_read);
-    const writes = query.map(r => r.rows_written);
+    let groupKey: string;
+    if (range === "24h") {
+      groupKey = `strftime('%Y-%m-%d %H:00:00', ${tzTimestamp})`;
+    } else {
+      groupKey = `strftime('%Y-%m-%d', ${tzTimestamp})`;
+    }
+
+    const rows = db.query(
+      `SELECT ${groupKey} as k, COUNT(*) as c, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as e, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as r, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as w FROM _query_log WHERE timestamp >= ? AND timestamp < ? GROUP BY k ORDER BY k`
+    ).all(windowStart, windowEnd) as { k: string; c: number; e: number; r: number; w: number }[];
+
+    const rowMap = new Map<string, typeof rows[0]>();
+    for (const row of rows) rowMap.set(row.k, row);
+
+    const counts: number[] = [];
+    const errors: number[] = [];
+    const reads: number[] = [];
+    const writes: number[] = [];
+    const slotLabels: string[] = [];
+
+    for (const slot of slots) {
+      if (range === "24h") {
+        const key = formatTzKey(slot.start, true);
+        const row = rowMap.get(key);
+        counts.push(row?.c ?? 0);
+        errors.push(row?.e ?? 0);
+        reads.push(row?.r ?? 0);
+        writes.push(row?.w ?? 0);
+      } else {
+        let c = 0, e = 0, r = 0, w = 0;
+        const cursor = new Date(slot.start);
+        while (cursor < slot.end) {
+          const key = formatTzKey(cursor, false);
+          const row = rowMap.get(key);
+          if (row) { c += row.c; e += row.e; r += row.r; w += row.w; }
+          cursor.setUTCDate(cursor.getUTCDate() + 1);
+        }
+        counts.push(c);
+        errors.push(e);
+        reads.push(r);
+        writes.push(w);
+      }
+      slotLabels.push(slot.label);
+    }
+
     const max = Math.max(...counts, 1);
     const maxRead = Math.max(...reads, 1);
     const maxWrite = Math.max(...writes, 1);
-    return jsonResponse({ data: { slots, counts, errors, max, rows_read: reads, rows_written: writes, max_read: maxRead, max_written: maxWrite } });
+    return jsonResponse({ data: { slots: slotLabels, counts, errors, max, rows_read: reads, rows_written: writes, max_read: maxRead, max_written: maxWrite } });
   });
 }

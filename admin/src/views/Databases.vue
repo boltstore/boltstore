@@ -37,8 +37,8 @@
                   <span class="font-medium text-text-primary">{{ db.name }}</span>
                 </div>
               </td>
-              <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name)?.rows_read?.toLocaleString() || '—' }}</td>
-              <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name)?.writes?.toLocaleString() || '—' }}</td>
+              <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name)?.rows_read ? formatCompact(getDbAnalytics(db.name)!.rows_read) : '—' }}</td>
+              <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name)?.writes ? formatCompact(getDbAnalytics(db.name)!.writes) : '—' }}</td>
               <td class="px-5 py-3 text-text-secondary text-center">{{ getDbAnalytics(db.name) ? formatBytes(getDbAnalytics(db.name)!.storageBytes) : '—' }}</td>
               <td class="px-5 py-3 text-center">
                 <span class="inline-flex items-center gap-1 text-xs text-text-secondary">
@@ -142,7 +142,7 @@ import AppLayout from "../components/layout/AppLayout.vue"
 import Badge from "../components/ui/Badge.vue"
 import CreateDatabaseModal from "../components/database/CreateDatabaseModal.vue"
 import { api, type DatabaseInfo, type DatabaseAnalytics } from "../api/client"
-import { formatBytes } from "../utils/time"
+import { formatBytes, formatCompact } from "../utils/time"
 
 const databases = ref<DatabaseInfo[]>([])
 

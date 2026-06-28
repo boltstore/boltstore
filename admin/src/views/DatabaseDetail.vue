@@ -15,24 +15,26 @@
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
           Download
         </button>
-        <span class="text-xs text-text-muted hidden sm:inline">{{ dbAnalytics ? `${formatBytes(dbAnalytics.storageBytes)} · ${dbAnalytics.queries.toLocaleString()} queries (24h)` : '' }}</span>
+        <span class="text-xs text-text-muted hidden sm:inline">{{ dbAnalytics ? `${formatBytes(dbAnalytics.storageBytes)} · ${formatCompact(dbAnalytics.queries)} queries (24h)` : '' }}</span>
       </div>
     </template>
 
-    <div class="border-b border-border-default mb-6 flex items-center justify-between">
-      <div>
-        <router-link
-          v-for="tab in tabs"
-          :key="tab.id"
-          :to="`/databases/${dbName}/${tab.id}`"
-          class="nav-tab"
-          :class="{ active: activeTab === tab.id }"
-        >
-          <component :is="tab.icon" class="w-3.5 h-3.5" />
-          {{ tab.label }}
-        </router-link>
+    <div class="border-b border-border-default mb-6 flex items-center justify-between overflow-hidden">
+      <div class="flex-1 overflow-x-auto">
+        <div class="flex items-center">
+          <router-link
+            v-for="tab in tabs"
+            :key="tab.id"
+            :to="`/databases/${dbName}/${tab.id}`"
+            class="nav-tab whitespace-nowrap"
+            :class="{ active: activeTab === tab.id }"
+          >
+            <component :is="tab.icon" class="w-3.5 h-3.5" />
+            {{ tab.label }}
+          </router-link>
+        </div>
       </div>
-      <div class="flex items-center gap-2 text-[10px] text-text-muted pb-1">
+      <div class="hidden sm:flex items-center gap-2 text-[10px] text-text-muted pb-1 shrink-0">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
         SQLite · {{ dbAnalytics ? `${dbAnalytics.avgLatencyMs}ms avg` : '' }}
       </div>
@@ -201,23 +203,23 @@
         <span class="text-xs font-medium text-text-primary">Top Queries (last 24h)</span>
       </div>
       <div class="overflow-x-auto">
-        <table class="data-table top-queries-table">
+        <table class="data-table detail-queries-table">
           <thead>
             <tr>
               <th class="text-left">Query</th>
-              <th class="text-right whitespace-nowrap">Calls</th>
-              <th class="text-right whitespace-nowrap">Avg Time</th>
-              <th class="text-right whitespace-nowrap">Total Time</th>
-              <th class="text-right whitespace-nowrap">Rows</th>
+              <th class="whitespace-nowrap" style="text-align: center;">Calls</th>
+              <th class="whitespace-nowrap" style="text-align: center;">Avg Time</th>
+              <th class="whitespace-nowrap" style="text-align: center;">Total Time</th>
+              <th class="whitespace-nowrap" style="text-align: center;">Rows</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="q in topQueries" :key="q.query">
               <td class="query-cell"><span class="font-mono text-xs text-accent-400">{{ q.query }}</span></td>
-              <td class="text-right text-text-secondary whitespace-nowrap tabular-nums">{{ q.calls }}</td>
-              <td class="text-right text-text-secondary whitespace-nowrap tabular-nums">{{ q.avgTime }}</td>
-              <td class="text-right text-text-secondary whitespace-nowrap tabular-nums">{{ q.totalTime }}</td>
-              <td class="text-right text-text-secondary whitespace-nowrap tabular-nums">{{ q.rows }}</td>
+              <td style="text-align: center;" class="text-text-secondary whitespace-nowrap tabular-nums">{{ formatCompact(q.calls) }}</td>
+              <td style="text-align: center;" class="text-text-secondary whitespace-nowrap tabular-nums">{{ q.avgTime }}</td>
+              <td style="text-align: center;" class="text-text-secondary whitespace-nowrap tabular-nums">{{ q.totalTime }}</td>
+              <td style="text-align: center;" class="text-text-secondary whitespace-nowrap tabular-nums">{{ formatCompact(q.rows) }}</td>
             </tr>
             <tr v-if="topQueries.length === 0">
               <td colspan="5" class="px-5 py-8 text-center text-sm text-text-muted">No query data yet. Run some queries to see analytics.</td>
@@ -613,7 +615,7 @@
 
 <script setup lang="ts">
 import { ref, h, computed, watch, onMounted, onUnmounted } from "vue"
-import { formatBytes, formatTimeAgo } from "../utils/time"
+import { formatBytes, formatTimeAgo, formatCompact } from "../utils/time"
 import { useRoute, useRouter } from "vue-router"
 import AppLayout from "../components/layout/AppLayout.vue"
 import DataTable, { type ColumnDef } from "../components/ui/DataTable.vue"
@@ -910,10 +912,10 @@ const topQueries = computed(() => {
   if (!dbAnalytics.value?.topTables) return []
   return dbAnalytics.value.topTables.map(t => ({
     query: t.sql_text ?? t.operation,
-    calls: t.calls.toLocaleString(),
+    calls: t.calls,
     avgTime: `${t.avg_ms.toFixed(1)}ms`,
     totalTime: `${(t.calls * t.avg_ms / 1000).toFixed(1)}s`,
-    rows: t.total_rows.toLocaleString(),
+    rows: t.total_rows,
   }))
 })
 

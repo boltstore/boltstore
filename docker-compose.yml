@@ -5,8 +5,9 @@ version: "3.8"
 # Usage:
 #   docker compose up -d
 #
-# The data directory is persisted as a named volume so SQLite
-# databases survive container restarts.
+# The data directory uses a bind mount (./data) so SQLite databases
+# survive container/image deletions and are directly accessible from the host.
+# Works on macOS, Linux, and Windows.
 
 services:
   boltstore:
@@ -27,15 +28,12 @@ services:
       # Set CORS_ORIGINS to an explicit comma-separated list in production.
       # CORS_ORIGINS: "https://app.example.com,https://admin.example.com"
     volumes:
-      # Persist SQLite databases across container restarts
-      - boltstore-data:/app/data
+      # Bind mount — data survives container/image removal and is directly
+      # accessible at ./data/ on the host (macOS, Linux, Windows).
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://localhost:8080/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-
-volumes:
-  boltstore-data:
-    name: boltstore-data
