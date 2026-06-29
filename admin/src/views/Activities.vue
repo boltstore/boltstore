@@ -167,7 +167,15 @@ function formatDetail(entry: ActivityEntry) {
     try {
       const d = JSON.parse(entry.details)
       if (d.admin) return d.admin
-      if (d.from && d.to) return `${d.from} → ${d.to}`
+      if (d.from && d.to) {
+        if (typeof d.from === 'string' && typeof d.to === 'string') {
+          return `${d.from} → ${d.to}`
+        }
+        if (d.changes && typeof d.changes === 'object') {
+          return `Changed: ${Object.keys(d.changes).join(', ')}`
+        }
+        return `Updated ${Object.keys(d).join(', ')}`
+      }
     } catch {}
   }
   return ""
