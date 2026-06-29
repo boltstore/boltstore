@@ -1,6 +1,6 @@
 {
   "name": "boltstore",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": false,
   "description": "Boltstore server — managed SQLite databases with HTTP API",
   "main": "dist/index.js",
