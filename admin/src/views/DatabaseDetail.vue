@@ -883,10 +883,14 @@ const loadedSchemas = ref<{ name: string; rows: string; columns: { name: string;
 async function loadSchemas() {
   try {
     const tableList = await api.listTables(dbName.value)
-    const schemas = []
-    for (const name of tableList.data) {
-      try {
-        const schema = await api.getTableSchema(dbName.value, name)
+    const schemaResults = await Promise.allSettled(
+      tableList.data.map(name =>
+        api.getTableSchema(dbName.value, name).then(schema => ({ name, schema }))
+      )
+    )
+    loadedSchemas.value = schemaResults.map(r => {
+      if (r.status === "fulfilled") {
+        const { name, schema } = r.value
         const columns = schema.data.columns.map(c => ({
           name: c.name,
           type: c.type,
@@ -895,12 +899,10 @@ async function loadSchemas() {
           constraint: c.pk ? "PRIMARY KEY" : null,
           pk: !!c.pk,
         }))
-        schemas.push({ name, rows: "—", columns })
-      } catch {
-        schemas.push({ name, rows: "—", columns: [] })
+        return { name, rows: "—", columns }
       }
-    }
-    loadedSchemas.value = schemas
+      return { name: "unknown", rows: "—", columns: [] }
+    })
   } catch {}
 }
 

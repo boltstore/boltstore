@@ -151,21 +151,17 @@ const activities = ref<ActivityEntry[]>([])
 const analytics = ref<AnalyticsOverview | null>(null)
 
 async function loadStatic() {
-  try {
-    health.value = await api.health()
-  } catch {}
-  try {
-    const res = await api.listDatabases()
-    databases.value = res.data
-  } catch {}
-  try {
-    const res = await api.listActivity(5)
-    activities.value = res.data
-  } catch {}
-  try {
-    const res = await api.getAnalyticsOverview(activeRange.value)
-    analytics.value = res.data
-  } catch {}
+  const results = await Promise.allSettled([
+    api.health(),
+    api.listDatabases(),
+    api.listActivity(5),
+    api.getAnalyticsOverview(activeRange.value),
+  ])
+  const [hr, dbr, ar, anr] = results
+  if (hr.status === "fulfilled") health.value = hr.value
+  if (dbr.status === "fulfilled") databases.value = dbr.value.data
+  if (ar.status === "fulfilled") activities.value = ar.value.data
+  if (anr.status === "fulfilled") analytics.value = anr.value.data
 }
 
 const userTimezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC"

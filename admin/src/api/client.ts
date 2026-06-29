@@ -24,6 +24,9 @@ import type {
 const STORAGE_TOKEN = "boltstore_session"
 const memoryStore = new Map<string, string>()
 
+const CACHE_TTL = 60_000
+const responseCache = new Map<string, { data: unknown; timestamp: number }>()
+
 function storage(): {
   getItem(key: string): string | null
   setItem(key: string, value: string): void
@@ -72,6 +75,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const baseUrl = getBaseUrl()
   if (!baseUrl) throw new ApiClientError(0, "NO_URL", "Server URL not configured")
 
+  const method = (options.method || "GET").toUpperCase()
+
+  if (method === "GET") {
+    const cached = responseCache.get(path)
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      return cached.data as T
+    }
+  } else {
+    responseCache.clear()
+  }
+
   const token = getToken()
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -104,11 +118,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const ct = res.headers.get("content-type") || ""
   if (ct.includes("application/json")) {
-    return res.json()
+    const data = await res.json() as T
+    if (method === "GET") {
+      responseCache.set(path, { data, timestamp: Date.now() })
+    }
+    return data
   }
   // Non-JSON response — throw instead of casting to T, which would hide bugs
   const text = await res.text().catch(() => "")
   throw new ApiClientError(res.status, "UNEXPECTED_RESPONSE", `Expected JSON but got ${ct}: ${text.slice(0, 200)}`)
+}
+
+export function clearResponseCache() {
+  responseCache.clear()
 }
 
 export const api = {

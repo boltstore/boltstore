@@ -228,14 +228,24 @@ const errorLog = ref<QueryLogEntry[]>([])
 const showAllErrors = ref(false)
 
 async function loadAll() {
-  try {
-    const res = await api.getAnalyticsOverview(activeRange.value)
-    overview.value = res.data
-  } catch (err) {
-    console.error("Failed to load analytics overview", (err as Error).message || String(err))
+  const results = await Promise.allSettled([
+    api.getAnalyticsOverview(activeRange.value),
+    api.getVolume(activeRange.value, userTimezone),
+    api.getTopQueries(activeRange.value),
+    api.getAllDatabaseAnalytics(activeRange.value),
+    api.getErrors(20, activeRange.value),
+  ])
+
+  const [overviewRes, volumeRes, topQueriesRes, dbAnalyticsRes, errorsRes] = results
+
+  if (overviewRes.status === "fulfilled") {
+    overview.value = overviewRes.value.data
+  } else {
+    console.error("Failed to load analytics overview", (overviewRes.reason as Error).message || String(overviewRes.reason))
   }
-  try {
-    const vol = await api.getVolume(activeRange.value, userTimezone)
+
+  if (volumeRes.status === "fulfilled") {
+    const vol = volumeRes.value
     chartLabels.value = vol.data.slots
     chartValues.value = vol.data.counts
     chartMax.value = vol.data.max
@@ -244,18 +254,18 @@ async function loadAll() {
     rowsWrittenValues.value = vol.data.rows_written ?? []
     rowsReadMax.value = vol.data.max_read ?? 1
     rowsWrittenMax.value = vol.data.max_written ?? 1
-  } catch (err) {
-    console.error("Failed to load volume data", (err as Error).message || String(err))
+  } else {
+    console.error("Failed to load volume data", (volumeRes.reason as Error).message || String(volumeRes.reason))
   }
-  try {
-    const res = await api.getTopQueries(activeRange.value)
-    topQueries.value = res.data
-  } catch (err) {
-    console.error("Failed to load top queries", (err as Error).message || String(err))
+
+  if (topQueriesRes.status === "fulfilled") {
+    topQueries.value = topQueriesRes.value.data
+  } else {
+    console.error("Failed to load top queries", (topQueriesRes.reason as Error).message || String(topQueriesRes.reason))
   }
-  try {
-    const analytics = await api.getAllDatabaseAnalytics(activeRange.value)
-    dbList.value = analytics.data.map(a => {
+
+  if (dbAnalyticsRes.status === "fulfilled") {
+    dbList.value = dbAnalyticsRes.value.data.map(a => {
       const errRate = a.queries > 0 ? ((a.errorCount / a.queries) * 100).toFixed(2) : "0"
       return {
         name: a.database,
@@ -267,14 +277,14 @@ async function loadAll() {
         storage: formatBytes(a.storageBytes),
       }
     })
-  } catch (err) {
-    console.error("Failed to load database analytics", (err as Error).message || String(err))
+  } else {
+    console.error("Failed to load database analytics", (dbAnalyticsRes.reason as Error).message || String(dbAnalyticsRes.reason))
   }
-  try {
-    const err = await api.getErrors(20, activeRange.value)
-    errorLog.value = err.data
-  } catch (err) {
-    console.error("Failed to load error log", (err as Error).message || String(err))
+
+  if (errorsRes.status === "fulfilled") {
+    errorLog.value = errorsRes.value.data
+  } else {
+    console.error("Failed to load error log", (errorsRes.reason as Error).message || String(errorsRes.reason))
   }
 }
 
