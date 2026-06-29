@@ -26,6 +26,7 @@ export async function startServer(): Promise<StartedServer> {
     (name: string) => {
       try { return manager.getPoolIfExists(name); } catch { return null; }
     },
+    (name: string) => manager.resolveDbId(name),
   );
   manager.setAnalytics(analytics);
   setupSessionCleanup(manager);

@@ -24,7 +24,7 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     const nameErr = validateDbName(body.name);
     if (nameErr) return nameErr;
     const info = manager.createDatabase(body.name, body.group);
-    logActivity(manager, { action: "database.create", admin_id: await getAdminId(req, manager), database_name: body.name, details: body.group ? { group: body.group } : undefined, ip: getClientIp(req) });
+    logActivity(manager, { action: "database.create", admin_id: await getAdminId(req, manager), database_name: body.name, database_id: info.id, details: body.group ? { group: body.group } : undefined, ip: getClientIp(req) });
     return jsonResponse({ data: info }, 201);
   });
 
@@ -61,9 +61,10 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     const oldName = params.name;
 
     const metaPool = manager.getMetaPool();
-    const row = metaPool.read().query("SELECT file_path FROM _databases WHERE name = ?").get(oldName) as { file_path: string } | null;
+    const row = metaPool.read().query("SELECT file_path, id FROM _databases WHERE name = ?").get(oldName) as { file_path: string; id: string } | null;
     if (!row) return errorResponse("NOT_FOUND", "Database not found.", 404);
 
+    const dbId = row.id;
     const dataDir = manager.getDataDir();
     const newPath = resolve(dataDir, `${body.name}.db`);
     const pool = manager.get(oldName);
@@ -80,7 +81,7 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     try {
       metaWrite.run("BEGIN");
       metaWrite.run("PRAGMA defer_foreign_keys = ON");
-      metaWrite.run("UPDATE _databases SET name = ?, file_path = ? WHERE name = ?", [body.name, newPath, oldName]);
+      metaWrite.run("UPDATE _databases SET name = ?, file_path = ? WHERE id = ?", [body.name, newPath, dbId]);
       metaWrite.run("UPDATE _api_keys SET database_name = ? WHERE database_name = ?", [body.name, oldName]);
       metaWrite.run("COMMIT");
     } catch (err: unknown) {
@@ -90,7 +91,13 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("DATABASE_ERROR", "Failed to update database metadata during rename.", 500);
     }
 
-    manager.closePool(oldName);
+    // Move pool from old name key to new name key
+    const existingPool = manager.getPoolIfExists(oldName);
+    if (existingPool) {
+      manager.closePool(oldName);
+      manager.registerPool(body.name, existingPool);
+    }
+
     // Best-effort cleanup of old files; rename succeeds even if cleanup fails
     const cleanupResults: string[] = [];
     try { rmSync(row.file_path); cleanupResults.push("main"); } catch (err) { logger.warn("Failed to remove old db file during rename", { path: row.file_path, error: err instanceof Error ? err.message : String(err) }); }
@@ -100,7 +107,7 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
       logger.warn("All old database files could not be cleaned up during rename", { from: oldName });
     }
 
-    logActivity(manager, { action: "database.rename", admin_id: await getAdminId(req, manager), database_name: oldName, details: { from: oldName, to: body.name }, ip: getClientIp(req) });
+    logActivity(manager, { action: "database.rename", admin_id: await getAdminId(req, manager), database_name: oldName, database_id: dbId, details: { from: oldName, to: body.name }, ip: getClientIp(req) });
     return jsonResponse({ data: { name: body.name } });
   });
 
@@ -110,7 +117,8 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("VALIDATION", "Invalid database name.", 400);
     }
     manager.deleteDatabase(params.name);
-    logActivity(manager, { action: "database.delete", admin_id: await getAdminId(req, manager), database_name: params.name, ip: getClientIp(req) });
+    const dbId = manager.resolveDbId(params.name);
+    logActivity(manager, { action: "database.delete", admin_id: await getAdminId(req, manager), database_name: params.name, database_id: dbId, ip: getClientIp(req) });
     return jsonResponse({ data: { deleted: true } });
   });
 }

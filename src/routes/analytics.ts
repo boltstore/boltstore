@@ -26,7 +26,7 @@ export function recordAnalytics(manager: DatabaseManager, event: {
   sqlText?: string;
 }): void {
   const a = manager.getAnalytics();
-  if (a) a.recordQuery(event);
+  if (a) a.recordQuery({ ...event, databaseId: manager.resolveDbId(event.database) });
 }
 
 function parseRange(url: URL): { since: string; groupFmt: string } {
@@ -99,7 +99,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const dbNames = manager.listDatabases().map(d => d.name);
     for (const name of dbNames) {
       const exists = db.query("SELECT 1 FROM _storage_snapshots WHERE database = ? LIMIT 1").get(name);
-      if (!exists) await analytics.ensureSnapshot(name, getPool);
+      if (!exists) await analytics.ensureSnapshot(name, getPool, (n) => manager.resolveDbId(n));
     }
   };
 
@@ -155,7 +155,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       "SELECT size_bytes, table_count FROM _storage_snapshots WHERE database = ? ORDER BY timestamp DESC LIMIT 1"
     ).get(params.database) as StorageRow | undefined;
     if (!storage) {
-      await analytics.ensureSnapshot(params.database, getPool);
+      await analytics.ensureSnapshot(params.database, getPool, (n) => manager.resolveDbId(n));
       storage = (db.query(
         "SELECT size_bytes, table_count FROM _storage_snapshots WHERE database = ? ORDER BY timestamp DESC LIMIT 1"
       ).get(params.database) as StorageRow) ?? { size_bytes: 0, table_count: 0 };

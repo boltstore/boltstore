@@ -31,7 +31,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
 
       try { rmSync(exportPath); } catch {}
 
-      logActivity(manager, { action: "database.export", admin_id: await getAdminId(req, manager), database_name: params.name, ip: getClientIp(req) });
+      logActivity(manager, { action: "database.export", admin_id: await getAdminId(req, manager), database_name: params.name, database_id: manager.resolveDbId(params.name), ip: getClientIp(req) });
       return new Response(bytes, {
         status: 200,
         headers: {
@@ -109,7 +109,7 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("VALIDATION", "Imported file failed integrity check.", 400);
     }
 
-    logActivity(manager, { action: "database.import", admin_id: await getAdminId(req, manager), database_name: dbName, details: { file: fileField.name }, ip: getClientIp(req) });
+    logActivity(manager, { action: "database.import", admin_id: await getAdminId(req, manager), database_name: dbName, database_id: manager.resolveDbId(dbName), details: { file: fileField.name }, ip: getClientIp(req) });
     return jsonResponse({ data: { name: dbName, file: fileField.name } }, 201);
   });
 }

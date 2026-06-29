@@ -39,7 +39,8 @@ export function registerConfigRoutes(router: Router, manager: DatabaseManager): 
     const updated = { ...current, ...body };
 
     metaPool.write().run("UPDATE _databases SET config = ? WHERE name = ?", [JSON.stringify(updated), params.name]);
-    logActivity(manager, { action: "database.config.update", admin_id: await getAdminId(req, manager), database_name: params.name, details: { from: current, to: updated, changes: body }, ip: getClientIp(req) });
+    const dbId = manager.resolveDbId(params.name);
+    logActivity(manager, { action: "database.config.update", admin_id: await getAdminId(req, manager), database_name: params.name, database_id: dbId, details: { from: current, to: updated, changes: body }, ip: getClientIp(req) });
     return jsonResponse({ data: updated });
   });
 }

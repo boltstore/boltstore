@@ -9,6 +9,7 @@ const FLUSH_BATCH_SIZE = 100;
 
 interface QueryEvent {
   database: string;
+  databaseId?: string;
   table?: string;
   operation: string;
   durationMs: number;
@@ -42,6 +43,7 @@ export class AnalyticsManager {
       CREATE TABLE IF NOT EXISTS _query_log (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         database    TEXT NOT NULL,
+        database_id TEXT,
         table_name  TEXT,
         operation   TEXT NOT NULL,
         duration_ms REAL NOT NULL,
@@ -55,16 +57,20 @@ export class AnalyticsManager {
       CREATE TABLE IF NOT EXISTS _storage_snapshots (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         database    TEXT NOT NULL,
+        database_id TEXT,
         size_bytes  INTEGER NOT NULL,
         table_count INTEGER NOT NULL,
         timestamp   TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
     try { db.run("ALTER TABLE _query_log ADD COLUMN sql_text TEXT"); } catch {}
+    try { db.run("ALTER TABLE _query_log ADD COLUMN database_id TEXT"); } catch {}
+    try { db.run("ALTER TABLE _storage_snapshots ADD COLUMN database_id TEXT"); } catch {}
     db.run(`
       CREATE TABLE IF NOT EXISTS _daily_stats (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         database    TEXT NOT NULL,
+        database_id TEXT,
         date        TEXT NOT NULL,
         operation   TEXT NOT NULL,
         count       INTEGER NOT NULL DEFAULT 0,
@@ -78,6 +84,7 @@ export class AnalyticsManager {
       CREATE TABLE IF NOT EXISTS _daily_queries (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         database    TEXT NOT NULL,
+        database_id TEXT,
         date        TEXT NOT NULL,
         sql_text    TEXT NOT NULL,
         count       INTEGER NOT NULL DEFAULT 0,
@@ -87,6 +94,8 @@ export class AnalyticsManager {
         UNIQUE(database, date, sql_text)
       )
     `);
+    try { db.run("ALTER TABLE _daily_stats ADD COLUMN database_id TEXT"); } catch {}
+    try { db.run("ALTER TABLE _daily_queries ADD COLUMN database_id TEXT"); } catch {}
     db.run("CREATE INDEX IF NOT EXISTS idx_query_log_timestamp ON _query_log(timestamp)");
     db.run("CREATE INDEX IF NOT EXISTS idx_query_log_database ON _query_log(database)");
     db.run("CREATE INDEX IF NOT EXISTS idx_storage_snapshots_db_id ON _storage_snapshots(database, id)");
@@ -114,11 +123,11 @@ export class AnalyticsManager {
     try {
       const db = this.pool.write();
       const stmt = db.prepare(
-        "INSERT INTO _query_log (database, table_name, operation, duration_ms, row_count, status, error_msg, sql_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO _query_log (database, database_id, table_name, operation, duration_ms, row_count, status, error_msg, sql_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
       );
       const statsStmt = db.prepare(
-        `INSERT INTO _daily_stats (database, date, operation, count, error_count, total_rows, total_ms)
-         VALUES (?, date('now'), ?, 1, ?, ?, ?)
+        `INSERT INTO _daily_stats (database, database_id, date, operation, count, error_count, total_rows, total_ms)
+         VALUES (?, ?, date('now'), ?, 1, ?, ?, ?)
          ON CONFLICT(database, date, operation) DO UPDATE SET
            count = count + 1,
            error_count = error_count + excluded.error_count,
@@ -126,8 +135,8 @@ export class AnalyticsManager {
            total_ms = total_ms + excluded.total_ms`
       );
       const queriesStmt = db.prepare(
-        `INSERT INTO _daily_queries (database, date, sql_text, count, writes, total_ms, total_rows)
-         VALUES (?, date('now'), ?, 1, ?, ?, ?)
+        `INSERT INTO _daily_queries (database, database_id, date, sql_text, count, writes, total_ms, total_rows)
+         VALUES (?, ?, date('now'), ?, 1, ?, ?, ?)
          ON CONFLICT(database, date, sql_text) DO UPDATE SET
            count = count + 1,
            writes = writes + excluded.writes,
@@ -135,12 +144,12 @@ export class AnalyticsManager {
            total_rows = total_rows + excluded.total_rows`
       );
       for (const e of batch) {
-        stmt.run(e.database, e.table ?? null, e.operation, e.durationMs, e.rowCount, e.status, e.errorMessage ?? null, e.sqlText ?? null);
+        stmt.run(e.database, e.databaseId ?? null, e.table ?? null, e.operation, e.durationMs, e.rowCount, e.status, e.errorMessage ?? null, e.sqlText ?? null);
         const isError = e.status === "error" ? 1 : 0;
-        statsStmt.run(e.database, e.operation, isError, e.rowCount, e.durationMs);
+        statsStmt.run(e.database, e.databaseId ?? null, e.operation, isError, e.rowCount, e.durationMs);
         const sql = e.sqlText ?? e.operation;
         const isWriteOp = e.operation !== "select" ? 1 : 0;
-        queriesStmt.run(e.database, sql, isWriteOp, e.durationMs, e.rowCount);
+        queriesStmt.run(e.database, e.databaseId ?? null, sql, isWriteOp, e.durationMs, e.rowCount);
       }
     } catch (err) {
       logger.warn("Analytics flush failed, re-queueing events", { error: err instanceof Error ? err.message : String(err) });
@@ -165,7 +174,7 @@ export class AnalyticsManager {
     if (typeof this.pruneTimer.unref === "function") this.pruneTimer.unref();
   }
 
-  startSnapshotTimer(getDatabases: () => string[], getPool: (name: string) => DatabasePool | null): void {
+  startSnapshotTimer(getDatabases: () => string[], getPool: (name: string) => DatabasePool | null, resolveDbId?: (name: string) => string | undefined): void {
     if (this.timer) return;
     const takeSnapshot = async () => {
       try {
@@ -189,9 +198,10 @@ export class AnalyticsManager {
             const tableCount = (db.query("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name NOT GLOB '_*' AND name != 'sqlite_sequence'").get() as { c?: number })?.c ?? 0;
             if (openedTemp) pool.close();
             const sizeBytes = (pageInfo?.page_count ?? 0) * (pageSize?.page_size ?? 4096);
+            const dbId = resolveDbId?.(name);
             this.pool.write().run(
-              "INSERT INTO _storage_snapshots (database, size_bytes, table_count) VALUES (?, ?, ?)",
-              [name, sizeBytes, tableCount]
+              "INSERT INTO _storage_snapshots (database, database_id, size_bytes, table_count) VALUES (?, ?, ?, ?)",
+              [name, dbId ?? null, sizeBytes, tableCount]
             );
           } catch (err) {
             logger.warn("Snapshot failed for database", { database: name, error: err instanceof Error ? err.message : String(err) });
@@ -222,7 +232,7 @@ export class AnalyticsManager {
     this.pool.close();
   }
 
-  async ensureSnapshot(name: string, getPool: (name: string) => DatabasePool | null): Promise<void> {
+  async ensureSnapshot(name: string, getPool: (name: string) => DatabasePool | null, resolveDbId?: (name: string) => string | undefined): Promise<void> {
     const db = this.pool.read();
     const existing = db.query("SELECT 1 FROM _storage_snapshots WHERE database = ? LIMIT 1").get(name);
     if (existing) return;
@@ -242,9 +252,10 @@ export class AnalyticsManager {
       const pageSize = conn.query("PRAGMA page_size").get() as { page_size: number } | null;
       const tableCount = (conn.query("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name NOT GLOB '_*' AND name != 'sqlite_sequence'").get() as { c?: number })?.c ?? 0;
       const sizeBytes = (pageInfo?.page_count ?? 0) * (pageSize?.page_size ?? 4096);
+      const dbId = resolveDbId?.(name);
       this.pool.write().run(
-        "INSERT INTO _storage_snapshots (database, size_bytes, table_count) VALUES (?, ?, ?)",
-        [name, sizeBytes, tableCount]
+        "INSERT INTO _storage_snapshots (database, database_id, size_bytes, table_count) VALUES (?, ?, ?, ?)",
+        [name, dbId ?? null, sizeBytes, tableCount]
       );
     } catch (err) {
       logger.warn("On-demand snapshot failed", { database: name, error: err instanceof Error ? err.message : String(err) });

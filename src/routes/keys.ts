@@ -38,13 +38,14 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
     const key = generateApiKey();
     const hash = await sha256Hex(key);
     const id = generateId("apk_", 24);
+    const dbId = manager.resolveDbId(params.name);
 
     metaPool.write().run(
-      "INSERT INTO _api_keys (id, database_name, label, hash) VALUES (?, ?, ?, ?)",
-      [id, params.name, body.label, hash]
+      "INSERT INTO _api_keys (id, database_name, database_id, label, hash) VALUES (?, ?, ?, ?, ?)",
+      [id, params.name, dbId ?? null, body.label, hash]
     );
 
-    logActivity(manager, { action: "api_key.create", admin_id: await getAdminId(req, manager), database_name: params.name, target: body.label, ip: getClientIp(req) });
+    logActivity(manager, { action: "api_key.create", admin_id: await getAdminId(req, manager), database_name: params.name, database_id: dbId, target: body.label, ip: getClientIp(req) });
     return jsonResponse({ data: { id, label: body.label, key } }, 201);
   });
 
@@ -64,7 +65,8 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
       [hash, params.keyId, params.name]
     );
 
-    logActivity(manager, { action: "api_key.rotate", admin_id: await getAdminId(req, manager), database_name: params.name, target: params.keyId, details: { label: existing.label }, ip: getClientIp(req) });
+    const dbId = manager.resolveDbId(params.name);
+    logActivity(manager, { action: "api_key.rotate", admin_id: await getAdminId(req, manager), database_name: params.name, database_id: dbId, target: params.keyId, details: { label: existing.label }, ip: getClientIp(req) });
     return jsonResponse({ data: { id: params.keyId, key } });
   });
 
@@ -78,7 +80,8 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
       [params.keyId, params.name]
     );
     if (result.changes === 0) return errorResponse("NOT_FOUND", "API key not found.", 404);
-    logActivity(manager, { action: "api_key.revoke", admin_id: await getAdminId(req, manager), database_name: params.name, target: params.keyId, ip: getClientIp(req) });
+    const dbId = manager.resolveDbId(params.name);
+    logActivity(manager, { action: "api_key.revoke", admin_id: await getAdminId(req, manager), database_name: params.name, database_id: dbId, target: params.keyId, ip: getClientIp(req) });
     return jsonResponse({ data: { revoked: true } });
   });
 }

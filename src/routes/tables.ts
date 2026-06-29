@@ -92,7 +92,7 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
     const sql = buildCreateTableSQL(body.name, body.columns);
     try {
       pool.write().run(sql);
-      logActivity(manager, { action: "table.create", database_name: params.db, target: body.name, details: { columns: body.columns.length }, ip: getClientIp(req) });
+      logActivity(manager, { action: "table.create", database_name: params.db, database_id: manager.resolveDbId(params.db), target: body.name, details: { columns: body.columns.length }, ip: getClientIp(req) });
       return jsonResponse({ data: { name: body.name, columns: body.columns } }, 201);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -165,7 +165,7 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
       if (newNameErr) return newNameErr;
       try {
         writeDb.run(`ALTER TABLE "${params.table}" RENAME TO "${body.name}"`);
-        logActivity(manager, { action: "table.rename", database_name: params.db, target: body.name, details: { from: params.table, to: body.name }, ip: getClientIp(req) });
+        logActivity(manager, { action: "table.rename", database_name: params.db, database_id: manager.resolveDbId(params.db), target: body.name, details: { from: params.table, to: body.name }, ip: getClientIp(req) });
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.warn("Table rename failed", { database: params.db, error: msg });
@@ -229,7 +229,7 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
 
     const pool = manager.get(params.db);
     pool.write().run(`DROP TABLE IF EXISTS "${params.table}"`);
-    logActivity(manager, { action: "table.delete", database_name: params.db, target: params.table, ip: getClientIp(req) });
+    logActivity(manager, { action: "table.delete", database_name: params.db, database_id: manager.resolveDbId(params.db), target: params.table, ip: getClientIp(req) });
     return jsonResponse({ data: { deleted: true } });
   });
 }

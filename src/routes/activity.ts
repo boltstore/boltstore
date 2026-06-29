@@ -9,6 +9,7 @@ export interface ActivityEvent {
   action: string;
   admin_id?: string;
   database_name?: string;
+  database_id?: string;
   target?: string;
   details?: Record<string, unknown>;
   ip?: string;
@@ -72,7 +73,7 @@ export function registerActivityRoutes(router: Router, manager: DatabaseManager)
     const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0);
     const total = (manager.getMetaPool().read().query("SELECT COUNT(*) as c FROM _activity_log").get() as { c?: number })?.c ?? 0;
     const rows = manager.getMetaPool().read().query(
-      `SELECT a.id, a.admin_id, a.action, a.database_name, a.target, a.details, a.ip, a.created_at, adm.email as admin_email
+      `SELECT a.id, a.admin_id, a.action, a.database_name, a.database_id, a.target, a.details, a.ip, a.created_at, adm.email as admin_email
        FROM _activity_log a
        LEFT JOIN _admins adm ON adm.id = a.admin_id
        ORDER BY a.created_at DESC LIMIT ? OFFSET ?`
@@ -95,8 +96,8 @@ function sanitizeDetails(details: Record<string, unknown> | undefined): string |
 export function logActivity(manager: DatabaseManager, event: ActivityEvent): void {
   try {
     manager.getMetaPool().write().run(
-      "INSERT INTO _activity_log (id, admin_id, action, database_name, target, details, ip) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [generateId("act_", 16), event.admin_id ?? null, event.action, event.database_name ?? null, event.target ?? null, sanitizeDetails(event.details), event.ip ?? null]
+      "INSERT INTO _activity_log (id, admin_id, action, database_name, database_id, target, details, ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [generateId("act_", 16), event.admin_id ?? null, event.action, event.database_name ?? null, event.database_id ?? null, event.target ?? null, sanitizeDetails(event.details), event.ip ?? null]
     );
   } catch (err) {
     logger.warn("Failed to write activity log", { action: event.action, error: err instanceof Error ? err.message : String(err) });
