@@ -204,6 +204,8 @@ export const api = {
   // Tables
   listTables: (db: string) =>
     request<ApiResponse<string[]>>(`/api/databases/${encodeURIComponent(db)}/tables`),
+  getDatabaseSchema: (db: string) =>
+    request<ApiResponse<{ name: string; columns: unknown[] }[]>>(`/api/databases/${encodeURIComponent(db)}/tables/schema`),
   createTable: (db: string, name: string, columns: ColumnDef[]) =>
     request<ApiResponse<{ name: string; columns: ColumnDef[] }>>(
       `/api/databases/${encodeURIComponent(db)}/tables`,

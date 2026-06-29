@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse, parseJsonBody } from "../server";
-import { authenticateApiKey, checkDbCors } from "../middleware/auth";
+import { authenticateApiKey, checkDbCors, isAdminRequest } from "../middleware/auth";
 import { checkReadOnly } from "../middleware/readonly";
 import { logActivity, getClientIp } from "./activity";
 import { logger } from "../logger";
@@ -98,6 +98,31 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn("Table creation failed", { database: params.db, error: msg });
       return errorResponse("TABLE_ERROR", "Failed to create table. Check your schema definition.", 400);
+    }
+  });
+
+  router.get("/api/databases/:db/tables/schema", async (req, params) => {
+    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
+    const corsCheck = checkDbCors(req, manager, params.db);
+    if (corsCheck) return corsCheck;
+
+    try {
+      const pool = manager.get(params.db);
+      const db = pool.read();
+      const tableNames = db.query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB '_*' AND name != 'sqlite_sequence' ORDER BY name"
+      ).all() as { name: string }[];
+
+      const schemas = tableNames.map(({ name }) => {
+        const columns = db.query(`PRAGMA table_info("${name}")`).all();
+        return { name, columns };
+      });
+
+      return jsonResponse({ data: schemas });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn("Batch schema fetch failed", { database: params.db, error: msg });
+      return errorResponse("DATABASE_ERROR", "Failed to fetch schemas.", 500);
     }
   });
 

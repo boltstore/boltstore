@@ -882,27 +882,19 @@ const loadedSchemas = ref<{ name: string; rows: string; columns: { name: string;
 
 async function loadSchemas() {
   try {
-    const tableList = await api.listTables(dbName.value)
-    const schemaResults = await Promise.allSettled(
-      tableList.data.map(name =>
-        api.getTableSchema(dbName.value, name).then(schema => ({ name, schema }))
-      )
-    )
-    loadedSchemas.value = schemaResults.map(r => {
-      if (r.status === "fulfilled") {
-        const { name, schema } = r.value
-        const columns = schema.data.columns.map(c => ({
-          name: c.name,
-          type: c.type,
-          nullable: !c.notnull,
-          default: c.dflt_value,
-          constraint: c.pk ? "PRIMARY KEY" : null,
-          pk: !!c.pk,
-        }))
-        return { name, rows: "—", columns }
-      }
-      return { name: "unknown", rows: "—", columns: [] }
-    })
+    const res = await api.getDatabaseSchema(dbName.value)
+    loadedSchemas.value = res.data.map(({ name, columns }) => ({
+      name,
+      rows: "—",
+      columns: (columns as { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[]).map(c => ({
+        name: c.name,
+        type: c.type,
+        nullable: !c.notnull,
+        default: c.dflt_value,
+        constraint: c.pk ? "PRIMARY KEY" : null,
+        pk: !!c.pk,
+      })),
+    }))
   } catch {}
 }
 
@@ -1052,9 +1044,9 @@ function handleDelete(rows: number[]) {
 
 async function confirmDeleteRecords() {
   try {
-    for (const row of deletingRows.value) {
-      await api.deleteRecord(dbName.value, selectedTable.value, row)
-    }
+    await Promise.all(deletingRows.value.map(row =>
+      api.deleteRecord(dbName.value, selectedTable.value, row)
+    ))
     showDeleteModal.value = false
     deletingRows.value = []
     await loadRecords()
@@ -1064,6 +1056,7 @@ async function confirmDeleteRecords() {
 async function handleUpdateRows(rows: Record<string, unknown>[]) {
   const oldRows = dataRows.value
   dataRows.value = rows
+  const updates: { rowId: number | string; changes: Record<string, unknown> }[] = []
   for (let i = 0; i < rows.length; i++) {
     if (i >= oldRows.length) break
     const newRow = rows[i]
@@ -1075,10 +1068,13 @@ async function handleUpdateRows(rows: Record<string, unknown>[]) {
       if (newRow[key] !== oldRow[key] && key !== "rowid" && key !== "id") changes[key] = newRow[key]
     }
     if (Object.keys(changes).length > 0) {
-      try {
-        await api.updateRecord(dbName.value, selectedTable.value, rowId as number, changes)
-      } catch {}
+      updates.push({ rowId: rowId as number, changes })
     }
+  }
+  if (updates.length > 0) {
+    await Promise.all(updates.map(u =>
+      api.updateRecord(dbName.value, selectedTable.value, u.rowId, u.changes)
+    ))
   }
 }
 
