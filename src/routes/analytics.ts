@@ -7,7 +7,7 @@ import { validateDbName } from "../validation";
 import { createCache } from "../cache";
 
 const ANALYTICS_CACHE_TTL = 60_000;
-const analyticsCache = createCache<unknown>(ANALYTICS_CACHE_TTL);
+export const analyticsCache = createCache<unknown>(ANALYTICS_CACHE_TTL);
 
 interface QueryStatsRow { c: number; avg_ms: number; errors: number; writes: number }
 interface StorageTotalRow { total: number }

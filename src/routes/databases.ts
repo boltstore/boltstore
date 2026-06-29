@@ -1,8 +1,10 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
+import { DatabasePool } from "../db/pool";
 import { jsonResponse, errorResponse, parseJsonBody } from "../server";
 import { authenticateApiKey, isAdminRequest } from "../middleware/auth";
 import { logActivity, getClientIp, getAdminId } from "./activity";
+import { analyticsCache } from "./analytics";
 import { logger } from "../logger";
 import { validateDbName, isValidDbName } from "../validation";
 import { rmSync } from "node:fs";
@@ -77,12 +79,28 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("DATABASE_ERROR", "Failed to copy database file during rename.", 500);
     }
 
+    // Update analytics tables BEFORE meta rename — still keyed by old_name,
+    // so no concurrent request can race with us on UNIQUE(database, date, operation)
+    const analytics = manager.getAnalytics();
+    if (analytics) {
+      try {
+        const aDb = analytics.getPool().write();
+        aDb.run("UPDATE _daily_stats SET database = ? WHERE database = ?", [body.name, oldName]);
+        aDb.run("UPDATE _daily_queries SET database = ? WHERE database = ?", [body.name, oldName]);
+        aDb.run("UPDATE _query_log SET database = ? WHERE database = ?", [body.name, oldName]);
+        aDb.run("UPDATE _storage_snapshots SET database = ? WHERE database = ?", [body.name, oldName]);
+      } catch (err) {
+        logger.warn("Failed to update analytics tables during rename (analytics may be stale)", { from: oldName, to: body.name, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
     const metaWrite = metaPool.write();
     try {
       metaWrite.run("BEGIN");
       metaWrite.run("PRAGMA defer_foreign_keys = ON");
       metaWrite.run("UPDATE _databases SET name = ?, file_path = ? WHERE id = ?", [body.name, newPath, dbId]);
       metaWrite.run("UPDATE _api_keys SET database_name = ? WHERE database_name = ?", [body.name, oldName]);
+      metaWrite.run("UPDATE _activity_log SET database_name = ? WHERE database_name = ?", [body.name, oldName]);
       metaWrite.run("COMMIT");
     } catch (err: unknown) {
       metaWrite.run("ROLLBACK");
@@ -91,12 +109,15 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
       return errorResponse("DATABASE_ERROR", "Failed to update database metadata during rename.", 500);
     }
 
-    // Move pool from old name key to new name key
+    // Close old pool (connections still point to deleted file) and create new pool for the new file
     const existingPool = manager.getPoolIfExists(oldName);
     if (existingPool) {
       manager.closePool(oldName);
-      manager.registerPool(body.name, existingPool);
+      manager.registerPool(body.name, new DatabasePool({ path: newPath }));
     }
+
+    // Invalidate analytics cache so dashboard picks up the renamed data immediately
+    analyticsCache.invalidate();
 
     // Best-effort cleanup of old files; rename succeeds even if cleanup fails
     const cleanupResults: string[] = [];
