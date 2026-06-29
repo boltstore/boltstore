@@ -1,5 +1,6 @@
 import { createServer, stopServerBackgroundTasks } from "../src/server";
 import { DatabaseManager } from "../src/db/manager";
+import { AnalyticsManager } from "../src/analytics";
 import { mkdirSync, rmSync } from "node:fs";
 
 let counter = 0;
@@ -7,6 +8,7 @@ let counter = 0;
 export interface TestContext {
   server: ReturnType<typeof Bun.serve>;
   manager: DatabaseManager;
+  analytics: AnalyticsManager;
   dataDir: string;
   port: number;
   adminKey: string;
@@ -28,7 +30,9 @@ export async function setupTestServer(): Promise<TestContext> {
   Bun.env.BOLTSTORE_ADMIN_KEY = adminKey;
 
   const manager = new DatabaseManager({ dataDir });
-  const server = createServer({ port, manager, adminKey });
+  const analytics = new AnalyticsManager(dataDir);
+  manager.setAnalytics(analytics);
+  const server = createServer({ port, manager, analytics, adminKey });
 
   const base = `http://localhost:${port}`;
 
@@ -73,11 +77,12 @@ export async function setupTestServer(): Promise<TestContext> {
     throw new Error(`No API key in create key response`);
   }
 
-  return { server, manager, dataDir, port, adminKey, adminToken, apiKey, dbName, prevAdminKey };
+  return { server, manager, analytics, dataDir, port, adminKey, adminToken, apiKey, dbName, prevAdminKey };
 }
 
 export async function teardownTestServer(ctx: TestContext): Promise<void> {
   stopServerBackgroundTasks();
+  ctx.analytics.stop();
   ctx.manager.close();
   ctx.server.stop();
   try { rmSync(ctx.dataDir, { recursive: true, force: true }); } catch {}

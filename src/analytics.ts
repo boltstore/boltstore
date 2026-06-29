@@ -61,9 +61,37 @@ export class AnalyticsManager {
       )
     `);
     try { db.run("ALTER TABLE _query_log ADD COLUMN sql_text TEXT"); } catch {}
+    db.run(`
+      CREATE TABLE IF NOT EXISTS _daily_stats (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        database    TEXT NOT NULL,
+        date        TEXT NOT NULL,
+        operation   TEXT NOT NULL,
+        count       INTEGER NOT NULL DEFAULT 0,
+        error_count INTEGER NOT NULL DEFAULT 0,
+        total_rows  INTEGER NOT NULL DEFAULT 0,
+        total_ms    REAL NOT NULL DEFAULT 0,
+        UNIQUE(database, date, operation)
+      )
+    `);
+    db.run(`
+      CREATE TABLE IF NOT EXISTS _daily_queries (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        database    TEXT NOT NULL,
+        date        TEXT NOT NULL,
+        sql_text    TEXT NOT NULL,
+        count       INTEGER NOT NULL DEFAULT 0,
+        writes      INTEGER NOT NULL DEFAULT 0,
+        total_ms    REAL NOT NULL DEFAULT 0,
+        total_rows  INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(database, date, sql_text)
+      )
+    `);
     db.run("CREATE INDEX IF NOT EXISTS idx_query_log_timestamp ON _query_log(timestamp)");
     db.run("CREATE INDEX IF NOT EXISTS idx_query_log_database ON _query_log(database)");
     db.run("CREATE INDEX IF NOT EXISTS idx_storage_snapshots_db_id ON _storage_snapshots(database, id)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_daily_stats_db_date ON _daily_stats(database, date)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_daily_queries_db_date ON _daily_queries(database, date)");
   }
 
   // In-memory buffer — up to 100 events (FLUSH_BATCH_SIZE) or 5 seconds
@@ -88,22 +116,44 @@ export class AnalyticsManager {
       const stmt = db.prepare(
         "INSERT INTO _query_log (database, table_name, operation, duration_ms, row_count, status, error_msg, sql_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
       );
+      const statsStmt = db.prepare(
+        `INSERT INTO _daily_stats (database, date, operation, count, error_count, total_rows, total_ms)
+         VALUES (?, date('now'), ?, 1, ?, ?, ?)
+         ON CONFLICT(database, date, operation) DO UPDATE SET
+           count = count + 1,
+           error_count = error_count + excluded.error_count,
+           total_rows = total_rows + excluded.total_rows,
+           total_ms = total_ms + excluded.total_ms`
+      );
+      const queriesStmt = db.prepare(
+        `INSERT INTO _daily_queries (database, date, sql_text, count, writes, total_ms, total_rows)
+         VALUES (?, date('now'), ?, 1, ?, ?, ?)
+         ON CONFLICT(database, date, sql_text) DO UPDATE SET
+           count = count + 1,
+           writes = writes + excluded.writes,
+           total_ms = total_ms + excluded.total_ms,
+           total_rows = total_rows + excluded.total_rows`
+      );
       for (const e of batch) {
         stmt.run(e.database, e.table ?? null, e.operation, e.durationMs, e.rowCount, e.status, e.errorMessage ?? null, e.sqlText ?? null);
+        const isError = e.status === "error" ? 1 : 0;
+        statsStmt.run(e.database, e.operation, isError, e.rowCount, e.durationMs);
+        const sql = e.sqlText ?? e.operation;
+        const isWriteOp = e.operation !== "select" ? 1 : 0;
+        queriesStmt.run(e.database, sql, isWriteOp, e.durationMs, e.rowCount);
       }
     } catch (err) {
       logger.warn("Analytics flush failed, re-queueing events", { error: err instanceof Error ? err.message : String(err) });
-      // Re-queue the batch so events are not lost on transient failures
       this.buffer.unshift(...batch);
     }
   }
 
   private prune(): void {
     try {
-      this.pool.write().run(
-        "DELETE FROM _query_log WHERE timestamp < datetime('now', ?)",
-        [`-${this.retentionDays} days`]
-      );
+      const cutoff = `-${this.retentionDays} days`;
+      this.pool.write().run("DELETE FROM _query_log WHERE timestamp < datetime('now', ?)", [cutoff]);
+      this.pool.write().run("DELETE FROM _daily_stats WHERE date < date('now', ?)", [cutoff]);
+      this.pool.write().run("DELETE FROM _daily_queries WHERE date < date('now', ?)", [cutoff]);
     } catch (err) {
       logger.warn("Analytics prune failed", { error: err instanceof Error ? err.message : String(err) });
     }

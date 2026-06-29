@@ -114,7 +114,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const db = pool.read();
 
     const queries = (db.query(
-      `SELECT COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE timestamp >= datetime('now', ?)`
+      `SELECT COALESCE(SUM(count), 0) as c, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(error_count), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN count ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN total_rows ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN total_rows ELSE 0 END), 0) as rows_written FROM _daily_stats WHERE date >= date('now', ?)`
     ).get(since) as QueryStatsRow & { rows_read: number; rows_written: number }) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0, rows_read: 0, rows_written: 0 };
 
     await ensureAllSnapshots(db);
@@ -148,7 +148,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const db = pool.read();
 
     const queries = (db.query(
-      `SELECT COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(row_count), 0) as rows_read FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?)`
+      `SELECT COALESCE(SUM(count), 0) as c, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(error_count), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN count ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN total_rows ELSE 0 END), 0) as rows_read FROM _daily_stats WHERE database = ? AND date >= date('now', ?)`
     ).get(params.database, since) as QueryStatsRow & { rows_read: number }) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0, rows_read: 0 };
 
     let storage = db.query(
@@ -162,7 +162,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     }
 
     const topTables = db.query(
-      `SELECT COALESCE(sql_text, operation) as sql_text, COUNT(*) as calls, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(row_count), 0) as total_rows FROM _query_log WHERE database = ? AND timestamp >= datetime('now', ?) GROUP BY COALESCE(sql_text, operation) ORDER BY calls DESC LIMIT 10`
+      `SELECT sql_text, COALESCE(SUM(count), 0) as calls, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(writes), 0) as writes, COALESCE(SUM(total_rows), 0) as total_rows FROM _daily_queries WHERE database = ? AND date >= date('now', ?) GROUP BY sql_text ORDER BY calls DESC LIMIT 10`
     ).all(params.database, since) as TopTableRow[];
 
     return jsonResponse({
@@ -191,7 +191,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const db = pool.read();
 
     const queryStats = db.query(
-      `SELECT database, COUNT(*) as c, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN 1 ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as rows_written FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY database`
+      `SELECT database, COALESCE(SUM(count), 0) as c, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(error_count), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN count ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN total_rows ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN total_rows ELSE 0 END), 0) as rows_written FROM _daily_stats WHERE date >= date('now', ?) GROUP BY database`
     ).all(since) as { database: string; c: number; avg_ms: number; errors: number; writes: number; rows_read: number; rows_written: number }[];
 
     await ensureAllSnapshots(db);
@@ -259,7 +259,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const { since } = parseRange(url);
     const db = pool.read();
     const rows = db.query(
-      `SELECT database, sql_text, calls, avg_ms, total_rows FROM (SELECT database, COALESCE(sql_text, operation) as sql_text, COUNT(*) as calls, COALESCE(AVG(duration_ms), 0) as avg_ms, COALESCE(SUM(row_count), 0) as total_rows, ROW_NUMBER() OVER (PARTITION BY database ORDER BY COUNT(*) DESC) as rn FROM _query_log WHERE timestamp >= datetime('now', ?) GROUP BY database, COALESCE(sql_text, operation)) WHERE rn = 1 ORDER BY calls DESC`
+      `SELECT q1.database, q1.sql_text, q1.calls, q1.avg_ms, q1.total_rows FROM (SELECT database, sql_text, COALESCE(SUM(count), 0) as calls, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(total_rows), 0) as total_rows, ROW_NUMBER() OVER (PARTITION BY database ORDER BY COALESCE(SUM(count), 0) DESC) as rn FROM _daily_queries WHERE date >= date('now', ?) GROUP BY database, sql_text) q1 WHERE q1.rn = 1 ORDER BY q1.calls DESC`
     ).all(since);
     return jsonResponse({ data: rows });
   });
