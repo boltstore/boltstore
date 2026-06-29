@@ -240,6 +240,7 @@
               <button v-if="editableName !== dbName" class="btn-primary btn-sm shrink-0" :disabled="renaming || loadingRename" @click="saveName">{{ renaming ? 'Saving...' : 'Save' }}</button>
             </div>
             <p v-if="nameSaved" class="text-[10px] text-green-400 mt-1">Name updated</p>
+            <p v-if="renameDbError" class="text-[10px] text-red-400 mt-1">{{ renameDbError }}</p>
           </div>
           <div>
             <label class="label">Group</label>
@@ -648,6 +649,7 @@ const loadingRename = ref(false)
 const loadingExport = ref(false)
 const loadingDelete = ref(false)
 const editableName = ref(dbName.value)
+const renameDbError = ref("")
 const serverUrl = ref("")
 const deletingRows = ref<number[]>([])
 const dbAnalytics = ref<DatabaseAnalytics | null>(null)
@@ -827,6 +829,10 @@ const tabs = [
 ]
 
 const tables = ref<{ name: string; count: number }[]>([])
+watch(editableName, () => {
+  renameDbError.value = ""
+})
+
 const tableSearch = ref("")
 const filteredTables = computed(() => {
   if (!tableSearch.value) return tables.value
@@ -905,7 +911,7 @@ watch(activeTab, (tab) => {
 const topQueries = computed(() => {
   if (!dbAnalytics.value?.topTables) return []
   return dbAnalytics.value.topTables.map(t => ({
-    query: t.sql_text ?? t.operation,
+    query: t.sql_text ?? "",
     calls: t.calls,
     avgTime: `${t.avg_ms.toFixed(1)}ms`,
     totalTime: `${(t.calls * t.avg_ms / 1000).toFixed(1)}s`,
@@ -991,6 +997,7 @@ async function saveGroup(group: string) {
 async function saveName() {
   const newName = editableName.value.trim()
   if (!newName || newName === dbName.value) return
+  renameDbError.value = ""
   renaming.value = true
   loadingRename.value = true
   try {
@@ -998,7 +1005,9 @@ async function saveName() {
     nameSaved.value = true
     setTimeout(() => nameSaved.value = false, 2000)
     router.replace(`/databases/${newName}/${activeTab.value}/settings`)
-  } catch {} finally {
+  } catch (e: unknown) {
+    renameDbError.value = e instanceof Error ? e.message : "Failed to rename database"
+  } finally {
     renaming.value = false
     loadingRename.value = false
   }

@@ -28,6 +28,7 @@ export interface DatabaseInfo {
   path: string
   createdAt: string
   readonly?: boolean
+  group?: string
 }
 
 export interface ApiKeyInfo {

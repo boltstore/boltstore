@@ -21,6 +21,17 @@ import type {
   TopQuery,
 } from "./types"
 
+export type {
+  ActivityEntry,
+  AnalyticsOverview,
+  TopQuery,
+  QueryLogEntry,
+  ApiKeyInfo,
+  DatabaseAnalytics,
+  DatabaseInfo,
+  HealthResponse,
+}
+
 const STORAGE_TOKEN = "boltstore_session"
 const memoryStore = new Map<string, string>()
 

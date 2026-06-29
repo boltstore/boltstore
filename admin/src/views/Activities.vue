@@ -154,7 +154,7 @@ function prevPage() {
 
 const filteredEvents = computed(() => {
   if (eventFilter.value === "all") return entries.value
-  return entries.value.filter(e => e.action.startsWith(eventFilter.value))
+  return entries.value.filter((e: ActivityEntry) => e.action.startsWith(eventFilter.value))
 })
 
 function formatAction(action: string) {

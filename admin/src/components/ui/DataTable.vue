@@ -178,7 +178,7 @@
               >
                 <div v-if="editingCell?.row === ri && editingCell?.col === col.key">
                   <input
-                    :ref="(el) => { if (el) editInputEl = el as HTMLInputElement }"
+                    :ref="setEditInputRef"
                     class="cell-input"
                     v-model="editValue"
                     @keydown.enter="saveEdit(ri, col.key)"
@@ -329,6 +329,9 @@ const modifiedRows = ref(new Set<number>())
 const editingCell = ref<{ row: number; col: string } | null>(null)
 const editValue = ref("")
 let editInputEl: HTMLInputElement | null = null
+function setEditInputRef(el: unknown) {
+  if (el instanceof HTMLInputElement) editInputEl = el
+}
 
 interface Filter {
   column: string
