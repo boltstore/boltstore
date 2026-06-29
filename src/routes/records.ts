@@ -107,7 +107,7 @@ function buildSelectSQL(table: string, query: URLSearchParams): { sql: string; p
       return errorResponse("VALIDATION", "Search requires 'fields' to be specified (searching all columns is not supported).", 400);
     }
     searchClause = `${where ? " AND" : " WHERE"} (${fields.map(f => `"${f}" LIKE ?`).join(" OR ")})`;
-    params.push(`%${search}%`);
+    for (let i = 0; i < fields.length; i++) params.push(`%${search}%`);
   }
 
   const sort = query.get("sort");
