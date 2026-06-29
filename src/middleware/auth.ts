@@ -4,6 +4,10 @@ import { logger } from "../logger";
 import { sha256Hex, timingSafeEqual } from "../crypto-utils";
 import { checkApiKeyThrottle } from "./throttle";
 import { getClientIp } from "../routes/activity";
+import { createCache } from "../cache";
+
+const SESSION_CACHE_TTL = 60_000;
+const sessionCache = createCache<AdminSession>(SESSION_CACHE_TTL);
 
 export interface AuthResult {
   authenticated: boolean;
@@ -15,6 +19,11 @@ export interface AuthResult {
 
 export interface AdminSession {
   adminId: string;
+}
+
+export function invalidateSessionCache(tokenHash?: string): void {
+  if (tokenHash) sessionCache.invalidate(tokenHash);
+  else sessionCache.invalidate();
 }
 
 let configuredAdminKey: string | undefined;
@@ -34,14 +43,21 @@ export async function resolveAdminSession(request: Request, manager?: DatabaseMa
     return { adminId: "admin_key" };
   }
 
-  // Check session token from _sessions table (lookup by hash)
+  // Check session token from _sessions table (lookup by hash, with cache)
   if (manager) {
     try {
       const hashHex = await sha256Hex(token);
+      const cached = sessionCache.get(hashHex);
+      if (cached) return cached;
+
       const row = manager.getMetaPool().read()
         .query("SELECT admin_id FROM _sessions WHERE token_hash = ? AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))")
         .get(hashHex) as { admin_id: string } | null;
-      if (row) return { adminId: row.admin_id };
+      if (row) {
+        const session = { adminId: row.admin_id };
+        sessionCache.set(hashHex, session);
+        return session;
+      }
     } catch (err) {
       logger.warn("Session lookup failed in isAdminRequest", { error: err instanceof Error ? err.message : String(err) });
     }

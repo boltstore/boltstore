@@ -5,7 +5,7 @@ import { logActivity, getClientIp, getAdminId } from "./activity";
 import { generateId, sha256Hex, timingSafeEqual } from "../crypto-utils";
 import { logger } from "../logger";
 import { checkLoginThrottle } from "../middleware/throttle";
-import { resolveAdminSession } from "../middleware/auth";
+import { resolveAdminSession, invalidateSessionCache } from "../middleware/auth";
 
 const SESSION_TTL_HOURS = 24 * 7; // 7 days
 
@@ -135,6 +135,7 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
       const tokenHash = await sha256Hex(token);
       const row = metaPool.read().query("SELECT admin_id FROM _sessions WHERE token_hash = ?").get(tokenHash) as { admin_id: string } | null;
       metaPool.write().run("DELETE FROM _sessions WHERE token_hash = ?", [tokenHash]);
+      invalidateSessionCache(tokenHash);
       if (row) {
         logActivity(manager, { action: "admin.logout", admin_id: row.admin_id, ip: getClientIp(req) });
       }
