@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse } from "../server";
-import { isAdminRequest } from "../middleware/auth";
+import { authenticateApiKey, isAdminRequest } from "../middleware/auth";
 import { logActivity, getClientIp, getAdminId } from "./activity";
 import { logger } from "../logger";
 import { validateDbName, isValidDbName } from "../validation";
@@ -15,10 +15,11 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
   const dataDir = manager.getDataDir();
 
   router.post("/api/databases/:name/export", async (req, params) => {
-    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     if (!isValidDbName(params.name)) {
       return errorResponse("VALIDATION", "Invalid database name.", 400);
     }
+    const auth = await authenticateApiKey(req, manager, params.name);
+    if (auth instanceof Response) return auth;
 
     const pool = manager.get(params.name);
     const exportPath = `${dataDir}/${params.name}_export_${generateId("exp_", 16)}.db`;

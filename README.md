@@ -8,7 +8,7 @@
 
 ## Features
 
-- **SQLite via HTTP REST API** — Full CRUD on records, table DDL, filtering, sorting, pagination, and a raw SQL endpoint (read-only for non-admin keys).
+- **SQLite via HTTP REST API** — Full CRUD on records, table DDL, filtering, sorting, pagination, and a raw SQL endpoint.
 - **Multi-database support** — One instance serves multiple isolated SQLite databases, each with its own file, config, and API keys.
 - **API key authentication** — Per-database API keys for machine access; admin sessions for dashboard access. Keys are SHA-256 hashed at rest.
 - **Admin dashboard** — Vue 3 SPA at `/dashboard` for managing databases, tables, records, API keys, analytics, and settings. HMR during development via Vite.
@@ -112,7 +112,7 @@ Boltstore has two credential systems:
 | **Scope** | Global — can administer the whole server | Per-database — bound to one database |
 | **Lifetime** | Until logout or the server prunes expired sessions (expiry/rotation is a future enhancement) | Permanent until revoked |
 | **Sent as** | `Authorization: Bearer <session-token>` | `Authorization: Bearer <boltstore_...>` |
-| **Admin access** | Yes — full admin API + dashboard | No — data API only (records, tables, raw SQL `SELECT`). DDL/DML via raw SQL requires an admin key. |
+| **Admin access** | Yes — full admin API + dashboard | Yes — full data API access (records, tables, DDL, raw SQL, export, config, keys). Import and database deletion require admin. |
 
 ### Admin accounts & bootstrap
 
@@ -136,7 +136,7 @@ API keys are system-level credentials stored in the `_api_keys` table in the met
 - **Format:** `boltstore_` + 32 random alphanumeric characters.
 - **At rest:** SHA-256 hashed (never stored plaintext). The raw key is returned **only once** at creation time.
 - **Per-database:** A key for database `foo` cannot access database `bar`. Admin keys / sessions can access any database.
-- **Operations:** A non-admin API key can read/write records, manage tables on its database, and run `SELECT` raw SQL. DDL/DML via the raw `/query` endpoint requires an admin key (see "Raw SQL" below).
+- **Operations:** API keys grant full access to their database — records, tables, DDL, raw SQL (any statement), export, config, and key management. Import and database deletion require admin credentials.
 - **Management:** Created, rotated, and revoked via the admin API (`/api/databases/:name/keys`) or the dashboard.
 
 ```bash
@@ -167,32 +167,34 @@ Tables whose names start with `_` (e.g. `_boltstore` internal tables) are system
 | `GET /api/admin/me` | Admin session | Current admin info |
 | `POST /api/admin/logout` | Admin session | End session |
 | `/api/databases` (GET, POST) | Admin | List / create databases |
-| `/api/databases/:name` (GET, PATCH, DELETE) | Admin | Database detail / rename / delete |
-| `/api/databases/:name/config` (GET, PATCH) | Admin | Per-database config |
-| `/api/databases/:name/keys` (GET, POST) | Admin | List / create API keys |
-| `/api/databases/:name/keys/:id/rotate` (POST) | Admin | Rotate a key |
-| `/api/databases/:name/keys/:id` (DELETE) | Admin | Revoke a key |
-| `/api/databases/:name/export` (POST) | Admin | Export database file |
+| `/api/databases/:name` (GET) | API key or admin | Database detail |
+| `/api/databases/:name` (PATCH, DELETE) | Admin | Rename / delete |
+| `/api/databases/:name/config` (GET, PATCH) | API key or admin | Per-database config |
+| `/api/databases/:name/keys` (GET, POST) | API key or admin | List / create API keys |
+| `/api/databases/:name/keys/:id/rotate` (POST) | API key or admin | Rotate a key |
+| `/api/databases/:name/keys/:id` (DELETE) | API key or admin | Revoke a key |
+| `/api/databases/:name/export` (POST) | API key or admin | Export database file |
 | `/api/databases/import` (POST) | Admin | Import a `.db` file |
 | `/api/settings` (GET, PATCH) | Admin | Global settings |
 | `/api/activity` (GET) | Admin | Audit log |
-| `/api/analytics/*` (GET) | Admin | Analytics dashboards |
+| `/api/analytics/*` (global) | Admin | Cross-database analytics |
+| `/api/analytics/:database/*` | API key or admin | Per-database analytics |
 | `/api/databases/:db/tables` (GET, POST) | API key or admin | List / create tables |
+| `/api/databases/:db/tables/schema` (GET) | API key or admin | Batch schema |
 | `/api/databases/:db/tables/:table` (GET, PATCH, DELETE) | API key or admin | Table schema / alter / drop |
 | `/api/databases/:db/tables/:table/records` (GET, POST) | API key or admin | List / create records |
 | `/api/databases/:db/tables/:table/records/:id` (GET, PATCH, DELETE) | API key or admin | Record CRUD |
-| `/api/databases/:db/query` (POST) | API key or admin | Raw SQL — **`SELECT` only for non-admin keys**; DDL/DML requires admin |
+| `/api/databases/:db/query` (POST) | API key or admin | Raw SQL — full access |
 
 ### Raw SQL endpoint
 
 `POST /api/databases/:db/query` accepts `{ sql: string, params?: unknown[] }` and runs the statement with parameterised bindings.
 
 **Policy (MVP):**
-- **Non-admin API keys may only execute `SELECT` statements.** Any `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`, `REPLACE`, `VACUUM`, `ATTACH`, `DETACH`, `PRAGMA`, `REINDEX`, or `ANALYZE` statement is rejected with `403 FORBIDDEN` / `WRITE_REQUIRES_ADMIN` for non-admin keys.
-- **Admin keys / sessions may execute any statement.**
+- **API keys may execute any SQL statement** — `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`, `PRAGMA`, `ATTACH`, etc.
+- **Admin keys / sessions may also execute any statement.**
 - If the database is in read-only mode (per-database config), writes are rejected for everyone.
-
-> **Note:** The SELECT-only policy for non-admin keys is not yet enforced. Until that lands, assume any API key can run any SQL via `/query` and only hand API keys to trusted services.
+- **ATTACH path restriction:** `ATTACH DATABASE` paths must be within the server data directory; outside paths are rejected with `403 ATTACH_REJECTED`.
 
 ## Timestamps & timezones
 

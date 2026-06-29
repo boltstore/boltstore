@@ -10,16 +10,10 @@ import { resolve } from "node:path";
 
 const WRITE_PATTERN = /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|REPLACE|VACUUM|ATTACH|DETACH|PRAGMA|REINDEX|ANALYZE)\b/i;
 const ATTACH_PATH_PATTERN = /ATTACH\s+(?:DATABASE\s+)?['"]([^'"]+)['"]/i;
-const SELECT_PATTERN = /^\s*(SELECT|WITH|EXPLAIN)\b/i;
-
 const SQL_COMMENT_ORPHAN = /--[^\n]*|\/\*[\s\S]*?\*\//g;
 
 function stripComments(sql: string): string {
   return sql.replace(SQL_COMMENT_ORPHAN, "").trim();
-}
-
-function isSelectStatement(sql: string): boolean {
-  return SELECT_PATTERN.test(stripComments(sql));
 }
 
 function isWriteStatement(sql: string): boolean {
@@ -33,7 +27,6 @@ export function registerQueryRoutes(router: Router, manager: DatabaseManager): v
     const auth = await authenticateApiKey(req, manager, params.db);
     if (auth instanceof Response) return auth;
 
-
     const start = performance.now();
     const body = await parseJsonBody<{ sql?: string; params?: unknown[] }>(req); if (body instanceof Response) return body;
     if (!body.sql || typeof body.sql !== "string") {
@@ -46,11 +39,6 @@ export function registerQueryRoutes(router: Router, manager: DatabaseManager): v
     if (isWrite) {
       const ro = checkReadOnly(manager, params.db);
       if (ro) return ro;
-    }
-
-    if (!auth.isAdmin && !isSelectStatement(sql)) {
-      recordAnalytics(manager, { database: params.db, operation: "select", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: "Non-admin key attempted non-SELECT statement", sqlText: sql });
-      return errorResponse("WRITE_REQUIRES_ADMIN", "Non-admin API keys may only execute SELECT statements via /query. DDL, DML, PRAGMA, and ATTACH require an admin key.", 403);
     }
 
     if (isWrite && /^\s*ATTACH\b/i.test(sql)) {

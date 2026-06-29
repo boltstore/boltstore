@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse, parseJsonBody } from "../server";
-import { authenticateApiKey, checkDbCors, isAdminRequest } from "../middleware/auth";
+import { authenticateApiKey, checkDbCors } from "../middleware/auth";
 import { checkReadOnly } from "../middleware/readonly";
 import { logActivity, getClientIp } from "./activity";
 import { logger } from "../logger";
@@ -102,9 +102,10 @@ export function registerTableRoutes(router: Router, manager: DatabaseManager): v
   });
 
   router.get("/api/databases/:db/tables/schema", async (req, params) => {
-    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const corsCheck = checkDbCors(req, manager, params.db);
     if (corsCheck) return corsCheck;
+    const auth = await authenticateApiKey(req, manager, params.db);
+    if (auth instanceof Response) return auth;
 
     try {
       const pool = manager.get(params.db);

@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse, parseJsonBody } from "../server";
-import { isAdminRequest } from "../middleware/auth";
+import { authenticateApiKey } from "../middleware/auth";
 import { logActivity, getClientIp, getAdminId } from "./activity";
 import { generateToken, generateId, sha256Hex } from "../crypto-utils";
 import { validateDbName } from "../validation";
@@ -16,18 +16,20 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
   const metaPool = manager.getMetaPool();
 
   router.get("/api/databases/:name/keys", async (req, params) => {
-    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const nameErr = validateDbName(params.name);
     if (nameErr) return nameErr;
+    const auth = await authenticateApiKey(req, manager, params.name);
+    if (auth instanceof Response) return auth;
     const db = metaPool.read();
     const keys = db.query("SELECT id, label, created_at, last_used_at FROM _api_keys WHERE database_name = ? ORDER BY created_at DESC").all(params.name);
     return jsonResponse({ data: keys });
   });
 
   router.post("/api/databases/:name/keys", async (req, params) => {
-    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const nameErr = validateDbName(params.name);
     if (nameErr) return nameErr;
+    const auth = await authenticateApiKey(req, manager, params.name);
+    if (auth instanceof Response) return auth;
     const body = await parseJsonBody<{ label?: string }>(req); if (body instanceof Response) return body;
     if (!body.label || typeof body.label !== "string" || body.label.length < 1) {
       return errorResponse("VALIDATION", "Label is required.", 400);
@@ -47,9 +49,10 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
   });
 
   router.post("/api/databases/:name/keys/:keyId/rotate", async (req, params) => {
-    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const nameErr = validateDbName(params.name);
     if (nameErr) return nameErr;
+    const auth = await authenticateApiKey(req, manager, params.name);
+    if (auth instanceof Response) return auth;
     const key = generateApiKey();
     const hash = await sha256Hex(key);
 
@@ -66,9 +69,10 @@ export function registerApiKeyRoutes(router: Router, manager: DatabaseManager): 
   });
 
   router.delete("/api/databases/:name/keys/:keyId", async (req, params) => {
-    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const nameErr = validateDbName(params.name);
     if (nameErr) return nameErr;
+    const auth = await authenticateApiKey(req, manager, params.name);
+    if (auth instanceof Response) return auth;
     const result = metaPool.write().run(
       "DELETE FROM _api_keys WHERE id = ? AND database_name = ?",
       [params.keyId, params.name]

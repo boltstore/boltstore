@@ -53,51 +53,51 @@ describe("Query endpoint", () => {
     expect(json.data).toHaveLength(2);
   });
 
-  test("INSERT with non-admin API key returns 403", async () => {
+  test("INSERT with non-admin API key succeeds", async () => {
     const res = await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/query`), {
       method: "POST",
       headers: { Authorization: `Bearer ${ctx.apiKey}` },
-      body: JSON.stringify({ sql: "INSERT INTO items (title) VALUES ('blocked')" }),
+      body: JSON.stringify({ sql: "INSERT INTO items (title) VALUES ('api insert')" }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.error.code).toBe("WRITE_REQUIRES_ADMIN");
+    expect(json.meta.changes).toBe(1);
   });
 
-  test("UPDATE with non-admin API key returns 403", async () => {
+  test("UPDATE with non-admin API key succeeds", async () => {
     const res = await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/query`), {
       method: "POST",
       headers: { Authorization: `Bearer ${ctx.apiKey}` },
       body: JSON.stringify({ sql: "UPDATE items SET views = 999 WHERE id = 1" }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
-  test("DELETE with non-admin API key returns 403", async () => {
+  test("DELETE with non-admin API key succeeds", async () => {
     const res = await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/query`), {
       method: "POST",
       headers: { Authorization: `Bearer ${ctx.apiKey}` },
       body: JSON.stringify({ sql: "DELETE FROM items WHERE id = 1" }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
-  test("CREATE TABLE with non-admin API key returns 403", async () => {
+  test("CREATE TABLE with non-admin API key succeeds", async () => {
     const res = await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/query`), {
       method: "POST",
       headers: { Authorization: `Bearer ${ctx.apiKey}` },
-      body: JSON.stringify({ sql: "CREATE TABLE evil (x TEXT)" }),
+      body: JSON.stringify({ sql: "CREATE TABLE temp_table (x TEXT)" }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
-  test("DROP TABLE with non-admin API key returns 403", async () => {
+  test("DROP TABLE with non-admin API key succeeds", async () => {
     const res = await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/query`), {
       method: "POST",
       headers: { Authorization: `Bearer ${ctx.apiKey}` },
-      body: JSON.stringify({ sql: "DROP TABLE items" }),
+      body: JSON.stringify({ sql: "DROP TABLE IF EXISTS temp_table" }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
   test("ATTACH with non-admin API key returns 403", async () => {
@@ -109,13 +109,13 @@ describe("Query endpoint", () => {
     expect(res.status).toBe(403);
   });
 
-  test("PRAGMA with non-admin API key returns 403", async () => {
+  test("PRAGMA with non-admin API key succeeds", async () => {
     const res = await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/query`), {
       method: "POST",
       headers: { Authorization: `Bearer ${ctx.apiKey}` },
       body: JSON.stringify({ sql: "PRAGMA journal_mode" }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
   test("INSERT with admin key succeeds", async () => {
@@ -164,7 +164,7 @@ describe("Query endpoint", () => {
       headers: { Authorization: `Bearer ${ctx.apiKey}` },
       body: JSON.stringify({ sql: "SELECTT * FROM items" }),
     });
-    // "SELECTT" doesn't match SELECT\b, so it hits the write-denied path → 403
-    expect(res.status).toBe(403);
+    // "SELECTT" is invalid SQL — SQLite returns an error → 400
+    expect(res.status).toBe(400);
   });
 });

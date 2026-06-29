@@ -1,7 +1,7 @@
 import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { jsonResponse, errorResponse, parseJsonBody } from "../server";
-import { isAdminRequest } from "../middleware/auth";
+import { authenticateApiKey, isAdminRequest } from "../middleware/auth";
 import { logActivity, getClientIp, getAdminId } from "./activity";
 import { logger } from "../logger";
 import { validateDbName, isValidDbName } from "../validation";
@@ -29,9 +29,10 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
   });
 
   router.get("/api/databases/:name", async (req, params) => {
-    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const nameErr = validateDbName(params.name);
     if (nameErr) return nameErr;
+    const auth = await authenticateApiKey(req, manager, params.name);
+    if (auth instanceof Response) return auth;
     try {
       const pool = manager.get(params.name);
       const db = pool.read();

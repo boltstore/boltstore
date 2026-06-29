@@ -2,7 +2,7 @@ import { Router } from "../router";
 import { DatabaseManager } from "../db/manager";
 import { AnalyticsManager } from "../analytics";
 import { jsonResponse, errorResponse } from "../server";
-import { isAdminRequest } from "../middleware/auth";
+import { authenticateApiKey, isAdminRequest } from "../middleware/auth";
 import { validateDbName } from "../validation";
 import { createCache } from "../cache";
 
@@ -107,7 +107,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const cacheKey = `overview:${new URL(req.url).search}`;
     const cached = analyticsCache.get(cacheKey);
-    if (cached) return cached as Response;
+    if (cached) return jsonResponse(cached);
 
     const url = new URL(req.url);
     const { since } = parseRange(url);
@@ -124,26 +124,25 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
 
     const dbCount = manager.listDatabases().length;
 
-    const response = jsonResponse({
-      data: {
-        databases: dbCount,
-        queries: queries.c,
-        writes: queries.writes,
-        avgLatencyMs: Math.round(queries.avg_ms * 10) / 10,
-        errorCount: queries.errors,
-        rows_read: queries.rows_read,
-        rows_written: queries.rows_written,
-        totalStorageBytes: totalStorage,
-      },
-    });
-    analyticsCache.set(cacheKey, response);
-    return response;
+    const data = {
+      databases: dbCount,
+      queries: queries.c,
+      writes: queries.writes,
+      avgLatencyMs: Math.round(queries.avg_ms * 10) / 10,
+      errorCount: queries.errors,
+      rows_read: queries.rows_read,
+      rows_written: queries.rows_written,
+      totalStorageBytes: totalStorage,
+    };
+    analyticsCache.set(cacheKey, { data });
+    return jsonResponse({ data });
   });
 
   router.get("/api/analytics/:database/overview", async (req, params) => {
-    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const dbNameErr = validateDbName(params.database);
     if (dbNameErr) return dbNameErr;
+    const auth = await authenticateApiKey(req, manager, params.database);
+    if (auth instanceof Response) return auth;
     const url = new URL(req.url);
     const { since } = parseRange(url);
     const db = pool.read();
@@ -185,7 +184,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const cacheKey = `databases:${new URL(req.url).search}`;
     const cached = analyticsCache.get(cacheKey);
-    if (cached) return cached as Response;
+    if (cached) return jsonResponse(cached);
 
     const url = new URL(req.url);
     const { since } = parseRange(url);
@@ -219,15 +218,15 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       };
     });
 
-    const response = jsonResponse({ data });
-    analyticsCache.set(cacheKey, response);
-    return response;
+    analyticsCache.set(cacheKey, { data });
+    return jsonResponse({ data });
   });
 
   router.get("/api/analytics/:database/queries", async (req, params) => {
-    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const dbNameErr = validateDbName(params.database);
     if (dbNameErr) return dbNameErr;
+    const auth = await authenticateApiKey(req, manager, params.database);
+    if (auth instanceof Response) return auth;
     const url = new URL(req.url);
     const { since } = parseRange(url);
     const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "20", 10) || 20, 1), 100);
@@ -243,9 +242,10 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
   });
 
   router.get("/api/analytics/:database/size", async (req, params) => {
-    if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const dbNameErr = validateDbName(params.database);
     if (dbNameErr) return dbNameErr;
+    const auth = await authenticateApiKey(req, manager, params.database);
+    if (auth instanceof Response) return auth;
     const db = pool.read();
     const rows = db.query(
       "SELECT size_bytes, table_count, timestamp FROM _storage_snapshots WHERE database = ? ORDER BY timestamp DESC LIMIT 100"
@@ -280,7 +280,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const cacheKey = `volume:${new URL(req.url).search}`;
     const cached = analyticsCache.get(cacheKey);
-    if (cached) return cached as Response;
+    if (cached) return jsonResponse(cached);
 
     const url = new URL(req.url);
     const range = url.searchParams.get("range") || "24h";
@@ -400,8 +400,8 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const max = Math.max(...counts, 1);
     const maxRead = Math.max(...reads, 1);
     const maxWrite = Math.max(...writes, 1);
-    const response = jsonResponse({ data: { slots: slotLabels, counts, errors, max, rows_read: reads, rows_written: writes, max_read: maxRead, max_written: maxWrite } });
-    analyticsCache.set(cacheKey, response);
-    return response;
+    const volumeData = { slots: slotLabels, counts, errors, max, rows_read: reads, rows_written: writes, max_read: maxRead, max_written: maxWrite };
+    analyticsCache.set(cacheKey, { data: volumeData });
+    return jsonResponse({ data: volumeData });
   });
 }
