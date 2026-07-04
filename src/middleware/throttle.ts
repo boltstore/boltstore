@@ -98,3 +98,29 @@ export function checkApiKeyThrottle(ip: string | undefined, databaseName: string
 // not end users. A per-IP throttle on data endpoints would harm legitimate
 // backend workloads. Rate limiting for the data plane belongs at the reverse
 // proxy or WAF layer if needed.
+
+export function checkAdminThrottle(ip: string | undefined): { allowed: boolean; retryAfterMs: number } {
+  if (!ip || ip === "127.0.0.1" || ip === "::1" || ip === "unknown") {
+    return { allowed: true, retryAfterMs: 0 };
+  }
+
+  const now = Date.now();
+  if (attempts.size > MAX_MAP_SIZE) pruneExpired(now);
+  const key = `admin:${ip}`;
+  let bucket = attempts.get(key);
+
+  if (!bucket || now >= bucket.resetAt) {
+    bucket = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    attempts.set(key, bucket);
+    startCleanup();
+  }
+
+  bucket.count++;
+  const remaining = bucket.resetAt - now;
+
+  if (bucket.count > MAX_ATTEMPTS) {
+    return { allowed: false, retryAfterMs: remaining };
+  }
+
+  return { allowed: true, retryAfterMs: 0 };
+}

@@ -87,9 +87,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!baseUrl) throw new ApiClientError(0, "NO_URL", "Server URL not configured")
 
   const method = (options.method || "GET").toUpperCase()
+  const token = getToken()
+  const cacheKey = `${method}:${path}:${token || ""}`
 
   if (method === "GET") {
-    const cached = responseCache.get(path)
+    const cached = responseCache.get(cacheKey)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       return cached.data as T
     }
@@ -97,7 +99,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     responseCache.clear()
   }
 
-  const token = getToken()
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
@@ -131,7 +132,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (ct.includes("application/json")) {
     const data = await res.json() as T
     if (method === "GET") {
-      responseCache.set(path, { data, timestamp: Date.now() })
+      responseCache.set(cacheKey, { data, timestamp: Date.now() })
     }
     return data
   }

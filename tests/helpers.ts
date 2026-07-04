@@ -40,7 +40,7 @@ export async function setupTestServer(): Promise<TestContext> {
   const setupRes = await fetch(`${base}/api/admin/setup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "admin@test.com", password: "testpassword123" }),
+    body: JSON.stringify({ email: "admin@test.com", password: "Testpassword123!" }),
   });
   if (!setupRes.ok) throw new Error(`Admin setup failed: ${await setupRes.text()}`);
 
@@ -48,7 +48,7 @@ export async function setupTestServer(): Promise<TestContext> {
   const loginRes = await fetch(`${base}/api/admin/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "admin@test.com", password: "testpassword123" }),
+    body: JSON.stringify({ email: "admin@test.com", password: "Testpassword123!" }),
   });
   if (!loginRes.ok) throw new Error(`Admin login failed: ${await loginRes.text()}`);
   const loginJson = await loginRes.json();

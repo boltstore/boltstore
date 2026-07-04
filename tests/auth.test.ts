@@ -37,7 +37,7 @@ describe("Authentication", () => {
     const loginRes = await fetch(apiUrl(ctx, "/api/admin/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "admin@test.com", password: "testpassword123" }),
+      body: JSON.stringify({ email: "admin@test.com", password: "Testpassword123!" }),
     });
     expect(loginRes.status).toBe(200);
     const loginJson = await loginRes.json();
@@ -82,7 +82,7 @@ describe("Authentication", () => {
     const res = await fetch(apiUrl(ctx, "/api/admin/setup"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ctx.adminKey}` },
-      body: JSON.stringify({ email: "admin@test.com", password: "testpassword123" }),
+      body: JSON.stringify({ email: "admin@test.com", password: "Testpassword123!" }),
     });
     expect(res.status).toBe(409);
   });
@@ -91,7 +91,7 @@ describe("Authentication", () => {
     const res = await fetch(apiUrl(ctx, "/api/admin/setup"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ctx.adminKey}` },
-      body: JSON.stringify({ email: "admin2@test.com", password: "testpassword456" }),
+      body: JSON.stringify({ email: "admin2@test.com", password: "Testpassword456!" }),
     });
     expect(res.status).toBe(201);
     const json = await res.json();
@@ -102,7 +102,7 @@ describe("Authentication", () => {
     const res = await fetch(apiUrl(ctx, "/api/admin/setup"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "admin3@test.com", password: "testpassword789" }),
+      body: JSON.stringify({ email: "admin3@test.com", password: "Testpassword789!" }),
     });
     expect(res.status).toBe(401);
   });
@@ -111,7 +111,7 @@ describe("Authentication", () => {
     const res = await fetch(apiUrl(ctx, "/api/admin/setup"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ctx.adminKey}` },
-      body: JSON.stringify({ email: "admin4@test.com", password: "testpassword999" }),
+      body: JSON.stringify({ email: "admin4@test.com", password: "Testpassword999!" }),
     });
     expect(res.status).toBe(403);
   });
@@ -130,7 +130,7 @@ describe("Authentication", () => {
     const loginRes = await fetch(apiUrl(ctx, "/api/admin/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "admin@test.com", password: "testpassword123" }),
+      body: JSON.stringify({ email: "admin@test.com", password: "Testpassword123!" }),
     });
     expect(loginRes.status).toBe(200);
     const loginJson = await loginRes.json();

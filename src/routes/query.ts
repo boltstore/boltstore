@@ -9,7 +9,7 @@ import { toBindings } from "../db/cast";
 import { resolve } from "node:path";
 
 const WRITE_PATTERN = /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|REPLACE|VACUUM|ATTACH|DETACH|PRAGMA|REINDEX|ANALYZE)\b/i;
-const ATTACH_PATH_PATTERN = /ATTACH\s+(?:DATABASE\s+)?['"]([^'"]+)['"]/i;
+const ATTACH_PATH_PATTERN = /ATTACH\s+(?:DATABASE\s+)?['"]([^'"]+)['"]/gi;
 const SQL_COMMENT_ORPHAN = /--[^\n]*|\/\*[\s\S]*?\*\//g;
 
 function stripComments(sql: string): string {
@@ -45,9 +45,17 @@ export function registerQueryRoutes(router: Router, manager: DatabaseManager): v
       if (ro) return ro;
     }
 
-    if (isWrite && /^\s*ATTACH\b/i.test(sql)) {
-      const match = sql.match(ATTACH_PATH_PATTERN);
-      if (match) {
+    // Use comment-stripped SQL for ATTACH detection so SQL comments cannot bypass
+    // the check. Non-admin users are blocked entirely from ATTACH because the
+    // path validation regex has edge cases that are difficult to cover exhaustively.
+    if (isWrite && /^\s*ATTACH\b/i.test(stripComments(sql))) {
+      if (!auth.isAdmin) {
+        return errorResponse("ATTACH_REJECTED", "ATTACH DATABASE requires admin privileges.", 403);
+      }
+      const cleanedSql = stripComments(sql);
+      const attachPattern = /ATTACH\s+(?:DATABASE\s+)?['"]([^'"]+)['"]/gi;
+      let match: RegExpExecArray | null;
+      while ((match = attachPattern.exec(cleanedSql)) !== null) {
         const attachedPath = resolve(match[1].replace(/''/g, "'"));
         const dataDir = resolve(manager.getDataDir());
         if (!attachedPath.startsWith(dataDir + "/") && attachedPath !== dataDir) {

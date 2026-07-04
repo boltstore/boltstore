@@ -4,7 +4,7 @@ import { jsonResponse, errorResponse, parseJsonBody } from "../server";
 import { logActivity, getClientIp, getAdminId } from "./activity";
 import { generateId, sha256Hex, timingSafeEqual } from "../crypto-utils";
 import { logger } from "../logger";
-import { checkLoginThrottle } from "../middleware/throttle";
+import { checkLoginThrottle, checkAdminThrottle } from "../middleware/throttle";
 import { resolveAdminSession, invalidateSessionCache } from "../middleware/auth";
 
 const SESSION_TTL_HOURS = 24 * 7; // 7 days
@@ -32,6 +32,9 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
     }
     if (body.email.length < 3) return errorResponse("VALIDATION", "Email must be at least 3 characters.", 400);
     if (body.password.length < 8) return errorResponse("VALIDATION", "Password must be at least 8 characters.", 400);
+    if (!/[A-Z]/.test(body.password)) return errorResponse("VALIDATION", "Password must contain at least one uppercase letter.", 400);
+    if (!/[a-z]/.test(body.password)) return errorResponse("VALIDATION", "Password must contain at least one lowercase letter.", 400);
+    if (!/[0-9!@#$%^&*()_+\-=\[\]{}|;:',.<>?/~`]/.test(body.password)) return errorResponse("VALIDATION", "Password must contain at least one number or special character.", 400);
 
     // Check bootstrap key validity before entering the transaction (non-DB side effect)
     const existing = metaPool.read().query("SELECT COUNT(*) as c FROM _admins").get() as { c?: number };
@@ -110,6 +113,10 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
   });
 
   router.get("/api/admin/me", async (req) => {
+    const throttle = checkAdminThrottle(getClientIp(req));
+    if (!throttle.allowed) {
+      return errorResponse("RATE_LIMITED", `Too many requests. Try again in ${Math.ceil(throttle.retryAfterMs / 1000)} seconds.`, 429);
+    }
     const token = extractToken(req);
     if (!token) return errorResponse("UNAUTHORIZED", "Not authenticated.", 401);
 
@@ -130,6 +137,10 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
   });
 
   router.post("/api/admin/logout", async (req) => {
+    const throttle = checkAdminThrottle(getClientIp(req));
+    if (!throttle.allowed) {
+      return errorResponse("RATE_LIMITED", `Too many requests. Try again in ${Math.ceil(throttle.retryAfterMs / 1000)} seconds.`, 429);
+    }
     const token = extractToken(req);
     if (token) {
       const tokenHash = await sha256Hex(token);
@@ -145,6 +156,10 @@ export function registerAdminRoutes(router: Router, manager: DatabaseManager, ad
 
   // Prune expired sessions (called on each admin request via this endpoint)
   router.post("/api/admin/sessions/prune", async (req) => {
+    const throttle = checkAdminThrottle(getClientIp(req));
+    if (!throttle.allowed) {
+      return errorResponse("RATE_LIMITED", `Too many requests. Try again in ${Math.ceil(throttle.retryAfterMs / 1000)} seconds.`, 429);
+    }
     if (!(await import("../middleware/auth")).isAdminRequest(req, manager)) {
       return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     }
