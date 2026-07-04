@@ -104,6 +104,9 @@ export class AnalyticsManager {
     db.run("CREATE INDEX IF NOT EXISTS idx_storage_snapshots_db_id ON _storage_snapshots(database, id)");
     db.run("CREATE INDEX IF NOT EXISTS idx_daily_stats_db_date ON _daily_stats(database, date)");
     db.run("CREATE INDEX IF NOT EXISTS idx_daily_queries_db_date ON _daily_queries(database, date)");
+    // Index for date-range queries (top-queries, volume for 7d/30d)
+    db.run("CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON _daily_stats(date)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_daily_queries_date_db ON _daily_queries(date, database, sql_text)");
   }
 
   // In-memory buffer — up to 100 events (FLUSH_BATCH_SIZE) or 5 seconds

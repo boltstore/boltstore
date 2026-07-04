@@ -386,20 +386,25 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       }
     }
 
-    const tzOffsetMs = getTzOffsetMinutes(tz) * 60 * 1000;
-    const windowStart = new Date(slots[0].start.getTime() - tzOffsetMs).toISOString().replace("T", " ").replace("Z", "");
-    const windowEnd = new Date(slots[slots.length - 1].end.getTime() - tzOffsetMs).toISOString().replace("T", " ").replace("Z", "");
+    let rows: { k: string; c: number; e: number; r: number; w: number }[];
 
-    let groupKey: string;
     if (range === "24h") {
-      groupKey = `strftime('%Y-%m-%d %H:00:00', ${tzTimestamp})`;
+      // 24h uses raw _query_log for hourly precision
+      const tzOffsetMs = getTzOffsetMinutes(tz) * 60 * 1000;
+      const windowStart = new Date(slots[0].start.getTime() - tzOffsetMs).toISOString().replace("T", " ").replace("Z", "");
+      const windowEnd = new Date(slots[slots.length - 1].end.getTime() - tzOffsetMs).toISOString().replace("T", " ").replace("Z", "");
+      const groupKey = `strftime('%Y-%m-%d %H:00:00', ${tzTimestamp})`;
+      rows = db.query(
+        `SELECT ${groupKey} as k, COUNT(*) as c, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as e, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as r, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as w FROM _query_log WHERE timestamp >= ? AND timestamp < ? GROUP BY k ORDER BY k`
+      ).all(windowStart, windowEnd) as { k: string; c: number; e: number; r: number; w: number }[];
     } else {
-      groupKey = `strftime('%Y-%m-%d', ${tzTimestamp})`;
+      // 7d / 30d use pre-aggregated _daily_stats for better performance
+      const dailyStart = formatTzKey(slots[0].start, false);
+      const dailyEnd = formatTzKey(slots[slots.length - 1].end, false);
+      rows = db.query(
+        `SELECT date as k, COALESCE(SUM(count), 0) as c, COALESCE(SUM(error_count), 0) as e, COALESCE(SUM(CASE WHEN operation = 'select' THEN total_rows ELSE 0 END), 0) as r, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN total_rows ELSE 0 END), 0) as w FROM _daily_stats WHERE date >= ? AND date < ? GROUP BY date ORDER BY date`
+      ).all(dailyStart, dailyEnd) as { k: string; c: number; e: number; r: number; w: number }[];
     }
-
-    const rows = db.query(
-      `SELECT ${groupKey} as k, COUNT(*) as c, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as e, COALESCE(SUM(CASE WHEN operation = 'select' THEN row_count ELSE 0 END), 0) as r, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN row_count ELSE 0 END), 0) as w FROM _query_log WHERE timestamp >= ? AND timestamp < ? GROUP BY k ORDER BY k`
-    ).all(windowStart, windowEnd) as { k: string; c: number; e: number; r: number; w: number }[];
 
     const rowMap = new Map<string, typeof rows[0]>();
     for (const row of rows) rowMap.set(row.k, row);
