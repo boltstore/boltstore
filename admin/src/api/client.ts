@@ -342,6 +342,7 @@ export const api = {
       } catch {}
       throw new ApiClientError(res.status, "IMPORT_FAILED", message)
     }
+    responseCache.clear();
     return res.json() as Promise<ApiResponse<{ name: string }>>
   },
 }

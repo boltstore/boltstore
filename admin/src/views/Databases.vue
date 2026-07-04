@@ -137,11 +137,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue"
+import { ref, computed, onMounted, onUnmounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import Badge from "../components/ui/Badge.vue"
 import CreateDatabaseModal from "../components/database/CreateDatabaseModal.vue"
-import { api, type DatabaseInfo, type DatabaseAnalytics } from "../api/client"
+import { api, clearResponseCache, type DatabaseInfo, type DatabaseAnalytics } from "../api/client"
 import { formatBytes, formatCompact } from "../utils/time"
 
 const databases = ref<DatabaseInfo[]>([])
@@ -166,7 +166,13 @@ const importError = ref("")
 const fileInput = ref<HTMLInputElement | null>(null)
 const dbAnalytics = ref<Record<string, DatabaseAnalytics>>({})
 
-onMounted(() => load())
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+onMounted(() => {
+  load();
+  refreshTimer = setInterval(() => { clearResponseCache(); load(); }, 30000);
+});
+onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); });
 
 async function load() {
   try {

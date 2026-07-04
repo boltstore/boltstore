@@ -130,13 +130,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from "vue"
+import { ref, watch, onMounted, onUnmounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import MetricCard from "../components/ui/MetricCard.vue"
 import Badge from "../components/ui/Badge.vue"
 import TabButton from "../components/ui/TabButton.vue"
 import QueryChart from "../components/ui/QueryChart.vue"
-import { api, type HealthResponse, type DatabaseInfo, type ActivityEntry, type AnalyticsOverview } from "../api/client"
+import { api, clearResponseCache, type HealthResponse, type DatabaseInfo, type ActivityEntry, type AnalyticsOverview } from "../api/client"
 import { formatTime, formatBytes, formatCompact } from "../utils/time"
 
 const timeRanges = ["24h", "7d", "30d"]
@@ -175,7 +175,18 @@ async function loadVolume() {
   } catch {}
 }
 
-onMounted(() => { loadStatic(); loadVolume(); })
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+onMounted(() => {
+  loadStatic();
+  loadVolume();
+  // Auto-refresh every 30 seconds so newly added/deleted databases appear without manual page refresh
+  refreshTimer = setInterval(() => { clearResponseCache(); loadStatic(); loadVolume(); }, 30000);
+});
+
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer);
+});
 
 watch(activeRange, loadVolume)
 

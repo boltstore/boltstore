@@ -201,13 +201,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from "vue"
+import { ref, watch, onMounted, onUnmounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import MetricCard from "../components/ui/MetricCard.vue"
 import Modal from "../components/ui/Modal.vue"
 import TabButton from "../components/ui/TabButton.vue"
 import QueryChart from "../components/ui/QueryChart.vue"
-import { api, type AnalyticsOverview, type TopQuery, type QueryLogEntry } from "../api/client"
+import { api, clearResponseCache, type AnalyticsOverview, type TopQuery, type QueryLogEntry } from "../api/client"
 import { formatBytes, formatCompact } from "../utils/time"
 
 const userTimezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC"
@@ -288,7 +288,10 @@ async function loadAll() {
   }
 }
 
-onMounted(loadAll)
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+onMounted(() => { loadAll(); refreshTimer = setInterval(() => { clearResponseCache(); loadAll(); }, 30000); })
+onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); })
 watch(activeRange, loadAll)
 
 function formatTime(dateStr: string) {
