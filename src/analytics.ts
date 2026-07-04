@@ -27,6 +27,7 @@ export class AnalyticsManager {
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
   private retentionDays: number;
   private buffer: QueryEvent[] = [];
+  private timezone: string = "UTC";
 
   constructor(dataDir: string, retentionDays = DEFAULT_RETENTION_DAYS) {
     this.dataDir = dataDir;
@@ -117,17 +118,38 @@ export class AnalyticsManager {
     this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
   }
 
+  setTimezone(tz: string): void {
+    this.timezone = tz;
+  }
+
+  private getDateStr(date: Date): string {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: this.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    // en-CA locale formats dates as YYYY-MM-DD natively, which is the format SQLite
+    // expects for date comparisons. "sv-SE" would also work but en-CA is more readable.
+    return formatter.format(date);
+  }
+
   private flush(): void {
     if (this.buffer.length === 0) return;
     const batch = this.buffer.splice(0);
     try {
       const db = this.pool.write();
+
+      // Compute the current date in the configured timezone for consistent
+      // daily aggregation with the timezone-aware volume endpoint.
+      const dateStr = this.getDateStr(new Date());
+
       const stmt = db.prepare(
         "INSERT INTO _query_log (database, database_id, table_name, operation, duration_ms, row_count, status, error_msg, sql_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
       );
       const statsStmt = db.prepare(
         `INSERT INTO _daily_stats (database, database_id, date, operation, count, error_count, total_rows, total_ms)
-         VALUES (?, ?, date('now'), ?, 1, ?, ?, ?)
+         VALUES (?, ?, ?, ?, 1, ?, ?, ?)
          ON CONFLICT(database, date, operation) DO UPDATE SET
            count = count + 1,
            error_count = error_count + excluded.error_count,
@@ -136,7 +158,7 @@ export class AnalyticsManager {
       );
       const queriesStmt = db.prepare(
         `INSERT INTO _daily_queries (database, database_id, date, sql_text, count, writes, total_ms, total_rows)
-         VALUES (?, ?, date('now'), ?, 1, ?, ?, ?)
+         VALUES (?, ?, ?, ?, 1, ?, ?, ?)
          ON CONFLICT(database, date, sql_text) DO UPDATE SET
            count = count + 1,
            writes = writes + excluded.writes,
@@ -146,10 +168,10 @@ export class AnalyticsManager {
       for (const e of batch) {
         stmt.run(e.database, e.databaseId ?? null, e.table ?? null, e.operation, e.durationMs, e.rowCount, e.status, e.errorMessage ?? null, e.sqlText ?? null);
         const isError = e.status === "error" ? 1 : 0;
-        statsStmt.run(e.database, e.databaseId ?? null, e.operation, isError, e.rowCount, e.durationMs);
+        statsStmt.run(e.database, e.databaseId ?? null, dateStr, e.operation, isError, e.rowCount, e.durationMs);
         const sql = e.sqlText ?? e.operation;
         const isWriteOp = e.operation !== "select" ? 1 : 0;
-        queriesStmt.run(e.database, e.databaseId ?? null, sql, isWriteOp, e.durationMs, e.rowCount);
+        queriesStmt.run(e.database, e.databaseId ?? null, dateStr, sql, isWriteOp, e.durationMs, e.rowCount);
       }
     } catch (err) {
       logger.warn("Analytics flush failed, re-queueing events", { error: err instanceof Error ? err.message : String(err) });
@@ -160,9 +182,13 @@ export class AnalyticsManager {
   private prune(): void {
     try {
       const cutoff = `-${this.retentionDays} days`;
+      const now = new Date();
+      const cutoffDate = new Date(now);
+      cutoffDate.setDate(cutoffDate.getDate() - this.retentionDays);
+      const cutoffDateStr = this.getDateStr(cutoffDate);
       this.pool.write().run("DELETE FROM _query_log WHERE timestamp < datetime('now', ?)", [cutoff]);
-      this.pool.write().run("DELETE FROM _daily_stats WHERE date < date('now', ?)", [cutoff]);
-      this.pool.write().run("DELETE FROM _daily_queries WHERE date < date('now', ?)", [cutoff]);
+      this.pool.write().run("DELETE FROM _daily_stats WHERE date < ?", [cutoffDateStr]);
+      this.pool.write().run("DELETE FROM _daily_queries WHERE date < ?", [cutoffDateStr]);
     } catch (err) {
       logger.warn("Analytics prune failed", { error: err instanceof Error ? err.message : String(err) });
     }

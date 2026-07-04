@@ -156,7 +156,10 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const records = Array.isArray(body) ? body : [body];
     const inserted: Record<string, unknown>[] = [];
     const firstKeys = Object.keys(records[0] || {});
-    const insertSql = `INSERT INTO "${params.table}" (${firstKeys.map(k => `"${k}"`).join(", ")}) VALUES (${firstKeys.map(() => "?").join(", ")})`; // Representative SQL from first record only
+    const isBatch = records.length > 1;
+    const insertSql = isBatch
+      ? `INSERT INTO "${params.table}" VALUES (...) -- batch of ${records.length}`
+      : `INSERT INTO "${params.table}" (${firstKeys.map(k => `"${k}"`).join(", ")}) VALUES (${firstKeys.map(() => "?").join(", ")})`;
 
     for (const record of records) {
       const keys = Object.keys(record);
@@ -268,9 +271,9 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
 
     const pool = manager.get(params.db);
     try {
-      pool.write().run(updateSql, toBindings(vals));
+      const result = pool.write().run(updateSql, toBindings(vals));
       const updated = pool.read().query(`SELECT rowid, * FROM "${params.table}" WHERE rowid = ?`).get(params.id);
-      recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: 1, status: "ok", sqlText: updateSql });
+      recordAnalytics(manager, { database: params.db, table: params.table, operation: "update", durationMs: performance.now() - start, rowCount: result.changes, status: "ok", sqlText: updateSql });
       return jsonResponse({ data: updated });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -296,8 +299,8 @@ export function registerRecordRoutes(router: Router, manager: DatabaseManager): 
     const start = performance.now();
     const pool = manager.get(params.db);
     const deleteSql = `DELETE FROM "${params.table}" WHERE rowid = ?`;
-    pool.write().run(deleteSql, [params.id]);
-    recordAnalytics(manager, { database: params.db, table: params.table, operation: "delete", durationMs: performance.now() - start, rowCount: 1, status: "ok", sqlText: deleteSql });
+    const result = pool.write().run(deleteSql, [params.id]);
+    recordAnalytics(manager, { database: params.db, table: params.table, operation: "delete", durationMs: performance.now() - start, rowCount: result.changes, status: "ok", sqlText: deleteSql });
     return jsonResponse({ data: { deleted: true } });
   });
 }

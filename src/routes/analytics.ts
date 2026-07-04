@@ -110,12 +110,24 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     if (cached) return jsonResponse(cached);
 
     const url = new URL(req.url);
-    const { since } = parseRange(url);
+    const range = url.searchParams.get("range") || "24h";
     const db = pool.read();
 
+    const metaRow = manager.getMetaPool().read().query("SELECT value FROM _meta WHERE key = 'global_settings'").get() as { value: string } | null;
+    const settings = metaRow ? { timezone: "UTC", ...JSON.parse(metaRow.value) } : { timezone: "UTC" };
+    const tz = url.searchParams.get("tz") || settings.timezone;
+    analytics.setTimezone(tz);
+
+    const tzDate = getTzDate(tz);
+    let sinceMs = 86400000;
+    if (range === "7d") sinceMs = 7 * 86400000;
+    else if (range === "30d") sinceMs = 30 * 86400000;
+    const sinceDate = new Date(tzDate.getTime() - sinceMs);
+    const sinceDateStr = formatTzKey(sinceDate, false);
+
     const queries = (db.query(
-      `SELECT COALESCE(SUM(count), 0) as c, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(error_count), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN count ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN total_rows ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN total_rows ELSE 0 END), 0) as rows_written FROM _daily_stats WHERE date >= date('now', ?)`
-    ).get(since) as QueryStatsRow & { rows_read: number; rows_written: number }) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0, rows_read: 0, rows_written: 0 };
+      `SELECT COALESCE(SUM(count), 0) as c, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(error_count), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN count ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN total_rows ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN total_rows ELSE 0 END), 0) as rows_written FROM _daily_stats WHERE date >= ?`
+    ).get(sinceDateStr) as QueryStatsRow & { rows_read: number; rows_written: number }) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0, rows_read: 0, rows_written: 0 };
 
     await ensureAllSnapshots(db);
     const totalStorage = (db.query(
@@ -144,12 +156,23 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const auth = await authenticateApiKey(req, manager, params.database);
     if (auth instanceof Response) return auth;
     const url = new URL(req.url);
-    const { since } = parseRange(url);
+    const range = url.searchParams.get("range") || "24h";
     const db = pool.read();
 
+    const metaRow = manager.getMetaPool().read().query("SELECT value FROM _meta WHERE key = 'global_settings'").get() as { value: string } | null;
+    const settings = metaRow ? { timezone: "UTC", ...JSON.parse(metaRow.value) } : { timezone: "UTC" };
+    const tz = url.searchParams.get("tz") || settings.timezone;
+
+    const tzDate = getTzDate(tz);
+    let sinceMs = 86400000;
+    if (range === "7d") sinceMs = 7 * 86400000;
+    else if (range === "30d") sinceMs = 30 * 86400000;
+    const sinceDate = new Date(tzDate.getTime() - sinceMs);
+    const sinceDateStr = formatTzKey(sinceDate, false);
+
     const queries = (db.query(
-      `SELECT COALESCE(SUM(count), 0) as c, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(error_count), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN count ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN total_rows ELSE 0 END), 0) as rows_read FROM _daily_stats WHERE database = ? AND date >= date('now', ?)`
-    ).get(params.database, since) as QueryStatsRow & { rows_read: number }) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0, rows_read: 0 };
+      `SELECT COALESCE(SUM(count), 0) as c, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(error_count), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN count ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN total_rows ELSE 0 END), 0) as rows_read FROM _daily_stats WHERE database = ? AND date >= ?`
+    ).get(params.database, sinceDateStr) as QueryStatsRow & { rows_read: number }) ?? { c: 0, avg_ms: 0, errors: 0, writes: 0, rows_read: 0 };
 
     let storage = db.query(
       "SELECT size_bytes, table_count FROM _storage_snapshots WHERE database = ? ORDER BY timestamp DESC LIMIT 1"
@@ -162,8 +185,8 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     }
 
     const topTables = db.query(
-      `SELECT sql_text, COALESCE(SUM(count), 0) as calls, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(writes), 0) as writes, COALESCE(SUM(total_rows), 0) as total_rows FROM _daily_queries WHERE database = ? AND date >= date('now', ?) GROUP BY sql_text ORDER BY calls DESC LIMIT 10`
-    ).all(params.database, since) as TopTableRow[];
+      `SELECT sql_text, COALESCE(SUM(count), 0) as calls, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(writes), 0) as writes, COALESCE(SUM(total_rows), 0) as total_rows FROM _daily_queries WHERE database = ? AND date >= ? GROUP BY sql_text ORDER BY calls DESC LIMIT 10`
+    ).all(params.database, sinceDateStr) as TopTableRow[];
 
     return jsonResponse({
       data: {
@@ -187,12 +210,23 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     if (cached) return jsonResponse(cached);
 
     const url = new URL(req.url);
-    const { since } = parseRange(url);
+    const range = url.searchParams.get("range") || "24h";
     const db = pool.read();
 
+    const metaRow = manager.getMetaPool().read().query("SELECT value FROM _meta WHERE key = 'global_settings'").get() as { value: string } | null;
+    const settings = metaRow ? { timezone: "UTC", ...JSON.parse(metaRow.value) } : { timezone: "UTC" };
+    const tz = url.searchParams.get("tz") || settings.timezone;
+
+    const tzDate = getTzDate(tz);
+    let sinceMs = 86400000;
+    if (range === "7d") sinceMs = 7 * 86400000;
+    else if (range === "30d") sinceMs = 30 * 86400000;
+    const sinceDate = new Date(tzDate.getTime() - sinceMs);
+    const sinceDateStr = formatTzKey(sinceDate, false);
+
     const queryStats = db.query(
-      `SELECT database, COALESCE(SUM(count), 0) as c, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(error_count), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN count ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN total_rows ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN total_rows ELSE 0 END), 0) as rows_written FROM _daily_stats WHERE date >= date('now', ?) GROUP BY database`
-    ).all(since) as { database: string; c: number; avg_ms: number; errors: number; writes: number; rows_read: number; rows_written: number }[];
+      `SELECT database, COALESCE(SUM(count), 0) as c, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(error_count), 0) as errors, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN count ELSE 0 END), 0) as writes, COALESCE(SUM(CASE WHEN operation = 'select' THEN total_rows ELSE 0 END), 0) as rows_read, COALESCE(SUM(CASE WHEN operation IN ('insert','update','delete') THEN total_rows ELSE 0 END), 0) as rows_written FROM _daily_stats WHERE date >= ? GROUP BY database`
+    ).all(sinceDateStr) as { database: string; c: number; avg_ms: number; errors: number; writes: number; rows_read: number; rows_written: number }[];
 
     await ensureAllSnapshots(db);
     const storageRows = db.query(
@@ -256,11 +290,23 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
   router.get("/api/analytics/top-queries", async (req) => {
     if (!(await isAdminRequest(req, manager))) return errorResponse("UNAUTHORIZED", "Admin access required.", 401);
     const url = new URL(req.url);
-    const { since } = parseRange(url);
+    const range = url.searchParams.get("range") || "24h";
     const db = pool.read();
+
+    const metaRow = manager.getMetaPool().read().query("SELECT value FROM _meta WHERE key = 'global_settings'").get() as { value: string } | null;
+    const settings = metaRow ? { timezone: "UTC", ...JSON.parse(metaRow.value) } : { timezone: "UTC" };
+    const tz = url.searchParams.get("tz") || settings.timezone;
+
+    const tzDate = getTzDate(tz);
+    let sinceMs = 86400000;
+    if (range === "7d") sinceMs = 7 * 86400000;
+    else if (range === "30d") sinceMs = 30 * 86400000;
+    const sinceDate = new Date(tzDate.getTime() - sinceMs);
+    const sinceDateStr = formatTzKey(sinceDate, false);
+
     const rows = db.query(
-      `SELECT q1.database, q1.sql_text, q1.calls, q1.avg_ms, q1.total_rows FROM (SELECT database, sql_text, COALESCE(SUM(count), 0) as calls, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(total_rows), 0) as total_rows, ROW_NUMBER() OVER (PARTITION BY database ORDER BY COALESCE(SUM(count), 0) DESC) as rn FROM _daily_queries WHERE date >= date('now', ?) GROUP BY database, sql_text) q1 WHERE q1.rn = 1 ORDER BY q1.calls DESC`
-    ).all(since);
+      `SELECT q1.database, q1.sql_text, q1.calls, q1.avg_ms, q1.total_rows FROM (SELECT database, sql_text, COALESCE(SUM(count), 0) as calls, COALESCE(SUM(total_ms) / NULLIF(SUM(count), 0), 0) as avg_ms, COALESCE(SUM(total_rows), 0) as total_rows, ROW_NUMBER() OVER (PARTITION BY database ORDER BY COALESCE(SUM(count), 0) DESC) as rn FROM _daily_queries WHERE date >= ? GROUP BY database, sql_text) q1 WHERE q1.rn = 1 ORDER BY q1.calls DESC`
+    ).all(sinceDateStr);
     return jsonResponse({ data: rows });
   });
 
@@ -289,6 +335,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     const metaRow = manager.getMetaPool().read().query("SELECT value FROM _meta WHERE key = 'global_settings'").get() as { value: string } | null;
     const settings = metaRow ? { timezone: "UTC", ...JSON.parse(metaRow.value) } : { timezone: "UTC" };
     const tz = url.searchParams.get("tz") || settings.timezone;
+    analytics.setTimezone(tz);
     const tzAdj = getTzSign(tz);
     const tzTimestamp = tzAdj ? `datetime(timestamp, '${tzAdj}')` : "timestamp";
 
@@ -303,20 +350,18 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       if (now.getUTCMinutes() > 0 || now.getUTCSeconds() > 0 || now.getUTCMilliseconds() > 0) {
         rightmost.setUTCHours(rightmost.getUTCHours() + 1);
       }
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       for (let i = 23; i >= 0; i--) {
         const end = new Date(rightmost);
         end.setUTCHours(end.getUTCHours() - i);
         const start = new Date(end);
         start.setUTCHours(start.getUTCHours() - 1);
-        slots.push({ label: `${String(end.getUTCHours()).padStart(2, '0')}:00`, start, end });
+        slots.push({ label: `${months[end.getUTCMonth()]} ${end.getUTCDate()} ${String(end.getUTCHours()).padStart(2, '0')}:00`, start, end });
       }
     } else if (range === "7d") {
       const rightmost = new Date(now);
       rightmost.setUTCMinutes(0, 0, 0);
-      const hoursSinceMidnight = rightmost.getUTCHours();
-      if (hoursSinceMidnight > 0) {
-        rightmost.setTime(rightmost.getTime() + (24 - hoursSinceMidnight) * 3600000);
-      }
+      rightmost.setUTCHours(0, 0, 0, 0);
       for (let i = 6; i >= 0; i--) {
         const end = new Date(rightmost);
         end.setUTCDate(end.getUTCDate() - i);
@@ -328,16 +373,9 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
     } else {
       const rightmost = new Date(now);
       rightmost.setUTCMinutes(0, 0, 0);
-      const hoursSinceMidnight = rightmost.getUTCHours();
-      if (hoursSinceMidnight > 0) {
-        rightmost.setTime(rightmost.getTime() + (24 - hoursSinceMidnight) * 3600000);
-      }
-      const daysUntilNextSunday = (7 - rightmost.getUTCDay()) % 7;
-      if (daysUntilNextSunday > 0) {
-        rightmost.setTime(rightmost.getTime() + daysUntilNextSunday * 86400000);
-      } else {
-        rightmost.setTime(rightmost.getTime() + 7 * 86400000);
-      }
+      rightmost.setUTCHours(0, 0, 0, 0);
+      // Align to the most recent Sunday boundary (start of current partial week)
+      rightmost.setUTCDate(rightmost.getUTCDate() - rightmost.getUTCDay());
       for (let i = 4; i >= 0; i--) {
         const end = new Date(rightmost);
         end.setUTCDate(end.getUTCDate() - i * 7);
@@ -348,7 +386,7 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       }
     }
 
-    const tzOffsetMs = now.getTime() - Date.now();
+    const tzOffsetMs = getTzOffsetMinutes(tz) * 60 * 1000;
     const windowStart = new Date(slots[0].start.getTime() - tzOffsetMs).toISOString().replace("T", " ").replace("Z", "");
     const windowEnd = new Date(slots[slots.length - 1].end.getTime() - tzOffsetMs).toISOString().replace("T", " ").replace("Z", "");
 

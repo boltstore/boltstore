@@ -17,7 +17,11 @@ function stripComments(sql: string): string {
 }
 
 function isWriteStatement(sql: string): boolean {
-  return WRITE_PATTERN.test(stripComments(sql));
+  const cleaned = stripComments(sql);
+  // Check each semicolon-separated statement — a query like "SELECT 1; INSERT INTO t VALUES (1)"
+  // starts with SELECT but contains a write, which would fail on a read connection.
+  const statements = cleaned.split(";").filter(s => s.trim().length > 0);
+  return statements.some(stmt => WRITE_PATTERN.test(stmt.trim()));
 }
 
 export function registerQueryRoutes(router: Router, manager: DatabaseManager): void {
@@ -67,7 +71,7 @@ export function registerQueryRoutes(router: Router, manager: DatabaseManager): v
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn("Query endpoint error", { database: params.db, error: msg });
-      recordAnalytics(manager, { database: params.db, operation: "select", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: msg, sqlText: sql });
+      recordAnalytics(manager, { database: params.db, operation: isWrite ? "update" : "select", durationMs: performance.now() - start, rowCount: 0, status: "error", errorMessage: msg, sqlText: sql });
       return errorResponse("QUERY_ERROR", "Query execution failed. Check your SQL syntax or constraints.", 400);
     }
   });
