@@ -49,7 +49,7 @@
         <router-link to="/analytics" class="text-xs text-accent-400 hover:text-accent-300 transition-colors">View analytics →</router-link>
       </div>
       <div class="h-48 rounded-md overflow-hidden border border-border-default bg-bolt-elevated/30 p-2">
-        <QueryChart :labels="chartLabels" :values="chartValues" :max="chartMax" />
+        <QueryChart :labels="chartLabels" :values="chartValues" :max="chartMax" unitLabel="queries" />
       </div>
     </div>
 

@@ -26,9 +26,11 @@ const props = withDefaults(
     values: number[]
     max: number
     error?: boolean
+    unitLabel?: string
   }>(),
   {
     error: false,
+    unitLabel: "queries",
   }
 )
 
@@ -71,7 +73,7 @@ const chartOptions = computed(() => ({
     tooltip: {
       callbacks: {
         title: () => "",
-        label: (ctx: any) => `${ctx.parsed.y} queries`,
+        label: (ctx: any) => `${ctx.parsed.y} ${props.unitLabel}`,
       },
     },
     legend: { display: false },

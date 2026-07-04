@@ -43,14 +43,14 @@
       <div class="bg-bolt-card border border-border-default rounded-lg p-5">
         <div class="text-sm font-medium text-text-primary mb-4">Query Volume</div>
         <div class="h-48 rounded-md overflow-hidden border border-border-default bg-bolt-elevated/30 p-2">
-          <QueryChart :labels="chartLabels" :values="chartValues" :max="chartMax" />
+          <QueryChart :labels="chartLabels" :values="chartValues" :max="chartMax" unitLabel="queries" />
         </div>
       </div>
 
       <div class="bg-bolt-card border border-border-default rounded-lg p-5">
         <div class="text-sm font-medium text-text-primary mb-4">Error Rate</div>
         <div class="h-48 rounded-md overflow-hidden border border-border-default bg-bolt-elevated/30 p-2">
-          <QueryChart :labels="chartLabels" :values="errorValues" :max="chartMax" error />
+          <QueryChart :labels="chartLabels" :values="errorValues" :max="chartMax" error unitLabel="errors" />
         </div>
       </div>
     </div>
@@ -59,13 +59,13 @@
       <div class="bg-bolt-card border border-border-default rounded-lg p-5">
         <div class="text-sm font-medium text-text-primary mb-4">Rows Read</div>
         <div class="h-48 rounded-md overflow-hidden border border-border-default bg-bolt-elevated/30 p-2">
-          <QueryChart :labels="chartLabels" :values="rowsReadValues" :max="rowsReadMax" />
+          <QueryChart :labels="chartLabels" :values="rowsReadValues" :max="rowsReadMax" unitLabel="rows read" />
         </div>
       </div>
       <div class="bg-bolt-card border border-border-default rounded-lg p-5">
         <div class="text-sm font-medium text-text-primary mb-4">Rows Written</div>
         <div class="h-48 rounded-md overflow-hidden border border-border-default bg-bolt-elevated/30 p-2">
-          <QueryChart :labels="chartLabels" :values="rowsWrittenValues" :max="rowsWrittenMax" />
+          <QueryChart :labels="chartLabels" :values="rowsWrittenValues" :max="rowsWrittenMax" unitLabel="rows written" />
         </div>
       </div>
     </div>
@@ -297,5 +297,3 @@ function formatTime(dateStr: string) {
 }
 
 </script>
-
-
