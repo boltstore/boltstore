@@ -361,27 +361,40 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       const rightmost = new Date(now);
       rightmost.setUTCMinutes(0, 0, 0);
       rightmost.setUTCHours(0, 0, 0, 0);
+      // Advance by 1 day so the most recent slot includes today's data
+      rightmost.setUTCDate(rightmost.getUTCDate() + 1);
       const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       for (let i = 6; i >= 0; i--) {
         const end = new Date(rightmost);
         end.setUTCDate(end.getUTCDate() - i);
         const start = new Date(end);
         start.setUTCDate(start.getUTCDate() - 1);
-        slots.push({ label: `${months[end.getUTCMonth()]} ${end.getUTCDate()}`, start, end });
+        slots.push({ label: `${months[start.getUTCMonth()]} ${start.getUTCDate()}`, start, end });
       }
     } else {
+      // 30d range: 6 weekly candles — current partial week + 5 previous full weeks
       const rightmost = new Date(now);
       rightmost.setUTCMinutes(0, 0, 0);
       rightmost.setUTCHours(0, 0, 0, 0);
-      // Align to the most recent Sunday boundary (start of current partial week)
-      rightmost.setUTCDate(rightmost.getUTCDate() - rightmost.getUTCDay());
+      // Start of current partial week (most recent Sunday)
+      const sunday = new Date(rightmost);
+      sunday.setUTCDate(sunday.getUTCDate() - sunday.getUTCDay());
       const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-      for (let i = 4; i >= 0; i--) {
-        const end = new Date(rightmost);
-        end.setUTCDate(end.getUTCDate() - i * 7);
-        const start = new Date(end);
-        start.setUTCDate(start.getUTCDate() - 7);
-        slots.push({ label: `${months[start.getUTCMonth()]} ${start.getUTCDate()}`, start, end });
+      for (let i = 5; i >= 0; i--) {
+        if (i === 0) {
+          // Current partial week: from Sunday to today+1
+          const start = new Date(sunday);
+          const end = new Date(rightmost);
+          end.setUTCDate(end.getUTCDate() + 1);
+          slots.push({ label: "This week", start, end });
+        } else {
+          // Previous complete weeks
+          const end = new Date(sunday);
+          end.setUTCDate(end.getUTCDate() - (i - 1) * 7);
+          const start = new Date(end);
+          start.setUTCDate(start.getUTCDate() - 7);
+          slots.push({ label: `${months[start.getUTCMonth()]} ${start.getUTCDate()}`, start, end });
+        }
       }
     }
 

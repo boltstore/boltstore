@@ -222,6 +222,25 @@ export class AnalyticsManager {
 
   startSnapshotTimer(getDatabases: () => string[], getPool: (name: string) => DatabasePool | null, resolveDbId?: (name: string) => string | undefined): void {
     if (this.timer) return;
+
+    // Clean up stale analytics data for databases that no longer exist
+    try {
+      const activeNames = new Set(getDatabases());
+      const stale = this.pool.write().query(
+        "SELECT DISTINCT database FROM _storage_snapshots UNION SELECT DISTINCT database FROM _daily_stats UNION SELECT DISTINCT database FROM _daily_queries UNION SELECT DISTINCT database FROM _query_log"
+      ).all() as { database: string }[];
+      for (const row of stale) {
+        if (!activeNames.has(row.database)) {
+          this.pool.write().run("DELETE FROM _storage_snapshots WHERE database = ?", [row.database]);
+          this.pool.write().run("DELETE FROM _daily_stats WHERE database = ?", [row.database]);
+          this.pool.write().run("DELETE FROM _daily_queries WHERE database = ?", [row.database]);
+          this.pool.write().run("DELETE FROM _query_log WHERE database = ?", [row.database]);
+        }
+      }
+    } catch (err) {
+      logger.warn("Failed to clean up stale analytics data", { error: err instanceof Error ? err.message : String(err) });
+    }
+
     const takeSnapshot = async () => {
       try {
         const names = getDatabases();

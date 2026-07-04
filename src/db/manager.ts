@@ -281,6 +281,21 @@ export class DatabaseManager {
     } catch (err) {
       logger.warn("Failed to clean up database files after delete", { database: name, error: err instanceof Error ? err.message : String(err) });
     }
+
+    // Clean up analytics data for the deleted database so stale snapshots
+    // are not counted in total storage or other aggregated queries.
+    const analytics = this.getAnalytics();
+    if (analytics) {
+      try {
+        const aDb = analytics.getPool().write();
+        aDb.run("DELETE FROM _storage_snapshots WHERE database = ?", [name]);
+        aDb.run("DELETE FROM _daily_stats WHERE database = ?", [name]);
+        aDb.run("DELETE FROM _daily_queries WHERE database = ?", [name]);
+        aDb.run("DELETE FROM _query_log WHERE database = ?", [name]);
+      } catch (err) {
+        logger.warn("Failed to clean up analytics data after database delete", { database: name, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
   }
 
   listDatabases(): DatabaseInfo[] {

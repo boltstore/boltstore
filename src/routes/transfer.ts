@@ -4,6 +4,7 @@ import { jsonResponse, errorResponse } from "../server";
 import { authenticateApiKey, isAdminRequest } from "../middleware/auth";
 import { logActivity, getClientIp, getAdminId } from "./activity";
 import { logger } from "../logger";
+import { analyticsCache } from "./analytics";
 import { validateDbName, isValidDbName } from "../validation";
 import { rmSync } from "node:fs";
 import { resolve } from "node:path";
@@ -101,6 +102,14 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
       if (!integrity || integrity.integrity_check !== "ok") {
         throw new Error(`integrity_check returned: ${integrity?.integrity_check ?? "null"}`);
       }
+      // Trigger an immediate analytics snapshot so the overview picks up the new database
+      const analytics = manager.getAnalytics();
+      if (analytics) {
+        await analytics.ensureSnapshot(dbName,
+          (name) => { try { return manager.getPoolIfExists(name); } catch { return null; } },
+          (name) => manager.resolveDbId(name)
+        ).catch(() => {});
+      }
     } catch (err: unknown) {
       logger.warn("Imported file failed integrity check", { database: dbName, error: err instanceof Error ? err.message : String(err) });
       try { rmSync(destPath, { force: true }); } catch {}
@@ -110,6 +119,8 @@ export function registerTransferRoutes(router: Router, manager: DatabaseManager)
     }
 
     logActivity(manager, { action: "database.import", admin_id: await getAdminId(req, manager), database_name: dbName, database_id: manager.resolveDbId(dbName), details: { file: fileField.name }, ip: getClientIp(req) });
+    // Invalidate analytics cache so the overview reflects the change immediately
+    analyticsCache.invalidate();
     return jsonResponse({ data: { name: dbName, file: fileField.name } }, 201);
   });
 }

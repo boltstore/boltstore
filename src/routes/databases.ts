@@ -26,6 +26,16 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     const nameErr = validateDbName(body.name);
     if (nameErr) return nameErr;
     const info = manager.createDatabase(body.name, body.group);
+    // Trigger an immediate analytics snapshot so the overview picks up the new database
+    const analytics = manager.getAnalytics();
+    if (analytics) {
+      await analytics.ensureSnapshot(body.name,
+        (name) => { try { return manager.getPoolIfExists(name); } catch { return null; } },
+        (name) => manager.resolveDbId(name)
+      ).catch(() => {});
+    }
+    // Invalidate analytics cache so the overview reflects the change immediately
+    analyticsCache.invalidate();
     logActivity(manager, { action: "database.create", admin_id: await getAdminId(req, manager), database_name: body.name, database_id: info.id, details: body.group ? { group: body.group } : undefined, ip: getClientIp(req) });
     return jsonResponse({ data: info }, 201);
   });
@@ -139,6 +149,8 @@ export function registerDatabaseRoutes(router: Router, manager: DatabaseManager)
     }
     manager.deleteDatabase(params.name);
     const dbId = manager.resolveDbId(params.name);
+    // Invalidate analytics cache so the overview reflects the change immediately
+    analyticsCache.invalidate();
     logActivity(manager, { action: "database.delete", admin_id: await getAdminId(req, manager), database_name: params.name, database_id: dbId, ip: getClientIp(req) });
     return jsonResponse({ data: { deleted: true } });
   });

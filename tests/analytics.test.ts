@@ -98,12 +98,12 @@ describe("Daily analytics aggregation", () => {
     expect(json.data.counts.length).toBe(7);
   });
 
-  test("volume endpoint returns 5 slots for 30d range", async () => {
+  test("volume endpoint returns 6 slots for 30d range", async () => {
     const res = await fetch(apiUrl(ctx, `/api/analytics/volume?range=30d`), { headers: adminHeaders(ctx) });
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data.slots.length).toBe(5);
-    expect(json.data.counts.length).toBe(5);
+    expect(json.data.slots.length).toBe(6);
+    expect(json.data.counts.length).toBe(6);
   });
 
   test("volume endpoint counts correlate with inserted events", async () => {
