@@ -201,7 +201,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from "vue"
+import { ref, watch, onMounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import MetricCard from "../components/ui/MetricCard.vue"
 import Modal from "../components/ui/Modal.vue"
@@ -209,6 +209,7 @@ import TabButton from "../components/ui/TabButton.vue"
 import QueryChart from "../components/ui/QueryChart.vue"
 import { api, clearResponseCache, type AnalyticsOverview, type TopQuery, type QueryLogEntry } from "../api/client"
 import { formatBytes, formatCompact } from "../utils/time"
+import { useRefresh } from "../composables/useRefresh"
 
 const userTimezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC"
 const timeRanges = ["24h", "7d", "30d"]
@@ -226,6 +227,12 @@ const topQueries = ref<TopQuery[]>([])
 const dbList = ref<{ name: string; queries: string; writes: string; errors: string; errorClass: string; latency: string; storage: string }[]>([])
 const errorLog = ref<QueryLogEntry[]>([])
 const showAllErrors = ref(false)
+
+const { refreshCounter } = useRefresh()
+watch(refreshCounter, () => {
+  clearResponseCache()
+  loadAll()
+})
 
 async function loadAll() {
   const results = await Promise.allSettled([
@@ -288,10 +295,7 @@ async function loadAll() {
   }
 }
 
-let refreshTimer: ReturnType<typeof setInterval> | null = null;
-
-onMounted(() => { loadAll(); refreshTimer = setInterval(() => { clearResponseCache(); loadAll(); }, 30000); })
-onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); })
+onMounted(loadAll)
 watch(activeRange, loadAll)
 
 function formatTime(dateStr: string) {

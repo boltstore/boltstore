@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@boltstore/client": "^1.0.0",
+    "@boltstore/client": "^1.0.2",
     "chart.js": "^4.5.1",
     "vue": "^3.5.0",
     "vue-chartjs": "^5.3.3",

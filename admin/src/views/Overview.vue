@@ -130,7 +130,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from "vue"
+import { ref, watch, onMounted } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import MetricCard from "../components/ui/MetricCard.vue"
 import Badge from "../components/ui/Badge.vue"
@@ -138,6 +138,7 @@ import TabButton from "../components/ui/TabButton.vue"
 import QueryChart from "../components/ui/QueryChart.vue"
 import { api, clearResponseCache, type HealthResponse, type DatabaseInfo, type ActivityEntry, type AnalyticsOverview } from "../api/client"
 import { formatTime, formatBytes, formatCompact } from "../utils/time"
+import { useRefresh } from "../composables/useRefresh"
 
 const timeRanges = ["24h", "7d", "30d"]
 const activeRange = ref("24h")
@@ -149,6 +150,13 @@ const health = ref<HealthResponse | null>(null)
 const databases = ref<DatabaseInfo[]>([])
 const activities = ref<ActivityEntry[]>([])
 const analytics = ref<AnalyticsOverview | null>(null)
+
+const { refreshCounter } = useRefresh()
+watch(refreshCounter, () => {
+  clearResponseCache()
+  loadStatic()
+  loadVolume()
+})
 
 async function loadStatic() {
   const results = await Promise.allSettled([
@@ -175,17 +183,9 @@ async function loadVolume() {
   } catch {}
 }
 
-let refreshTimer: ReturnType<typeof setInterval> | null = null;
-
 onMounted(() => {
   loadStatic();
   loadVolume();
-  // Auto-refresh every 30 seconds so newly added/deleted databases appear without manual page refresh
-  refreshTimer = setInterval(() => { clearResponseCache(); loadStatic(); loadVolume(); }, 30000);
-});
-
-onUnmounted(() => {
-  if (refreshTimer) clearInterval(refreshTimer);
 });
 
 watch(activeRange, loadVolume)

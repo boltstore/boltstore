@@ -18,6 +18,15 @@
           </slot>
         </div>
         <div class="flex items-center gap-3">
+          <button
+            class="p-1.5 text-text-muted hover:text-text-primary transition-colors rounded-md hover:bg-bolt-hover"
+            title="Refresh data"
+            @click="triggerRefresh"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
           <slot name="header-right" />
         </div>
       </header>
@@ -35,6 +44,7 @@
 import { ref, onMounted } from "vue"
 import { useRouter } from "vue-router"
 import { useSidebar } from "../../composables/useSidebar"
+import { useRefresh } from "../../composables/useRefresh"
 import { hasSession } from "../../api/client"
 import Sidebar from "./Sidebar.vue"
 import MobileOverlay from "./MobileOverlay.vue"
@@ -53,6 +63,7 @@ withDefaults(
 )
 
 const { toggle: toggleSidebar } = useSidebar()
+const { triggerRefresh } = useRefresh()
 const router = useRouter()
 const showCreateModal = ref(false)
 

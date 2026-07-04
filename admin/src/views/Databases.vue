@@ -137,12 +137,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue"
+import { ref, computed, onMounted, watch } from "vue"
 import AppLayout from "../components/layout/AppLayout.vue"
 import Badge from "../components/ui/Badge.vue"
 import CreateDatabaseModal from "../components/database/CreateDatabaseModal.vue"
 import { api, clearResponseCache, type DatabaseInfo, type DatabaseAnalytics } from "../api/client"
 import { formatBytes, formatCompact } from "../utils/time"
+import { useRefresh } from "../composables/useRefresh"
 
 const databases = ref<DatabaseInfo[]>([])
 
@@ -166,13 +167,13 @@ const importError = ref("")
 const fileInput = ref<HTMLInputElement | null>(null)
 const dbAnalytics = ref<Record<string, DatabaseAnalytics>>({})
 
-let refreshTimer: ReturnType<typeof setInterval> | null = null;
+const { refreshCounter } = useRefresh()
+watch(refreshCounter, () => {
+  clearResponseCache()
+  load()
+})
 
-onMounted(() => {
-  load();
-  refreshTimer = setInterval(() => { clearResponseCache(); load(); }, 30000);
-});
-onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); });
+onMounted(load);
 
 async function load() {
   try {
