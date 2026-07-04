@@ -90,6 +90,45 @@ describe("Daily analytics aggregation", () => {
     expect(json.data.counts.length).toBe(24);
   });
 
+  test("volume endpoint returns 7 slots for 7d range", async () => {
+    const res = await fetch(apiUrl(ctx, `/api/analytics/volume?range=7d`), { headers: adminHeaders(ctx) });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.slots.length).toBe(7);
+    expect(json.data.counts.length).toBe(7);
+  });
+
+  test("volume endpoint returns 5 slots for 30d range", async () => {
+    const res = await fetch(apiUrl(ctx, `/api/analytics/volume?range=30d`), { headers: adminHeaders(ctx) });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.slots.length).toBe(5);
+    expect(json.data.counts.length).toBe(5);
+  });
+
+  test("volume endpoint counts correlate with inserted events", async () => {
+    // Insert a record to generate analytics activity
+    await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/tables/events/records`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ctx.adminToken}` },
+      body: JSON.stringify({ name: "test-volume-event" }),
+    });
+
+    // Force flush
+    (ctx.analytics as { flush(): void }).flush();
+
+    const res = await fetch(apiUrl(ctx, `/api/analytics/volume?range=24h`), { headers: adminHeaders(ctx) });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+
+    // Total counts across all slots should equal or exceed the number of insert events
+    const totalCount = json.data.counts.reduce((a: number, b: number) => a + b, 0);
+    expect(totalCount).toBeGreaterThanOrEqual(1);
+    // rows_written should reflect the insert
+    const totalWritten = json.data.rows_written.reduce((a: number, b: number) => a + b, 0);
+    expect(totalWritten).toBeGreaterThanOrEqual(1);
+  });
+
   test("errors endpoint still returns log entries", async () => {
     // Trigger an error via invalid SQL
     await fetch(apiUrl(ctx, `/api/databases/${ctx.dbName}/query`), {

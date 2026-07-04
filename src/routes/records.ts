@@ -33,12 +33,12 @@ function buildWhereClause(filter: Record<string, unknown>, params: unknown[], pa
           throw new FilterValidationError(`Unsupported filter operator "${op}" at ${path}.${key}`);
         }
         switch (op) {
-          case "$eq": clauses.push(`"${key}" = ?`); params.push(operand); break;
-          case "$ne": clauses.push(`"${key}" != ?`); params.push(operand); break;
-          case "$gt": clauses.push(`"${key}" > ?`); params.push(operand); break;
-          case "$gte": clauses.push(`"${key}" >= ?`); params.push(operand); break;
-          case "$lt": clauses.push(`"${key}" < ?`); params.push(operand); break;
-          case "$lte": clauses.push(`"${key}" <= ?`); params.push(operand); break;
+          case "$eq": clauses.push(`"${key}" = ?`); params.push(operand); break; // SAFE: key validated via isValidIdentifier
+          case "$ne": clauses.push(`"${key}" != ?`); params.push(operand); break; // SAFE: key validated via isValidIdentifier
+          case "$gt": clauses.push(`"${key}" > ?`); params.push(operand); break; // SAFE: key validated via isValidIdentifier
+          case "$gte": clauses.push(`"${key}" >= ?`); params.push(operand); break; // SAFE: key validated via isValidIdentifier
+          case "$lt": clauses.push(`"${key}" < ?`); params.push(operand); break; // SAFE: key validated via isValidIdentifier
+          case "$lte": clauses.push(`"${key}" <= ?`); params.push(operand); break; // SAFE: key validated via isValidIdentifier
           case "$in": {
             if (!Array.isArray(operand)) {
               throw new FilterValidationError(`$in operator requires an array value at "${path}"`);
@@ -48,8 +48,8 @@ function buildWhereClause(filter: Record<string, unknown>, params: unknown[], pa
             params.push(...operand);
             break;
           }
-          case "$like": clauses.push(`"${key}" LIKE ?`); params.push(operand); break;
-          case "$glob": clauses.push(`"${key}" GLOB ?`); params.push(operand); break;
+          case "$like": clauses.push(`"${key}" LIKE ?`); params.push(operand); break; // SAFE: key validated via isValidIdentifier
+          case "$glob": clauses.push(`"${key}" GLOB ?`); params.push(operand); break; // SAFE: key validated via isValidIdentifier
         }
       }
     } else {
@@ -57,7 +57,7 @@ function buildWhereClause(filter: Record<string, unknown>, params: unknown[], pa
         throw new FilterValidationError(`Invalid column name in filter: "${key}" at ${path}`);
       }
       clauses.push(`"${key}" = ?`);
-      params.push(val);
+      params.push(val); // SAFE: key validated via isValidIdentifier
     }
   }
 

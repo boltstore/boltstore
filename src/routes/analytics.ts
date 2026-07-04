@@ -56,17 +56,9 @@ function getTzOffsetMinutes(tz: string): number {
 }
 
 function getTzDate(tz: string): Date {
-  try {
-    const formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz,
-      year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", second: "2-digit",
-      hour12: false,
-    });
-    const parts = formatter.formatToParts(new Date());
-    const p = (type: string) => parseInt(parts.find(x => x.type === type)?.value || "0", 10);
-    return new Date(Date.UTC(p("year"), p("month") - 1, p("day"), p("hour"), p("minute"), p("second")));
-  } catch { return new Date(); }
+  // Derive the timezone date from the offset to avoid a second Intl.DateTimeFormat call.
+  const offsetMs = getTzOffsetMinutes(tz) * 60 * 1000;
+  return new Date(Date.now() + offsetMs);
 }
 
 function getTzSign(tz: string): string {
@@ -95,7 +87,14 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
   const getPool = (name: string) => {
     try { return manager.getPoolIfExists(name); } catch { return null; }
   };
+  let lastSnapshotCheck = 0;
+  const SNAPSHOT_CHECK_INTERVAL = 5 * 60 * 1000;
   const ensureAllSnapshots = async (db: ReturnType<typeof pool.read>) => {
+    // Skip if checked recently — the background snapshot timer handles this every 5 minutes.
+    const now = Date.now();
+    if (now - lastSnapshotCheck < SNAPSHOT_CHECK_INTERVAL) return;
+    lastSnapshotCheck = now;
+
     const dbNames = manager.listDatabases().map(d => d.name);
     for (const name of dbNames) {
       const exists = db.query("SELECT 1 FROM _storage_snapshots WHERE database = ? LIMIT 1").get(name);
@@ -362,12 +361,12 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       const rightmost = new Date(now);
       rightmost.setUTCMinutes(0, 0, 0);
       rightmost.setUTCHours(0, 0, 0, 0);
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       for (let i = 6; i >= 0; i--) {
         const end = new Date(rightmost);
         end.setUTCDate(end.getUTCDate() - i);
         const start = new Date(end);
         start.setUTCDate(start.getUTCDate() - 1);
-        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
         slots.push({ label: `${months[end.getUTCMonth()]} ${end.getUTCDate()}`, start, end });
       }
     } else {
@@ -376,12 +375,12 @@ export function registerAnalyticsRoutes(router: Router, manager: DatabaseManager
       rightmost.setUTCHours(0, 0, 0, 0);
       // Align to the most recent Sunday boundary (start of current partial week)
       rightmost.setUTCDate(rightmost.getUTCDate() - rightmost.getUTCDay());
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       for (let i = 4; i >= 0; i--) {
         const end = new Date(rightmost);
         end.setUTCDate(end.getUTCDate() - i * 7);
         const start = new Date(end);
         start.setUTCDate(start.getUTCDate() - 7);
-        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
         slots.push({ label: `${months[start.getUTCMonth()]} ${start.getUTCDate()}`, start, end });
       }
     }
