@@ -1,5 +1,7 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
 import { setupTestServer, teardownTestServer, apiUrl, adminHeaders, type TestContext } from "./helpers";
+import { AnalyticsManager } from "../src/analytics";
 
 describe("Daily analytics aggregation", () => {
   let ctx: TestContext;
@@ -118,5 +120,83 @@ describe("Daily analytics aggregation", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(Array.isArray(json.data)).toBe(true);
+  });
+
+  test("buffer caps oldest events when flush fails repeatedly", async () => {
+    const tmpDir = `/tmp/boltstore_test_cap_${Date.now()}`;
+    mkdirSync(tmpDir, { recursive: true });
+    try {
+      const analytics = new AnalyticsManager(tmpDir);
+      const buf = (analytics as any).buffer;
+
+      // Close the pool so flush throws, forcing the retry and capping path
+      (analytics as any).pool.close();
+
+      // Push events past the max buffer size (1000)
+      for (let i = 0; i < 1100; i++) {
+        analytics.recordQuery({
+          database: "test",
+          operation: "select",
+          durationMs: 0,
+          rowCount: 0,
+          status: "ok",
+        });
+      }
+
+      // Buffer should be capped to MAX_BUFFER_SIZE
+      expect(buf.length).toBeLessThanOrEqual(1000);
+
+      analytics.stop();
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("events are dropped after exceeding max retries", async () => {
+    const tmpDir = `/tmp/boltstore_test_retry_${Date.now()}`;
+    mkdirSync(tmpDir, { recursive: true });
+    try {
+      const analytics = new AnalyticsManager(tmpDir);
+      const buf = (analytics as any).buffer;
+
+      // Manually add events that already hit the retry limit
+      for (let i = 0; i < 10; i++) {
+        buf.push({
+          event: {
+            database: "test",
+            operation: "select",
+            durationMs: 0,
+            rowCount: 0,
+            status: "ok",
+          },
+          retries: 3, // MAX_RETRIES
+        });
+      }
+
+      // Close the pool so flush throws a write error
+      (analytics as any).pool.close();
+
+      // Push one more event
+      analytics.recordQuery({
+        database: "test",
+        operation: "select",
+        durationMs: 0,
+        rowCount: 0,
+        status: "ok",
+      });
+
+      // Explicitly call flush — it will fail because the pool is closed,
+      // exercising the retry logic (only 11 events, below FLUSH_BATCH_SIZE)
+      (analytics as any).flush();
+
+      // Events at max retries should be dropped.
+      // The new event gets retried (retries becomes 1) and stays.
+      expect(buf.length).toBe(1);
+      expect(buf[0].retries).toBe(1);
+
+      analytics.stop();
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

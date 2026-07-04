@@ -6,6 +6,8 @@ const DEFAULT_RETENTION_DAYS = 30;
 const SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 const FLUSH_INTERVAL_MS = 5000;
 const FLUSH_BATCH_SIZE = 100;
+const MAX_BUFFER_SIZE = FLUSH_BATCH_SIZE * 10;
+const MAX_RETRIES = 3;
 
 interface QueryEvent {
   database: string;
@@ -26,7 +28,7 @@ export class AnalyticsManager {
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
   private retentionDays: number;
-  private buffer: QueryEvent[] = [];
+  private buffer: { event: QueryEvent; retries: number }[] = [];
   private timezone: string = "UTC";
 
   constructor(dataDir: string, retentionDays = DEFAULT_RETENTION_DAYS) {
@@ -107,9 +109,13 @@ export class AnalyticsManager {
   // In-memory buffer — up to 100 events (FLUSH_BATCH_SIZE) or 5 seconds
   // (FLUSH_INTERVAL_MS) of analytics data is lost on process crash.
   recordQuery(event: QueryEvent): void {
-    this.buffer.push(event);
+    this.buffer.push({ event, retries: 0 });
     if (this.buffer.length >= FLUSH_BATCH_SIZE) {
       this.flush();
+    }
+    // Prevent unbounded growth — drop oldest events when buffer exceeds max size
+    while (this.buffer.length > MAX_BUFFER_SIZE) {
+      this.buffer.shift();
     }
   }
 
@@ -165,7 +171,8 @@ export class AnalyticsManager {
            total_ms = total_ms + excluded.total_ms,
            total_rows = total_rows + excluded.total_rows`
       );
-      for (const e of batch) {
+      for (const be of batch) {
+        const e = be.event;
         stmt.run(e.database, e.databaseId ?? null, e.table ?? null, e.operation, e.durationMs, e.rowCount, e.status, e.errorMessage ?? null, e.sqlText ?? null);
         const isError = e.status === "error" ? 1 : 0;
         statsStmt.run(e.database, e.databaseId ?? null, dateStr, e.operation, isError, e.rowCount, e.durationMs);
@@ -175,7 +182,17 @@ export class AnalyticsManager {
       }
     } catch (err) {
       logger.warn("Analytics flush failed, re-queueing events", { error: err instanceof Error ? err.message : String(err) });
-      this.buffer.unshift(...batch);
+      for (const be of batch) {
+        be.retries++;
+        if (be.retries >= MAX_RETRIES) {
+          logger.warn("Dropping analytics event after max retries", {
+            database: be.event.database,
+            operation: be.event.operation,
+          });
+          continue;
+        }
+        this.buffer.push(be);
+      }
     }
   }
 
@@ -243,6 +260,8 @@ export class AnalyticsManager {
 
   stop(): void {
     this.flush();
+    // WAL checkpoint before close to minimize data loss on crash
+    this.pool.checkpointWal();
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
